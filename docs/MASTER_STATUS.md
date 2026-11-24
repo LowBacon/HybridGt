@@ -49,3 +49,21 @@ culling read its scene buffers through the wrong view type.
 
 Next: timed run (`VICTORY_GPU_TIMING=1`, diag build) to name the 2 s compute
 work; then port HybridGt's wave64 mesh work onto the fork if it helps.
+
+## Shader cache warmed offline (fork + HybridGt patch, 2026-11-24)
+
+`patches/victory-gta6/0001`: `VICTORY_WARM_CACHE=<cache dir>` makes `victory translate`
+put each container's runtime translation into that cache (run with
+`VICTORY_HOST_WAVE=32 VICTORY_VIEW_LIMIT=999999` to match the RTX 4070 Ti).
+Result over the title's shaders (read-only):
+
+| Stage | Translated by the fork |
+|---|---|
+| vertex + pixel | 14,152 of 14,259 |
+| compute | 2,713 of 2,734 |
+| mesh | 8,762 of 8,765 |
+
+24,435 entries added to the runtime cache, 358 containers do not translate
+(top: 195 voxelization geometry shaders, "an address in an SGPR that is no root
+parameter"; 40 "descriptor chosen by control flow"; 40 "descriptor read only as
+data"). GPU pipelines still need one run each (they need the game's state).

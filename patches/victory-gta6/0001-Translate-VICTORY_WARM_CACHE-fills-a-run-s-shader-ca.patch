@@ -1,0 +1,132 @@
+From b0d5dc404394f18441ca6e552cf683028994a4ae Mon Sep 17 00:00:00 2001
+From: LowBacon <lenni.a.jokitalo@gmail.com>
+Date: Tue, 24 Nov 2026 22:36:13 +0200
+Subject: [PATCH] Translate: VICTORY_WARM_CACHE fills a run's shader cache
+ offline (HybridGt)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Cargo.lock                             |  1 +
+ apps/victory/Cargo.toml                |  1 +
+ apps/victory/src/translate.rs          | 35 ++++++++++++++++++++++++++
+ crates/victory-gpu/src/shader_cache.rs |  9 +++++++
+ 4 files changed, 46 insertions(+)
+
+diff --git a/Cargo.lock b/Cargo.lock
+index bab4a7e..8d30b83 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -653,6 +653,7 @@ dependencies = [
+  "memchr",
+  "victory-core",
+  "victory-game",
++ "victory-gpu",
+  "victory-hle",
+  "victory-loader",
+  "victory-pe",
+diff --git a/apps/victory/Cargo.toml b/apps/victory/Cargo.toml
+index 5fddd5b..475e5bb 100644
+--- a/apps/victory/Cargo.toml
++++ b/apps/victory/Cargo.toml
+@@ -12,6 +12,7 @@ victory-core.workspace = true
+ victory-pe.workspace = true
+ victory-loader.workspace = true
+ victory-hle.workspace = true
++victory-gpu.workspace = true
+ victory-shader = { workspace = true, features = ["host"] }
+ victory-game.workspace = true
+ anyhow.workspace = true
+diff --git a/apps/victory/src/translate.rs b/apps/victory/src/translate.rs
+index dc5d6c8..ee23a47 100644
+--- a/apps/victory/src/translate.rs
++++ b/apps/victory/src/translate.rs
+@@ -58,6 +58,10 @@ struct Tally {
+     emit_programs: usize,
+     emitted: usize,
+     validated: usize,
++    /// HybridGt: containers put in / found in / failed for the run's cache.
++    warmed: usize,
++    warm_hits: usize,
++    warm_failed: usize,
+     pipelines: usize,
+     /// The same for compute programs.
+     cs_programs: usize,
+@@ -121,6 +125,9 @@ impl Tally {
+         self.emit_programs += other.emit_programs;
+         self.emitted += other.emitted;
+         self.validated += other.validated;
++        self.warmed += other.warmed;
++        self.warm_hits += other.warm_hits;
++        self.warm_failed += other.warm_failed;
+         self.pipelines += other.pipelines;
+         self.cs_programs += other.cs_programs;
+         self.cs_emitted += other.cs_emitted;
+@@ -222,6 +229,12 @@ pub fn run(
+         }
+     }
+     let t = total.into_inner().unwrap_or_else(|e| e.into_inner());
++    if warming() {
++        println!(
++            "warm cache   {} translated into it, {} already there, {} do not translate",
++            t.warmed, t.warm_hits, t.warm_failed
++        );
++    }
+     println!(
+         "containers   {} ({} duplicates skipped)",
+         t.containers, t.duplicates
+@@ -317,6 +330,15 @@ fn translate(
+     let hash = blake3::hash(&bytes).to_hex()[..16].to_owned();
+     let example = || format!("{}{} #{hash}", path.display(), source.label());
+     t.containers += 1;
++    // HybridGt: `VICTORY_WARM_CACHE=<cache dir>` also puts the run's own
++    // translation of this container into that cache (see `warming`).
++    if warming() {
++        match victory_gpu::shader_cache::warm(&bytes) {
++            Ok(true) => t.warm_hits += 1,
++            Ok(false) => t.warmed += 1,
++            Err(_) => t.warm_failed += 1,
++        }
++    }
+     let Ok(container) = Container::parse(&bytes) else {
+         return t.fail("no DXIL part (SM5 or older)".into(), example);
+     };
+@@ -764,3 +786,16 @@ fn tally_structured(program: &ir::Program, s: &structure::Structured, t: &mut Ta
+ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+     m.lock().unwrap_or_else(|e| e.into_inner())
+ }
++
++/// HybridGt: whether `VICTORY_WARM_CACHE` names a cache to fill (the run's
++/// cache folder; shaders live in its `shaders` folder, as in a run).
++fn warming() -> bool {
++    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *ON.get_or_init(|| {
++        let Some(dir) = std::env::var_os("VICTORY_WARM_CACHE") else {
++            return false;
++        };
++        victory_gpu::shader_cache::use_shader_cache(std::path::PathBuf::from(dir).join("shaders"));
++        true
++    })
++}
+diff --git a/crates/victory-gpu/src/shader_cache.rs b/crates/victory-gpu/src/shader_cache.rs
+index eabd0f3..45ecc42 100644
+--- a/crates/victory-gpu/src/shader_cache.rs
++++ b/crates/victory-gpu/src/shader_cache.rs
+@@ -89,6 +89,15 @@ fn build() -> &'static [u8; 32] {
+     })
+ }
+ 
++/// HybridGt: translates `container` into the cache now, as a run would
++/// on first use (`victory translate` with `VICTORY_WARM_CACHE`), so the run
++/// finds it there. True when it was already cached.
++pub fn warm(container: &[u8]) -> Result<bool, String> {
++    let before = HITS.load(Ordering::Relaxed);
++    host_shader(container)?;
++    Ok(HITS.load(Ordering::Relaxed) > before)
++}
++
+ /// The translation of a console shader container, from the cache when
+ /// there is one.
+ pub(crate) fn host_shader(container: &[u8]) -> Result<HostShader, String> {
+-- 
+2.56.1.windows.1
+
