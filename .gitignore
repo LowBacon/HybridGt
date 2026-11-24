@@ -1,0 +1,15 @@
+/target
+*.log
+# Never commit game data or anything derived from it.
+*.rpf
+*.xvd
+*.xvc
+*.msixvc
+*.exe
+*.dll
+*.pdb
+*.dds
+*.awc
+MicrosoftGame.config
+/captures/
+/samples/

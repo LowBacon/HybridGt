@@ -1,0 +1,14 @@
+[package]
+name = "hgt-texture"
+description = "Texture unpacking adapters with strict failure semantics, and BCn reference decoding."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+victory-formats.workspace = true
+
+[lints]
+workspace = true

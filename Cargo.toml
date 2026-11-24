@@ -1,0 +1,19 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "GPL-3.0-or-later"
+publish = false
+
+[workspace.dependencies]
+# Upstream VIctory (GPL-3.0-or-later), pinned. Used, not copied: see THIRD_PARTY.md.
+victory-formats = { git = "https://github.com/Marvisak/VIctory", rev = "ffe310eb2098e52169f4c44db5ffdabf43a72622" }
+windows = "0.62.2"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unused_must_use = "deny"
