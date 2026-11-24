@@ -1,7 +1,7 @@
 From 13fec7f96e968f8f801373c6b37c63bd604f331b Mon Sep 17 00:00:00 2001
 From: HybridGt <hybridgt@localhost>
 Date: Tue, 24 Nov 2026 17:49:27 +0200
-Subject: [PATCH 05/13] Game: opt-in switch for the title's stall watchdog
+Subject: [PATCH 05/14] Game: opt-in switch for the title's stall watchdog
  (VICTORY_NO_STALL_WATCHDOG) (HybridGt)
 
 1.0.2.1 ends itself at +0x23cf683 (write to 0) when its heartbeat stalls

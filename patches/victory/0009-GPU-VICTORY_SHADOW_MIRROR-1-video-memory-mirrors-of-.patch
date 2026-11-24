@@ -1,7 +1,7 @@
 From 03a8ac78e9bca818c5214d0925487ac6e57529f9 Mon Sep 17 00:00:00 2001
 From: HybridGt <hybridgt@localhost>
 Date: Tue, 24 Nov 2026 17:58:26 +0200
-Subject: [PATCH 09/13] GPU: VICTORY_SHADOW_MIRROR=1 video-memory mirrors of
+Subject: [PATCH 09/14] GPU: VICTORY_SHADOW_MIRROR=1 video-memory mirrors of
  title buffer copies (HybridGt, experiment)
 
 CPU keeps the system-memory copy, the GPU works on a DEFAULT-heap mirror;

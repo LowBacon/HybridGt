@@ -1,7 +1,7 @@
 From 7e9d6d956fec68cb701db1c8aff3324d2430fe59 Mon Sep 17 00:00:00 2001
 From: LowBacon <lenni.a.jokitalo@gmail.com>
 Date: Tue, 24 Nov 2026 21:48:56 +0200
-Subject: [PATCH 12/13] Shaders: emulated wave ops under a lane guard by
+Subject: [PATCH 12/14] Shaders: emulated wave ops under a lane guard by
  predication (HybridGt)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

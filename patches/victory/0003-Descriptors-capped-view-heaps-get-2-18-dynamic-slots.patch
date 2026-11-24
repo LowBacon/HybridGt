@@ -1,7 +1,7 @@
 From 64dcef417d796406078490f5b67524594accf7c6 Mon Sep 17 00:00:00 2001
 From: HybridGt <hybridgt@localhost>
 Date: Tue, 24 Nov 2026 17:33:00 +0200
-Subject: [PATCH 03/13] Descriptors: capped view heaps get 2^18 dynamic slots,
+Subject: [PATCH 03/14] Descriptors: capped view heaps get 2^18 dynamic slots,
  last slot null (HybridGt)
 
 NVIDIA caps shader-visible view heaps at exactly 1,000,000 slots (RTX

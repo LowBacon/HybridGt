@@ -1,7 +1,7 @@
 From 6254da771915d55f5b064663b0779a3d6d02dab8 Mon Sep 17 00:00:00 2001
 From: HybridGt <hybridgt@localhost>
 Date: Tue, 24 Nov 2026 18:22:47 +0200
-Subject: [PATCH 10/13] Queues: honour queue fence waits
+Subject: [PATCH 10/14] Queues: honour queue fence waits
  (VICTORY_QUEUE_WAITS=1) (HybridGt)
 
 Queue::Wait did nothing and every ExecuteCommandLists ran at once, so

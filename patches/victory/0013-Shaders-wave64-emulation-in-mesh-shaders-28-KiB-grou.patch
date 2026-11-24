@@ -1,7 +1,7 @@
 From 74ed7fdd6c196d1184f50bfe03feb1f35428cb49 Mon Sep 17 00:00:00 2001
 From: LowBacon <lenni.a.jokitalo@gmail.com>
 Date: Tue, 24 Nov 2026 21:50:36 +0200
-Subject: [PATCH 13/13] Shaders: wave64 emulation in mesh shaders (28 KiB
+Subject: [PATCH 13/14] Shaders: wave64 emulation in mesh shaders (28 KiB
  group-shared limit) (HybridGt)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

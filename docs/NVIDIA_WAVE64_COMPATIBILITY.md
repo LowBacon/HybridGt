@@ -62,3 +62,17 @@ differs per lane need the exchange repeated until every lane has left.
 - `victory-shader` tests: 122 passed. Not yet measured: how many of the 469
   previously refused mesh shaders now translate (needs a `translate` pass over
   the title's shaders) and whether the GPU removal at world start is gone.
+
+## Offline translate of the title's shaders (2026-11-24, read-only, no launch)
+
+| Build | Mesh programs emitted (of 8,713) | Emulated wave64 | Host-wave fallback |
+|---|---|---|---|
+| 0013 (mesh emulation, no fallback) | 1,629 | 1,629 | 0 |
+| 0014 (fallback) | 8,214 | 1,486 | 6,728 |
+
+6,852 programs (6,729 mesh, 124 compute) put a cross-lane op inside real divergent
+control flow (non-uniform blocks), which predication of guards (0012) does not
+cover. The 6,728 fallback mesh programs run with 32-lane semantics on NVIDIA:
+their draws execute but cross-lane results can be wrong; they are the leading
+suspect for the run-20 GPU removal. Next: exchanges in non-uniform blocks
+(repeat-until-all-arrive loops), then one game run with DRED.
