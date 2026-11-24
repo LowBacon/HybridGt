@@ -1,0 +1,125 @@
+From 6748339ea8daca194325310a6fc81ce04253743e Mon Sep 17 00:00:00 2001
+From: LowBacon <lenni.a.jokitalo@gmail.com>
+Date: Tue, 24 Nov 2026 22:42:16 +0200
+Subject: [PATCH 2/3] Shaders: v_cvt_f32_f64 in integer arithmetic, tested on
+ GPU and WARP (HybridGt)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ crates/victory-shader/src/emit/lower.rs      | 56 ++++++++++++++++++++
+ crates/victory-shader/src/emit/valu_tests.rs | 35 ++++++++++++
+ 2 files changed, 91 insertions(+)
+
+diff --git a/crates/victory-shader/src/emit/lower.rs b/crates/victory-shader/src/emit/lower.rs
+index ca006ed..a6360fd 100644
+--- a/crates/victory-shader/src/emit/lower.rs
++++ b/crates/victory-shader/src/emit/lower.rs
+@@ -6981,6 +6981,62 @@ impl<'a> Lower<'a> {
+                 let r = self.s.m.cast(c, op, a, self.s.t.i32);
+                 int(self, r)
+             }
++            // HybridGt: a double to a float, in integer arithmetic (the
++            // module has no doubles): round to nearest even; results below
++            // the float range flush to a signed zero (the shader default
++            // denormal mode); infinities and NaNs (quieted) carry over.
++            "v_cvt_f32_f64" => {
++                let x = self.src64(inst, 0)?;
++                let (lo, hi) = self.split64(x);
++                let m = &mut self.s.m;
++                let k = |m: &mut super::bitcode::Module, v: u32| m.i32(v);
++                let (k20, k29, k23) = (k(m, 20), k(m, 29), k(m, 23));
++                let (k3, k1) = (k(m, 3), k(m, 1));
++                let sign_mask = k(m, 0x8000_0000);
++                let sign = m.bin(c, Bin::And, hi, sign_mask);
++                let e = m.bin(c, Bin::LShr, hi, k20);
++                let k7ff = k(m, 0x7ff);
++                let e = m.bin(c, Bin::And, e, k7ff);
++                let kfffff = k(m, 0xfffff);
++                let mhi = m.bin(c, Bin::And, hi, kfffff);
++                let top = m.bin(c, Bin::Shl, mhi, k3);
++                let low3 = m.bin(c, Bin::LShr, lo, k29);
++                let m23 = m.bin(c, Bin::Or, top, low3);
++                let krem = k(m, 0x1fff_ffff);
++                let rem = m.bin(c, Bin::And, lo, krem);
++                let half = k(m, 0x1000_0000);
++                let above = m.cmp(c, pred::IUGT, rem, half);
++                let tie = m.cmp(c, pred::EQ, rem, half);
++                let odd = m.bin(c, Bin::And, m23, k1);
++                let zero = k(m, 0);
++                let odd = m.cmp(c, pred::NE, odd, zero);
++                let tie_up = m.bin(c, Bin::And, tie, odd);
++                let up = m.bin(c, Bin::Or, above, tie_up);
++                let up = m.select(c, up, k1, zero);
++                let k896 = k(m, 896);
++                let e32 = m.bin(c, Bin::Sub, e, k896);
++                let ex = m.bin(c, Bin::Shl, e32, k23);
++                let mag = m.bin(c, Bin::Add, ex, m23);
++                let mag = m.bin(c, Bin::Add, mag, up);
++                let inf = k(m, 0x7f80_0000);
++                let tiny = m.cmp(c, pred::SLT, e32, k1);
++                let k255 = k(m, 255);
++                let big = m.cmp(c, pred::SGE, e32, k255);
++                let carried = m.cmp(c, pred::IUGE, mag, inf);
++                let big = m.bin(c, Bin::Or, big, carried);
++                let mag = m.select(c, big, inf, mag);
++                let mag = m.select(c, tiny, zero, mag);
++                let any = m.bin(c, Bin::Or, mhi, lo);
++                let has = m.cmp(c, pred::NE, any, zero);
++                let qnan = k(m, 0x7fc0_0000);
++                let special = m.select(c, has, qnan, inf);
++                let all = m.cmp(c, pred::EQ, e, k7ff);
++                let mag = m.select(c, all, special, mag);
++                let r = m.bin(c, Bin::Or, sign, mag);
++                let f32t = self.s.t.f32;
++                let r = self.s.m.cast(c, Cast::Bitcast, r, f32t);
++                float(self, r)
++            }
+             "v_cvt_f32_i32" | "v_cvt_f32_u32" | "v_cvt_f32_ubyte0" | "v_cvt_f32_ubyte1"
+             | "v_cvt_f32_ubyte2" | "v_cvt_f32_ubyte3" => {
+                 let mut a = s(self, 0)?;
+diff --git a/crates/victory-shader/src/emit/valu_tests.rs b/crates/victory-shader/src/emit/valu_tests.rs
+index 5072d6c..d3f1171 100644
+--- a/crates/victory-shader/src/emit/valu_tests.rs
++++ b/crates/victory-shader/src/emit/valu_tests.rs
+@@ -1264,3 +1264,38 @@ fn v_cmp_class_f16_matches_rdna2() {
+         );
+     });
+ }
++
++/// HybridGt: `v_cvt_f32_f64` against Rust's `as f32` (round to nearest even),
++/// with denormal results flushed to signed zero.
++#[test]
++fn v_cvt_f32_f64_rounds_like_ieee() {
++    // v_cvt_f32_f64 v0, v[1:2] (VOP1 opcode 0x00f)
++    let shader = build_valu_cs(&[vop1(0x00f, 0, vgpr(1))]);
++    let values: &[f64] = &[
++        0.0, -0.0, 1.0, -1.5, 0.1, 1.0 / 3.0, 3.4e38, 3.5e38, -1e300, 1e-30, 1e-40, -1e-50,
++        f64::INFINITY, f64::NEG_INFINITY, f64::NAN, 16777217.0, 16777219.0, 1.000000059604644775390625,
++        1.0000001788139343, 65504.0, 123456789.123,
++    ];
++    let inputs: Vec<[u32; 4]> = values
++        .iter()
++        .map(|v| {
++            let b = v.to_bits();
++            [b as u32, (b >> 32) as u32, 0, 0]
++        })
++        .collect();
++    run_cases(&shader, &inputs, |backend, i, _, got| {
++        let x = values[i];
++        if x.is_nan() {
++            assert!(f32::from_bits(got).is_nan(), "{backend}: NaN gave {got:#010x}");
++            return;
++        }
++        let mut want = x as f32;
++        if want != 0.0 && want.abs() < f32::MIN_POSITIVE {
++            want = 0.0f32.copysign(want);
++        }
++        if want == 0.0 {
++            want = 0.0f32.copysign(x as f32);
++        }
++        assert_eq!(got, want.to_bits(), "{backend}: v_cvt_f32_f64({x:e}) = {:e} ({got:#010x}), want {want:e}", f32::from_bits(got));
++    });
++}
+-- 
+2.56.1.windows.1
+

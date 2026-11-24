@@ -18,3 +18,14 @@ Measured on RTX 4070 Ti with patches 0001–0010 enabled (runs 16–19, before 2
 Loop cap 4096; dynamic slots; heap index limit as hang cause; garbage indirect args;
 GPU_UPLOAD shadows (14–48 s/frame); video-memory mirrors (patch 0009, worse);
 compute-only wave64 emulation alone (still hung until queue waits were added).
+
+## Fork runs (fxceless/victory-gta6 + HybridGt patches), 2026-11-24
+
+| Finding | Evidence | Status |
+|---|---|---|
+| Startup animation flickers back and forth | fork1, fork3 (VICTORY_RELAY=2), fork4 (no relay), fork5 (legacy texture switches) all flicker | Open; not relay, not the 5 texture switches |
+| Legacy texture switches lose Lucia's hair | user: hair visible in fork3 (defaults), gone in fork5 | Keep fork defaults |
+| Menus 30 fps, 0 dropped draws | fork3.log | OK |
+| 5 pipelines refused by the NVIDIA driver (4 compute, 1 mesh+pixel) | fork3/fork5 "host pipeline refused" E_INVALIDARG | Open; shaders to be saved next run |
+| Lighting shaders not translated: IrradianceCache_Shade, IrradianceCache_ShadeSecondary ("wave reduction where not every lane runs"), cascade shadows ("lane mask exchanged…"), RaytracingResolve | fork3/fork5 | Open |
+| Device methods 0x1c8 / 0x218 unimplemented (likely ray-tracing state objects): 29 pipelines skipped | fork1 | Open |

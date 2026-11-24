@@ -1,0 +1,136 @@
+From e4d393553eff6d30a877a0ce9fdc0238c501594b Mon Sep 17 00:00:00 2001
+From: LowBacon <lenni.a.jokitalo@gmail.com>
+Date: Tue, 24 Nov 2026 22:47:22 +0200
+Subject: [PATCH 3/3] Shaders: v_permlane16_b32 / v_permlanex16_b32, tested on
+ the GPU (HybridGt)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ crates/victory-shader/src/emit/lower.rs      | 39 ++++++++++++++
+ crates/victory-shader/src/emit/valu_tests.rs | 56 ++++++++++++++++++++
+ 2 files changed, 95 insertions(+)
+
+diff --git a/crates/victory-shader/src/emit/lower.rs b/crates/victory-shader/src/emit/lower.rs
+index a6360fd..1b55664 100644
+--- a/crates/victory-shader/src/emit/lower.rs
++++ b/crates/victory-shader/src/emit/lower.rs
+@@ -1262,6 +1262,8 @@ impl<'a> Lower<'a> {
+                 let n = i.name();
+                 n.starts_with("ds_swizzle")
+                     || n.contains("permute")
++                    // HybridGt: row permutes (within 32-lane halves)
++                    || n.starts_with("v_permlane")
+                     || n.starts_with("v_mbcnt")
+                     || matches!(n, "v_readlane_b32" | "v_writelane_b32")
+                     || matches!(&i.fields, Fields::Valu(v) if v.dpp.is_some())
+@@ -7244,6 +7246,43 @@ impl<'a> Lower<'a> {
+                 }
+                 Ok(())
+             }
++            // HybridGt: `v_permlane16_b32` / `v_permlanex16_b32 d, x, s1, s2`:
++            // lane l takes `x` of lane (row base) + nibble (l & 15) of the
++            // 64-bit select s2:s1, the row base being l's own 16-lane row
++            // (`16`) or the other row of its 32 lanes (`x16`). Inside 32-lane
++            // halves, so exact in host waves of 32 or 64. Read lanes are
++            // assumed active (FI and bound_ctrl, `op_sel`, are refused).
++            "v_permlane16_b32" | "v_permlanex16_b32" => {
++                if v.opsel != 0 {
++                    return Err("v_permlane with fetch-inactive or bound_ctrl");
++                }
++                let (x, s1, s2) = (s(self, 0)?, s(self, 1)?, s(self, 2)?);
++                self.cross_lane(false)?;
++                let l = self.lane_index();
++                let k = |m: &mut super::bitcode::Module, v: u32| m.i32(v);
++                let m = &mut self.s.m;
++                let (k15, k7, k8, k2, k16) = (k(m, 15), k(m, 7), k(m, 8), k(m, 2), k(m, 16));
++                let n = m.bin(c, Bin::And, l, k15);
++                let low = m.cmp(c, pred::IULT, n, k8);
++                let word = m.select(c, low, s1, s2);
++                let n7 = m.bin(c, Bin::And, n, k7);
++                let sh = m.bin(c, Bin::Shl, n7, k2);
++                let nib = m.bin(c, Bin::LShr, word, sh);
++                let nib = m.bin(c, Bin::And, nib, k15);
++                let base = if name == "v_permlanex16_b32" {
++                    let not31 = k(m, !31);
++                    let half = m.bin(c, Bin::And, l, not31);
++                    let row = m.bin(c, Bin::And, l, k16);
++                    let other = m.bin(c, Bin::Xor, row, k16);
++                    m.bin(c, Bin::Or, half, other)
++                } else {
++                    let not15 = k(m, !15);
++                    m.bin(c, Bin::And, l, not15)
++                };
++                let src = m.bin(c, Bin::Add, base, nib);
++                let r = self.read_lane(x, src);
++                int(self, r)
++            }
+             "v_readlane_b32" => {
+                 let (a, lane) = (s(self, 0)?, s(self, 1)?);
+                 // A computed lane in a pixel or vertex program is a host lane
+diff --git a/crates/victory-shader/src/emit/valu_tests.rs b/crates/victory-shader/src/emit/valu_tests.rs
+index d3f1171..a49f44d 100644
+--- a/crates/victory-shader/src/emit/valu_tests.rs
++++ b/crates/victory-shader/src/emit/valu_tests.rs
+@@ -1299,3 +1299,59 @@ fn v_cvt_f32_f64_rounds_like_ieee() {
+         assert_eq!(got, want.to_bits(), "{backend}: v_cvt_f32_f64({x:e}) = {:e} ({got:#010x}), want {want:e}", f32::from_bits(got));
+     });
+ }
++
++/// HybridGt: `v_permlane16_b32` / `v_permlanex16_b32` over 32 threads, each
++/// storing its result at dword 32 + thread, against the ISA's definition.
++#[test]
++fn v_permlane16_and_x16_match_rdna2() {
++    // (s1, s2): lane n of a row takes nibble n of s2:s1.
++    let (s1, s2) = (0x7654_3210u32 ^ 0x1357_9bdf, 0xfedc_ba98u32 ^ 0x2468_ace0);
++    for (op, x16) in [(0x377u16, false), (0x378u16, true)] {
++        let [p0, p1] = vop3(op, 7, vgpr(0), sgpr(1), sgpr(2));
++        let body = [
++            vop2(0x1a, 6, 0x82, 0), // v_lshlrev_b32 v6, 2, v0 (byte offset)
++            p0,
++            p1, // v_permlane(x)16_b32 v7, v0, s1, s2
++            // buffer_store_dword v7, v6, s[8:11], offen offset:128
++            0x38 << 26 | 0x1C << 18 | 1 << 12 | 128,
++            0x80 << 24 | (8 >> 2) << 16 | 7 << 8 | 6,
++        ];
++        let shader = build_cs(&body, 32, 0);
++        let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
++        let mut ran = 0;
++        // WARP's waves are 4 lanes: it refuses `WaveSize(32)`.
++        for (label, warp) in [("hardware", false)] {
++            let Ok(host) = Host::new(warp) else { continue };
++            let (root, pso) = host.compute_pipeline(&shader).expect("pipeline");
++            let inputs = [0, s1, s2, 0];
++            let mut ud = vec![0u32; shader.user_data_dwords().max(1) as usize];
++            for u in &shader.user_data {
++                ud[u.index as usize] = match (u.root, u.slot) {
++                    (RootType::Constants, 0) => inputs[u.dword as usize],
++                    _ => 0,
++                };
++            }
++            let out = host
++                .dispatch(&root, &pso, &Dispatch {
++                    roots: vec![(0, Root::Constants(ud))],
++                    views: &[View::RawUav(64)],
++                    samplers: &[],
++                    groups: [1, 1, 1],
++                })
++                .expect("dispatch");
++            for l in 0..32u32 {
++                let n = l & 15;
++                let word = if n < 8 { s1 } else { s2 };
++                let nib = word >> (4 * (n & 7)) & 15;
++                let base = if x16 { (l & !31) | ((l & 16) ^ 16) } else { l & !15 };
++                let want = base + nib;
++                assert_eq!(out[0][32 + l as usize], want, "{label}: x16={x16} lane {l}");
++            }
++            ran += 1;
++        }
++        if ran == 0 {
++            eprintln!("no SM 6.6 hardware device; v_permlane case not run");
++        }
++    }
++}
++
+-- 
+2.56.1.windows.1
+
