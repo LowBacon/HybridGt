@@ -45,6 +45,17 @@ fn main() {
         Ok(n) => println!("INFO largest shader-visible view heap: {n} slots"),
         Err(e) => println!("INFO largest shader-visible view heap: {e}"),
     }
+    println!("INFO GPU_UPLOAD heap supported: {}", gpu_upload_heap_supported(&gpu));
+    for p in [Placement::SystemL0, Placement::Video, Placement::GpuUpload] {
+        match bench_buffer_read(&gpu, p, 256) {
+            Ok(d) => println!(
+                "INFO read 256 MiB from {p:?}: {:.2} ms ({:.1} GB/s)",
+                d.as_secs_f64() * 1e3,
+                0.268435456 / d.as_secs_f64()
+            ),
+            Err(e) => println!("INFO read 256 MiB from {p:?}: {e}"),
+        }
+    }
     report("clear", &|| check_clear(&gpu));
     report("bc1-texture", &|| check_bc1_texture(&gpu));
     let stale = |producer| CountSource::Produced { value: 2, stale: u32::MAX, producer };

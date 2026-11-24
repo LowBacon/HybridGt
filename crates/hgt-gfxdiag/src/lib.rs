@@ -521,6 +521,117 @@ pub fn max_view_heap(gpu: &Gpu, lo: u32, hi: u32) -> Result<u32> {
 }
 
 // ---------------------------------------------------------------------------
+// Probe: where buffers shaders read should live.
+
+/// Where a benchmarked buffer lives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Placement {
+    /// CPU-visible system memory (`CUSTOM`, `WRITE_BACK`, `L0`): what VIctory
+    /// uses for its copies of title buffers. On a discrete GPU every read
+    /// crosses PCIe.
+    SystemL0,
+    /// Video memory, not CPU-visible (`DEFAULT`).
+    Video,
+    /// CPU-writable video memory (`GPU_UPLOAD`, needs Resizable BAR).
+    GpuUpload,
+}
+
+/// Whether the device offers `D3D12_HEAP_TYPE_GPU_UPLOAD`.
+pub fn gpu_upload_heap_supported(gpu: &Gpu) -> bool {
+    let mut o16 = D3D12_FEATURE_DATA_D3D12_OPTIONS16::default();
+    // SAFETY: a sized out structure.
+    unsafe {
+        gpu.device
+            .CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS16, &mut o16 as *mut _ as *mut c_void, size_of_val(&o16) as u32)
+            .is_ok()
+            && o16.GPUUploadHeapSupported.as_bool()
+    }
+}
+
+pub const READ_CS: &str = r#"
+RWByteAddressBuffer src : register(u0);
+RWByteAddressBuffer dst : register(u1);
+[numthreads(64, 1, 1)] void main(uint3 id : SV_DispatchThreadID) {
+    uint4 acc = 0;
+    [unroll] for (uint k = 0; k < 16; k++) { acc += src.Load4((id.x * 16 + k) * 16); }
+    if (acc.x == 0x12345678) dst.Store(0, acc.y);
+}
+"#;
+
+/// Time for one compute pass reading `mib` MiB of a buffer in `placement`
+/// (best of 3 submissions, wall time of submit + wait).
+pub fn bench_buffer_read(gpu: &Gpu, placement: Placement, mib: u64) -> Result<Duration> {
+    let (cs, _) = shaders::compile(READ_CS, "cs_6_0")?;
+    let bytes = mib << 20;
+    let flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+    let desc = D3D12_RESOURCE_DESC {
+        Dimension: D3D12_RESOURCE_DIMENSION_BUFFER,
+        Width: bytes,
+        Height: 1,
+        DepthOrArraySize: 1,
+        MipLevels: 1,
+        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        Layout: D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+        Flags: flags,
+        ..Default::default()
+    };
+    let props = match placement {
+        Placement::SystemL0 => D3D12_HEAP_PROPERTIES {
+            Type: D3D12_HEAP_TYPE_CUSTOM,
+            CPUPageProperty: D3D12_CPU_PAGE_PROPERTY_WRITE_BACK,
+            MemoryPoolPreference: D3D12_MEMORY_POOL_L0,
+            ..Default::default()
+        },
+        Placement::Video => D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_DEFAULT, ..Default::default() },
+        Placement::GpuUpload => {
+            if !gpu_upload_heap_supported(gpu) {
+                return Err(Error::Skip("no GPU_UPLOAD heap (Resizable BAR off or unsupported)".into()));
+            }
+            D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_GPU_UPLOAD, ..Default::default() }
+        }
+    };
+    let mut src: Option<ID3D12Resource> = None;
+    // SAFETY: descriptors are locals.
+    unsafe {
+        gpu.device.CreateCommittedResource(&props, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, None, &mut src)?;
+    }
+    let src = src.ok_or_else(|| Error::Fail("no buffer".into()))?;
+    let dst = gpu.buffer(D3D12_HEAP_TYPE_DEFAULT, 256, flags, D3D12_RESOURCE_STATE_COMMON)?;
+    let uav = |reg| D3D12_ROOT_PARAMETER {
+        ParameterType: D3D12_ROOT_PARAMETER_TYPE_UAV,
+        Anonymous: D3D12_ROOT_PARAMETER_0 { Descriptor: D3D12_ROOT_DESCRIPTOR { ShaderRegister: reg, RegisterSpace: 0 } },
+        ShaderVisibility: D3D12_SHADER_VISIBILITY_ALL,
+    };
+    let params = [uav(0), uav(1)];
+    let root = gpu.root_signature(&D3D12_ROOT_SIGNATURE_DESC { NumParameters: 2, pParameters: params.as_ptr(), ..Default::default() })?;
+    // SAFETY: the descriptor's pointers outlive the call.
+    let pso: ID3D12PipelineState = unsafe {
+        gpu.device.CreateComputePipelineState(&D3D12_COMPUTE_PIPELINE_STATE_DESC {
+            pRootSignature: borrowed_root(&root),
+            CS: bytecode(&cs),
+            ..Default::default()
+        })?
+    };
+    let groups = (bytes / (16 * 16 * 64)) as u32;
+    let mut best = Duration::MAX;
+    for _ in 0..3 {
+        let took = gpu.run(|list| {
+            // SAFETY: recording into an open list with live resources.
+            unsafe {
+                list.SetComputeRootSignature(&root);
+                list.SetPipelineState(&pso);
+                list.SetComputeRootUnorderedAccessView(0, src.GetGPUVirtualAddress());
+                list.SetComputeRootUnorderedAccessView(1, dst.GetGPUVirtualAddress());
+                list.Dispatch(groups, 1, 1);
+            }
+            Ok(())
+        })?;
+        best = best.min(took);
+    }
+    Ok(best)
+}
+
+// ---------------------------------------------------------------------------
 // Check 1: clear and read back.
 
 /// The baseline: a cleared target reads back as its clear colour. If this
