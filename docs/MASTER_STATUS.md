@@ -35,3 +35,17 @@ lighting, characters, gameplay, performance.
 ## Tests
 
 `cargo test --workspace`: 27 passed, 0 failed (2026-11-24).
+
+## 2026-11-24 evening: first visible 3D world
+
+Running the public fork `fxceless/victory-gta6` @ `1684989` (GPL-3.0-or-later,
+same base `ffe310e`), built unmodified at `E:\GTA\HybridGt-work\victory-gta6`:
+the user saw **3D models and lighting on screen** on the RTX 4070 Ti (first time
+in this project). Measured in `logs/fork1.log`: up to 9,375 draws/frame (our
+build: ~1,460); 0.4 fps, ~2,000 ms/frame of GPU time in one 14-list compute
+submission; ~1,100 pipelines still being made on first start (flicker, stale
+subtitles). Leading cause of our black world per the fork's notes: meshlet
+culling read its scene buffers through the wrong view type.
+
+Next: timed run (`VICTORY_GPU_TIMING=1`, diag build) to name the 2 s compute
+work; then port HybridGt's wave64 mesh work onto the fork if it helps.

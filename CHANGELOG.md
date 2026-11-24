@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-11-24
+- Milestone: 3D models and lighting visible on RTX 4070 Ti using the fxceless/victory-gta6 fork (user report). Not playable: 0.4 fps, flicker on first start.
 - VIctory patch 0014: mesh programs the wave64 emulation cannot follow fall back to host waves (counted). Offline translate: 8,214 of 8,713 mesh programs emit (1,486 emulated, 6,728 fallback), was 1,629 with 0013 alone.
 - VIctory patches 0012–0013: guarded wave ops by predication; wave64 emulation in mesh shaders.
 - gfxdiag: divergent wave64 ballot by predication proven correct (compute + mesh, RTX 4070 Ti).
