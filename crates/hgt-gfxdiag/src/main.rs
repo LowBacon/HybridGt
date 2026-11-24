@@ -41,6 +41,10 @@ fn main() {
             }
         }
     };
+    match max_view_heap(&gpu, 1 << 16, 1 << 24) {
+        Ok(n) => println!("INFO largest shader-visible view heap: {n} slots"),
+        Err(e) => println!("INFO largest shader-visible view heap: {e}"),
+    }
     report("clear", &|| check_clear(&gpu));
     report("bc1-texture", &|| check_bc1_texture(&gpu));
     let stale = |producer| CountSource::Produced { value: 2, stale: u32::MAX, producer };

@@ -482,6 +482,45 @@ fn empty_root(gpu: &Gpu) -> Result<ID3D12RootSignature> {
 }
 
 // ---------------------------------------------------------------------------
+// Probe: descriptor heap capacity.
+
+/// The largest shader-visible CBV/SRV/UAV heap the device creates, found by
+/// binary search between `lo` (known to work) and `hi`. VIctory needs the
+/// title's heap plus its own dynamic slots in one heap; GTA VI's world asks
+/// for 1,245,184 title slots.
+pub fn max_view_heap(gpu: &Gpu, lo: u32, hi: u32) -> Result<u32> {
+    let make = |n: u32| -> bool {
+        // SAFETY: plain heap creation; the heap is dropped at once.
+        unsafe {
+            gpu.device
+                .CreateDescriptorHeap::<ID3D12DescriptorHeap>(&D3D12_DESCRIPTOR_HEAP_DESC {
+                    Type: D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
+                    NumDescriptors: n,
+                    Flags: D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE,
+                    NodeMask: 0,
+                })
+                .is_ok()
+        }
+    };
+    if !make(lo) {
+        return Err(Error::Fail(format!("a shader-visible view heap of {lo} slots was refused")));
+    }
+    if make(hi) {
+        return Ok(hi);
+    }
+    let (mut ok, mut bad) = (lo, hi);
+    while bad - ok > 1 {
+        let mid = ok + (bad - ok) / 2;
+        if make(mid) {
+            ok = mid;
+        } else {
+            bad = mid;
+        }
+    }
+    Ok(ok)
+}
+
+// ---------------------------------------------------------------------------
 // Check 1: clear and read back.
 
 /// The baseline: a cleared target reads back as its clear colour. If this
