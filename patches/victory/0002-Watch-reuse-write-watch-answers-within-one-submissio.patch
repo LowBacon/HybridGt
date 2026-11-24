@@ -1,7 +1,7 @@
 From 0a050c33e4f9725b0d19f23fe3fe42142ce308f7 Mon Sep 17 00:00:00 2001
 From: HybridGt <hybridgt@localhost>
 Date: Tue, 24 Nov 2026 17:15:48 +0200
-Subject: [PATCH 02/11] Watch: reuse write-watch answers within one submission
+Subject: [PATCH 02/13] Watch: reuse write-watch answers within one submission
  (HybridGt)
 
 Each submission asks the kernel about a range once; later flushes in the

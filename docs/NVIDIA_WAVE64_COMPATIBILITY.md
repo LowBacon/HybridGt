@@ -49,3 +49,16 @@ the console mask `0x00000092_49249249` in compute and mesh, on the RTX 4070 Ti a
 WARP. Still to do: apply this in VIctory's translator (`emit/lower.rs`), where
 the op sits in arbitrarily nested control flow and loops; loops whose trip count
 differs per lane need the exchange repeated until every lane has left.
+
+## Translator change (patches 0012–0013, 2026-11-24)
+
+- 0012: an emulated cross-lane op under a lane (EXEC) guard, in a block every
+  thread runs, is now translated: the exchange runs in all threads and the guard
+  masks each lane's contribution (reductions/prefix: neutral value; first-lane
+  read: first guarded lane; lane read: unaffected). Real divergent branches and
+  loops (non-uniform blocks) are still refused.
+- 0013: wave64 emulation enabled for mesh shaders, within D3D12's 28 KiB mesh
+  group-shared limit (was compute only).
+- `victory-shader` tests: 122 passed. Not yet measured: how many of the 469
+  previously refused mesh shaders now translate (needs a `translate` pass over
+  the title's shaders) and whether the GPU removal at world start is gone.

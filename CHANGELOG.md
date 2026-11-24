@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-11-24
+- VIctory patches 0012–0013: guarded wave ops by predication; wave64 emulation in mesh shaders.
 - gfxdiag: divergent wave64 ballot by predication proven correct (compute + mesh, RTX 4070 Ti).
 - gfxdiag: wave64 check also runs as a mesh shader (passes on RTX 4070 Ti and WARP).
 - gfxdiag: `wave64` check — measures host wave size and proves two-half

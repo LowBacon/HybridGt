@@ -1,7 +1,7 @@
 From 536d416a526834f42ae2964ed316f4e927820ea5 Mon Sep 17 00:00:00 2001
 From: HybridGt <hybridgt@localhost>
 Date: Tue, 24 Nov 2026 17:49:28 +0200
-Subject: [PATCH 07/11] Tools: VICTORY_SHADER_HASH filter for
+Subject: [PATCH 07/13] Tools: VICTORY_SHADER_HASH filter for
  shader-info/translate; finer smem-as-data reasons (HybridGt)
 
 Translates or disassembles only the shaders with the listed runtime
