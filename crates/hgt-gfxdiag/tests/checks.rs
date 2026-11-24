@@ -144,3 +144,13 @@ fn wave64_two_half_emulation_matches_console_in_mesh_shader() {
     assert!(r.emulated_matches_console, "{r:?}");
     assert_eq!(r.native_matches_console, r.host_lanes >= 64, "{r:?}");
 }
+
+#[test]
+fn wave64_divergent_ballot_by_predication() {
+    for stage in [Wave64Stage::Compute, Wave64Stage::Mesh] {
+        let Some(gpu) = gpu() else { return };
+        let Some(m) = expect("wave64 divergent", check_wave64_divergent(&gpu, stage)) else { continue };
+        eprintln!("wave64 divergent {stage:?}: {:#010x} {:#010x}", m.0, m.1);
+        assert_eq!(m, console_divergent_ballot(), "{stage:?}");
+    }
+}

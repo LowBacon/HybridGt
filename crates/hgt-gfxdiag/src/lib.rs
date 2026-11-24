@@ -1189,3 +1189,71 @@ pub fn check_wave64_stage(gpu: &Gpu, stage: Wave64Stage) -> Result<Wave64Report>
     let emulated_matches_console = words[256] == lo && words[257] == hi;
     Ok(Wave64Report { host_lanes, native_matches_console, emulated_matches_console })
 }
+
+/// The console's mask for `if (t < 40) ballot(t % 3 == 0)`, as (low, high).
+pub fn console_divergent_ballot() -> (u32, u32) {
+    let m: u64 = (0..40u32).filter(|t| t % 3 == 0).fold(0, |m, t| m | 1 << t);
+    (m as u32, (m >> 32) as u32)
+}
+
+/// Runs the predicated divergent ballot and returns the emulated mask.
+pub fn check_wave64_divergent(gpu: &Gpu, stage: Wave64Stage) -> Result<(u32, u32)> {
+    if stage == Wave64Stage::Mesh && gpu.info.mesh_shader_tier == 0 {
+        return Err(Error::Skip("no mesh shader support".into()));
+    }
+    let src = shaders::wave64_divergent(stage == Wave64Stage::Mesh);
+    let size = 256;
+    let flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+    let out = gpu.buffer(D3D12_HEAP_TYPE_DEFAULT, size, flags, D3D12_RESOURCE_STATE_COMMON)?;
+    let back = gpu.buffer(D3D12_HEAP_TYPE_READBACK, size, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST)?;
+    let params = [D3D12_ROOT_PARAMETER {
+        ParameterType: D3D12_ROOT_PARAMETER_TYPE_UAV,
+        Anonymous: D3D12_ROOT_PARAMETER_0 { Descriptor: D3D12_ROOT_DESCRIPTOR { ShaderRegister: 0, RegisterSpace: 0 } },
+        ShaderVisibility: D3D12_SHADER_VISIBILITY_ALL,
+    }];
+    let root = gpu.root_signature(&D3D12_ROOT_SIGNATURE_DESC { NumParameters: 1, pParameters: params.as_ptr(), ..Default::default() })?;
+    let pso: ID3D12PipelineState = match stage {
+        Wave64Stage::Compute => {
+            let (cs, _) = shaders::compile(&src, "cs_6_0")?;
+            // SAFETY: the descriptor's pointers outlive the call.
+            unsafe {
+                gpu.device.CreateComputePipelineState(&D3D12_COMPUTE_PIPELINE_STATE_DESC {
+                    pRootSignature: borrowed_root(&root),
+                    CS: bytecode(&cs),
+                    ..Default::default()
+                })?
+            }
+        }
+        Wave64Stage::Mesh => {
+            let (ms, _) = shaders::compile(&src, "ms_6_5")?;
+            mesh_pso(gpu, &root, &ms)?
+        }
+    };
+    gpu.run(|list| {
+        // SAFETY: recording into an open list with live resources.
+        unsafe {
+            list.SetPipelineState(&pso);
+            if stage == Wave64Stage::Mesh {
+                list.SetGraphicsRootSignature(&root);
+                list.SetGraphicsRootUnorderedAccessView(0, out.GetGPUVirtualAddress());
+                list.cast::<ID3D12GraphicsCommandList6>()?.DispatchMesh(1, 1, 1);
+            } else {
+                list.SetComputeRootSignature(&root);
+                list.SetComputeRootUnorderedAccessView(0, out.GetGPUVirtualAddress());
+                list.Dispatch(1, 1, 1);
+            }
+            list.ResourceBarrier(&[transition(&out, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE)]);
+            list.CopyBufferRegion(&back, 0, &out, 0, size);
+        }
+        Ok(())
+    })?;
+    let mut w = [0u32; 2];
+    // SAFETY: the readback buffer holds `size` bytes and the GPU is done.
+    unsafe {
+        let mut p = std::ptr::null_mut();
+        back.Map(0, None, Some(&mut p))?;
+        std::ptr::copy_nonoverlapping(p as *const u32, w.as_mut_ptr(), 2);
+        back.Unmap(0, None);
+    }
+    Ok((w[0], w[1]))
+}

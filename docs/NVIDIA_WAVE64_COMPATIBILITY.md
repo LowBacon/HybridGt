@@ -42,7 +42,10 @@ All 9,282 mesh shaders of the title are wave64. VIctory's wave64 emulation
 
 The emulation joins halves with a group barrier. A barrier must be reached by
 every thread of the group, so a cross-lane op inside a branch only some threads
-take cannot use it. Candidate fix (not implemented): make every thread execute
-the op site (predicate the branch body instead of branching around it, so all 64
-threads arrive and inactive lanes contribute 0 to ballots). Needs a test in this
-harness with a divergent ballot before going into the translator.
+take cannot use it. Fix, proven in this harness (`check_wave64_divergent`): predicate instead of
+branch. Every thread reaches the exchange, so the barrier is legal, and a thread
+outside the branch contributes 0. For `if (t < 40) ballot(t % 3 == 0)` it gives
+the console mask `0x00000092_49249249` in compute and mesh, on the RTX 4070 Ti and
+WARP. Still to do: apply this in VIctory's translator (`emit/lower.rs`), where
+the op sits in arbitrarily nested control flow and loops; loops whose trip count
+differs per lane need the exchange repeated until every lane has left.

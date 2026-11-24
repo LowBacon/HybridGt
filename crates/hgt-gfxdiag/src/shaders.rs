@@ -123,3 +123,36 @@ void main(uint t : SV_GroupIndex, out vertices float4 v[1] : SV_Position, out in
     if (t == 0) o.Store2(64 * 16, uint2(g[0], g[1]));
 }
 "#;
+
+/// Divergent wave64 ballot, the console code shape
+/// `if (t < 40) { m = ballot(t % 3 == 0); }` emulated by predication: every
+/// thread reaches the exchange (so the group barrier is legal) and a thread
+/// outside the branch contributes nothing. Thread 0 stores the 64-bit mask.
+/// `STAGE_HEAD` is replaced by the compute or mesh entry signature.
+pub const WAVE64_DIVERGENT: &str = r#"
+RWByteAddressBuffer o : register(u0);
+groupshared uint g[2];
+STAGE_HEAD {
+    STAGE_PROLOGUE
+    bool active = t < 40;            // the branch condition
+    bool p = active && (t % 3) == 0; // the ballot's operand, masked by it
+    if (t < 2) g[t] = 0;
+    GroupMemoryBarrierWithGroupSync();
+    if (p) InterlockedOr(g[t / 32], 1u << (t % 32));
+    GroupMemoryBarrierWithGroupSync();
+    uint2 m = uint2(g[0], g[1]);
+    if (active && t == 0) o.Store2(0, m);
+}
+"#;
+
+pub fn wave64_divergent(mesh: bool) -> String {
+    let (head, pro) = if mesh {
+        (
+            "[outputtopology(\"triangle\")] [numthreads(64, 1, 1)] void main(uint t : SV_GroupIndex, out vertices float4 v[1] : SV_Position, out indices uint3 tri[1])",
+            "SetMeshOutputCounts(1, 0); if (t == 0) v[0] = float4(0, 0, 0, 1);",
+        )
+    } else {
+        ("[numthreads(64, 1, 1)] void main(uint t : SV_GroupIndex)", "")
+    };
+    WAVE64_DIVERGENT.replace("STAGE_HEAD", head).replace("STAGE_PROLOGUE", pro)
+}
