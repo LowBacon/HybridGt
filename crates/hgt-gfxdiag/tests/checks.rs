@@ -135,3 +135,12 @@ fn wave64_two_half_emulation_matches_console() {
     // Native waves narrower than 64 cannot give the console's answer.
     assert_eq!(r.native_matches_console, r.host_lanes >= 64, "{r:?}");
 }
+
+#[test]
+fn wave64_two_half_emulation_matches_console_in_mesh_shader() {
+    let Some(gpu) = gpu() else { return };
+    let Some(r) = expect("wave64 mesh", check_wave64_stage(&gpu, Wave64Stage::Mesh)) else { return };
+    eprintln!("wave64 mesh: {r:?}");
+    assert!(r.emulated_matches_console, "{r:?}");
+    assert_eq!(r.native_matches_console, r.host_lanes >= 64, "{r:?}");
+}

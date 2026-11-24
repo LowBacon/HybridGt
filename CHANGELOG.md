@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-11-24
+- gfxdiag: wave64 check also runs as a mesh shader (passes on RTX 4070 Ti and WARP).
 - gfxdiag: `wave64` check — measures host wave size and proves two-half
   wave64 ballot emulation against the console answer (RTX 4070 Ti: 32 lanes).
 - Patch series 0001–0011 exported (adds wave64 emulation, queue waits, title).

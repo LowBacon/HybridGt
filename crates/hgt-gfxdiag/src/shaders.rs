@@ -102,3 +102,24 @@ groupshared uint g[2];
     if (t == 0) o.Store2(64 * 16, uint2(g[0], g[1]));
 }
 "#;
+
+/// The wave64 probe as a mesh shader (no primitives out): the same body and
+/// output layout as `WAVE64_CS`, so one comparison serves both stages.
+pub const WAVE64_MS: &str = r#"
+RWByteAddressBuffer o : register(u0);
+groupshared uint g[2];
+[outputtopology("triangle")]
+[numthreads(64, 1, 1)]
+void main(uint t : SV_GroupIndex, out vertices float4 v[1] : SV_Position, out indices uint3 tri[1]) {
+    SetMeshOutputCounts(1, 0);
+    if (t == 0) v[0] = float4(0, 0, 0, 1);
+    bool p = (t % 3) == 0;
+    uint4 b = WaveActiveBallot(p);
+    if (t < 2) g[t] = 0;
+    GroupMemoryBarrierWithGroupSync();
+    if (p) InterlockedOr(g[t / 32], 1u << (t % 32));
+    GroupMemoryBarrierWithGroupSync();
+    o.Store4(t * 16, uint4(WaveGetLaneCount(), WaveGetLaneIndex(), b.x, b.y));
+    if (t == 0) o.Store2(64 * 16, uint2(g[0], g[1]));
+}
+"#;

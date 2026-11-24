@@ -1063,7 +1063,54 @@ pub fn console_ballot() -> (u32, u32) {
 /// console's answer. Also checks that each native ballot is consistent with
 /// the host's own lane count (a host bug would fail here, not a mismatch).
 pub fn check_wave64(gpu: &Gpu) -> Result<Wave64Report> {
-    let (cs, _) = shaders::compile(shaders::WAVE64_CS, "cs_6_0")?;
+    check_wave64_stage(gpu, Wave64Stage::Compute)
+}
+
+/// The shader stage a wave64 check runs in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Wave64Stage {
+    Compute,
+    /// Needs mesh shader tier 1; skipped without it.
+    Mesh,
+}
+
+#[repr(C, align(8))]
+struct Sub<T> {
+    kind: D3D12_PIPELINE_STATE_SUBOBJECT_TYPE,
+    data: T,
+}
+
+/// A mesh-only pipeline: root signature, mesh shader, no depth, no targets.
+fn mesh_pso(gpu: &Gpu, root: &ID3D12RootSignature, ms: &[u8]) -> Result<ID3D12PipelineState> {
+    #[repr(C)]
+    struct Stream {
+        root: Sub<ManuallyDrop<Option<ID3D12RootSignature>>>,
+        ms: Sub<D3D12_SHADER_BYTECODE>,
+        depth: Sub<D3D12_DEPTH_STENCIL_DESC>,
+    }
+    let mut stream = Stream {
+        root: Sub { kind: D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE, data: borrowed_root(root) },
+        ms: Sub { kind: D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_MS, data: bytecode(ms) },
+        depth: Sub {
+            kind: D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL,
+            data: D3D12_DEPTH_STENCIL_DESC { DepthEnable: false.into(), ..Default::default() },
+        },
+    };
+    let device: ID3D12Device2 = gpu.device.cast()?;
+    // SAFETY: the stream is a local laid out as D3D12 expects; its pointers outlive the call.
+    unsafe {
+        Ok(device.CreatePipelineState(&D3D12_PIPELINE_STATE_STREAM_DESC {
+            SizeInBytes: std::mem::size_of::<Stream>(),
+            pPipelineStateSubobjectStream: &mut stream as *mut Stream as *mut c_void,
+        })?)
+    }
+}
+
+/// [`check_wave64`] in the given stage.
+pub fn check_wave64_stage(gpu: &Gpu, stage: Wave64Stage) -> Result<Wave64Report> {
+    if stage == Wave64Stage::Mesh && gpu.info.mesh_shader_tier == 0 {
+        return Err(Error::Skip("no mesh shader support".into()));
+    }
     let size = 64 * 16 + 16;
     let flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
     let out = gpu.buffer(D3D12_HEAP_TYPE_DEFAULT, size, flags, D3D12_RESOURCE_STATE_COMMON)?;
@@ -1074,21 +1121,36 @@ pub fn check_wave64(gpu: &Gpu) -> Result<Wave64Report> {
         ShaderVisibility: D3D12_SHADER_VISIBILITY_ALL,
     }];
     let root = gpu.root_signature(&D3D12_ROOT_SIGNATURE_DESC { NumParameters: 1, pParameters: params.as_ptr(), ..Default::default() })?;
-    // SAFETY: the descriptor's pointers outlive the call.
-    let pso: ID3D12PipelineState = unsafe {
-        gpu.device.CreateComputePipelineState(&D3D12_COMPUTE_PIPELINE_STATE_DESC {
-            pRootSignature: borrowed_root(&root),
-            CS: bytecode(&cs),
-            ..Default::default()
-        })?
+    let pso: ID3D12PipelineState = match stage {
+        Wave64Stage::Compute => {
+            let (cs, _) = shaders::compile(shaders::WAVE64_CS, "cs_6_0")?;
+            // SAFETY: the descriptor's pointers outlive the call.
+            unsafe {
+                gpu.device.CreateComputePipelineState(&D3D12_COMPUTE_PIPELINE_STATE_DESC {
+                    pRootSignature: borrowed_root(&root),
+                    CS: bytecode(&cs),
+                    ..Default::default()
+                })?
+            }
+        }
+        Wave64Stage::Mesh => {
+            let (ms, _) = shaders::compile(shaders::WAVE64_MS, "ms_6_5")?;
+            mesh_pso(gpu, &root, &ms)?
+        }
     };
     gpu.run(|list| {
         // SAFETY: recording into an open list with live resources.
         unsafe {
-            list.SetComputeRootSignature(&root);
             list.SetPipelineState(&pso);
-            list.SetComputeRootUnorderedAccessView(0, out.GetGPUVirtualAddress());
-            list.Dispatch(1, 1, 1);
+            if stage == Wave64Stage::Mesh {
+                list.SetGraphicsRootSignature(&root);
+                list.SetGraphicsRootUnorderedAccessView(0, out.GetGPUVirtualAddress());
+                list.cast::<ID3D12GraphicsCommandList6>()?.DispatchMesh(1, 1, 1);
+            } else {
+                list.SetComputeRootSignature(&root);
+                list.SetComputeRootUnorderedAccessView(0, out.GetGPUVirtualAddress());
+                list.Dispatch(1, 1, 1);
+            }
             list.ResourceBarrier(&[transition(&out, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE)]);
             list.CopyBufferRegion(&back, 0, &out, 0, size);
         }

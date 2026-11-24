@@ -4,8 +4,10 @@
 
 | Adapter | Host lanes | Native ballot = console wave64 ballot | Two-half emulated ballot = console |
 |---|---|---|---|
-| RTX 4070 Ti | 32 | **no** | yes |
-| WARP | (reported by test) | per lane count | yes |
+| RTX 4070 Ti, compute | 32 | **no** | yes |
+| RTX 4070 Ti, mesh | 32 | **no** | yes |
+| WARP, compute | 4 | no | yes |
+| WARP, mesh | 4 | no | yes |
 
 Test: one 64-thread group, predicate `t % 3 == 0`. The console (RDNA2, wave64)
 answers one 64-bit mask for all 64 threads. On the 4070 Ti each thread sees only
@@ -28,9 +30,19 @@ All 9,282 mesh shaders of the title are wave64. VIctory's wave64 emulation
 
 ## Still needed
 
-1. A mesh-stage version of this check (emulation in a mesh shader with its
-   28 KiB group-shared limit and SetMeshOutputCounts uniformity rule).
-2. Mesh-stage emulation in the translator that also handles cross-lane ops
+1. Done: mesh-stage check (`check_wave64_stage(.., Mesh)`). Two-half emulation
+   through group-shared memory and group barriers is correct in mesh shaders on
+   the 4070 Ti, when the cross-lane op is reached by all 64 threads.
+2. Open, the actual blocker: Mesh-stage emulation in the translator that also handles cross-lane ops
    inside divergent control flow (the 469 refusals).
 3. Vertex and pixel stages: cannot use group-shared memory; need a separate
    strategy (e.g. per-wave-half analysis or WaveSize-aware rewrite).
+
+## Why the 469 refusals are hard
+
+The emulation joins halves with a group barrier. A barrier must be reached by
+every thread of the group, so a cross-lane op inside a branch only some threads
+take cannot use it. Candidate fix (not implemented): make every thread execute
+the op site (predicate the branch body instead of branching around it, so all 64
+threads arrive and inactive lanes contribute 0 to ballots). Needs a test in this
+harness with a divergent ballot before going into the translator.
