@@ -33,6 +33,42 @@ pub fn decode_bc1_block(block: &[u8; 8]) -> [[u8; 4]; 16] {
     std::array::from_fn(|i| palette[((bits >> (2 * i)) & 3) as usize])
 }
 
+/// Decodes one BC1 block the way NVIDIA hardware does. Its interpolated
+/// colours differ from the exact (2a+b)/3 by up to about 5/255 in green.
+///
+/// The formula is the one published in rgbcx (Rich Geldreich,
+/// <https://github.com/richgel999/bc7enc>, public domain / MIT) as
+/// `bc1_approx_mode::cBC1NVidia`. It was re-typed from that description, and
+/// an RTX 4070 Ti read-back (driver 32.0.16.2124) confirmed it: see
+/// `nvidia_mode_matches_rtx_readback`.
+pub fn decode_bc1_block_nvidia(block: &[u8; 8]) -> [[u8; 4]; 16] {
+    let c0 = u16::from_le_bytes([block[0], block[1]]);
+    let c1 = u16::from_le_bytes([block[2], block[3]]);
+    let (r0, b0) = (i32::from((c0 >> 11) & 0x1F), i32::from(c0 & 0x1F));
+    let (r1, b1) = (i32::from((c1 >> 11) & 0x1F), i32::from(c1 & 0x1F));
+    let a = rgb565(c0);
+    let b = rgb565(c1);
+    let (g0, g1) = (i32::from(a[1]), i32::from(b[1]));
+    let g = |from: i32, to: i32, k: i32| ((256 * from + (to - from) / 4 + 128 + (to - from) * k) / 256) as u8;
+    let palette: [[u8; 4]; 4] = if c0 > c1 {
+        [
+            [a[0], a[1], a[2], 255],
+            [b[0], b[1], b[2], 255],
+            [(((2 * r0 + r1) * 22) / 8) as u8, g(g0, g1, 80), (((2 * b0 + b1) * 22) / 8) as u8, 255],
+            [(((2 * r1 + r0) * 22) / 8) as u8, g(g1, g0, 80), (((2 * b1 + b0) * 22) / 8) as u8, 255],
+        ]
+    } else {
+        [
+            [a[0], a[1], a[2], 255],
+            [b[0], b[1], b[2], 255],
+            [(((r0 + r1) * 33) / 8) as u8, g(g0, g1, 128), (((b0 + b1) * 33) / 8) as u8, 255],
+            [0, 0, 0, 0],
+        ]
+    };
+    let bits = u32::from_le_bytes([block[4], block[5], block[6], block[7]]);
+    std::array::from_fn(|i| palette[((bits >> (2 * i)) & 3) as usize])
+}
+
 /// Encodes a block whose 16 texels all use one palette entry of the two
 /// endpoints (`index` 0 or 1). Fixtures only.
 pub fn solid_bc1_block(c0: u16, c1: u16, index: u8) -> [u8; 8] {
@@ -78,6 +114,19 @@ mod tests {
         let t = decode_bc1_block(&block);
         assert_eq!(t[0], [128, 128, 128, 255]);
         assert_eq!(t[1], [0, 0, 0, 0]);
+    }
+
+    /// Values read back from an RTX 4070 Ti sampling a white/black BC1 block
+    /// with indices 0,1,2,3 (hgt-gfxdiag bc1-texture, 2026-11-24).
+    #[test]
+    fn nvidia_mode_matches_rtx_readback() {
+        let mut block = solid_bc1_block(0xFFFF, 0x0000, 0);
+        block[4..8].copy_from_slice(&0b11_10_01_00u32.to_le_bytes());
+        let t = decode_bc1_block_nvidia(&block);
+        assert_eq!(t[0], [255, 255, 255, 255]);
+        assert_eq!(t[1], [0, 0, 0, 255]);
+        assert_eq!(t[2], [170, 175, 170, 255]);
+        assert_eq!(t[3], [85, 80, 85, 255]);
     }
 
     #[test]

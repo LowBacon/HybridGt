@@ -1,0 +1,24 @@
+[package]
+name = "hgt-gfxdiag"
+description = "Independent D3D12 diagnostic harness: small, known GPU workloads with read-back checks."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+hgt-texture = { path = "../hgt-texture" }
+
+[dependencies.windows]
+workspace = true
+features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D12",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+]
+
+[lints]
+workspace = true
