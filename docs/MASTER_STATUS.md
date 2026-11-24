@@ -40,7 +40,7 @@ lighting, characters, gameplay, performance.
 
 Running the public fork `fxceless/victory-gta6` @ `1684989` (GPL-3.0-or-later,
 same base `ffe310e`), built unmodified at `E:\GTA\HybridGt-work\victory-gta6`:
-the user saw **3D models and lighting on screen** on the RTX 4070 Ti (first time
+the user saw **3D models and lighting on screen** and **moved the player** (about 1 fps; some models and textures missing) on the RTX 4070 Ti (first time
 in this project). Measured in `logs/fork1.log`: up to 9,375 draws/frame (our
 build: ~1,460); 0.4 fps, ~2,000 ms/frame of GPU time in one 14-list compute
 submission; ~1,100 pipelines still being made on first start (flicker, stale
