@@ -5,6 +5,9 @@ HybridGt is GPL-3.0-or-later. This file lists every outside project HybridGt use
 | Project | Licence | How it is used | Changes |
 |---|---|---|---|
 | [VIctory](https://github.com/Marvisak/VIctory) `victory-formats` at `ffe310eb2098e52169f4c44db5ffdabf43a72622` | GPL-3.0-or-later | A Cargo git dependency, pinned to that commit (BCPack decoder and its shipped format tables). No VIctory source is copied into this repository. | None |
+| [victory-gta6](https://github.com/fxceless/victory-gta6) (fork of VIctory) at `16849898f3282c4a7189b1557289c194bc720052` | GPL-3.0-or-later | The runtime the game runs in. Not vendored: `patches/victory-gta6/` holds HybridGt's changes to it as `git am` patches, which are themselves GPL-3.0-or-later. | Patches 0001–0007 |
+| [VIctory](https://github.com/Marvisak/VIctory) at `ffe310e` | GPL-3.0-or-later | `patches/victory/` (superseded): HybridGt's earlier changes to upstream VIctory, as patches. | Patches 0001–0014 |
+| AMD FidelityFX API (`ffx_api.h`) | MIT | Patch 0007 implements the API's five entry points and its return codes from the public header's definitions. No AMD code is copied yet. | — |
 
 ## Projects inspected but not used as code
 
