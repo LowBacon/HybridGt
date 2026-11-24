@@ -1038,3 +1038,92 @@ pub fn check_bc1_texture(gpu: &Gpu) -> Result<Timings> {
     }
     Ok(t)
 }
+
+// ---------------------------------------------------------------------------
+// Check: wave64 semantics on the host.
+
+/// What one 64-thread group showed about the host's waves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Wave64Report {
+    /// `WaveGetLaneCount()` on the host (32 on NVIDIA, 32 or 64 on AMD).
+    pub host_lanes: u32,
+    /// The native ballot equals the console's 64-lane ballot in every thread.
+    pub native_matches_console: bool,
+    /// The two-half group-shared emulation equals the console's ballot.
+    pub emulated_matches_console: bool,
+}
+
+/// The console's 64-bit ballot of `t % 3 == 0` over lanes 0..64, as (low, high).
+pub fn console_ballot() -> (u32, u32) {
+    let m: u64 = (0..64u32).filter(|t| t % 3 == 0).fold(0, |m, t| m | 1 << t);
+    (m as u32, (m >> 32) as u32)
+}
+
+/// Runs `WAVE64_CS` and compares native and emulated ballots with the
+/// console's answer. Also checks that each native ballot is consistent with
+/// the host's own lane count (a host bug would fail here, not a mismatch).
+pub fn check_wave64(gpu: &Gpu) -> Result<Wave64Report> {
+    let (cs, _) = shaders::compile(shaders::WAVE64_CS, "cs_6_0")?;
+    let size = 64 * 16 + 16;
+    let flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+    let out = gpu.buffer(D3D12_HEAP_TYPE_DEFAULT, size, flags, D3D12_RESOURCE_STATE_COMMON)?;
+    let back = gpu.buffer(D3D12_HEAP_TYPE_READBACK, size, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST)?;
+    let params = [D3D12_ROOT_PARAMETER {
+        ParameterType: D3D12_ROOT_PARAMETER_TYPE_UAV,
+        Anonymous: D3D12_ROOT_PARAMETER_0 { Descriptor: D3D12_ROOT_DESCRIPTOR { ShaderRegister: 0, RegisterSpace: 0 } },
+        ShaderVisibility: D3D12_SHADER_VISIBILITY_ALL,
+    }];
+    let root = gpu.root_signature(&D3D12_ROOT_SIGNATURE_DESC { NumParameters: 1, pParameters: params.as_ptr(), ..Default::default() })?;
+    // SAFETY: the descriptor's pointers outlive the call.
+    let pso: ID3D12PipelineState = unsafe {
+        gpu.device.CreateComputePipelineState(&D3D12_COMPUTE_PIPELINE_STATE_DESC {
+            pRootSignature: borrowed_root(&root),
+            CS: bytecode(&cs),
+            ..Default::default()
+        })?
+    };
+    gpu.run(|list| {
+        // SAFETY: recording into an open list with live resources.
+        unsafe {
+            list.SetComputeRootSignature(&root);
+            list.SetPipelineState(&pso);
+            list.SetComputeRootUnorderedAccessView(0, out.GetGPUVirtualAddress());
+            list.Dispatch(1, 1, 1);
+            list.ResourceBarrier(&[transition(&out, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE)]);
+            list.CopyBufferRegion(&back, 0, &out, 0, size);
+        }
+        Ok(())
+    })?;
+    let mut words = vec![0u32; (size / 4) as usize];
+    // SAFETY: the readback buffer holds `size` bytes and the GPU is done.
+    unsafe {
+        let mut p = std::ptr::null_mut();
+        back.Map(0, None, Some(&mut p))?;
+        std::ptr::copy_nonoverlapping(p as *const u32, words.as_mut_ptr(), words.len());
+        back.Unmap(0, None);
+    }
+    let (lo, hi) = console_ballot();
+    let full: u64 = u64::from(lo) | u64::from(hi) << 32;
+    let host_lanes = words[0];
+    if !matches!(host_lanes, 4..=128) || !host_lanes.is_power_of_two() {
+        return Err(Error::Fail(format!("host lane count {host_lanes}")));
+    }
+    let mut native_matches_console = true;
+    for t in 0..64u32 {
+        let w = &words[(t * 4) as usize..(t * 4 + 4) as usize];
+        if w[0] != host_lanes {
+            return Err(Error::Fail(format!("thread {t}: lane count {} vs {host_lanes}", w[0])));
+        }
+        // What this thread's own host wave should report.
+        let base = t / host_lanes * host_lanes;
+        let lanes = host_lanes.min(64);
+        let own = (full >> base) & if lanes == 64 { u64::MAX } else { (1u64 << lanes) - 1 };
+        let native = u64::from(w[2]) | u64::from(w[3]) << 32;
+        if w[1] != t % host_lanes || native != own {
+            return Err(Error::Fail(format!("thread {t}: lane {} ballot {native:#x}, host wave expects {own:#x}", w[1])));
+        }
+        native_matches_console &= native == full;
+    }
+    let emulated_matches_console = words[256] == lo && words[257] == hi;
+    Ok(Wave64Report { host_lanes, native_matches_console, emulated_matches_console })
+}

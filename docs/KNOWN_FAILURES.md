@@ -4,7 +4,8 @@ Measured on RTX 4070 Ti with patches 0001–0010 enabled (runs 16–19, before 2
 
 | # | Failure | Evidence | Status |
 |---|---|---|---|
-| 1 | Final frame black apart from the title card | Run 19 frame-1900 dumps: G-buffer flat grey, final image only "PROLOGUE" card | Open, top priority |
+| 1 | Final frame black apart from the title card | Run 19 frame-1900 dumps: G-buffer flat grey, final image only "PROLOGUE" card. Run 19's build carried an unfinished mesh-emulation experiment that refused 469 mesh shaders | Cause of run 19 found; open |
+| 1b | GPU removed ~frame 1,651 once mesh shaders run (run 20, experiment removed) | `logs/run20.log`: DXGI 0x887A0006, no breadcrumbs | Open, top priority |
 | 2 | 1,400–1,800 draws dropped per second | `victory_logstats.py` on runs 17–19 | Open |
 | 3 | Untranslated shaders: SGPR address not a root parameter; scalar memory read as data (`LinearDepthSkin` mesh shaders); structured buffer of unknown stride | Translator logs, ranked by drops | Open |
 | 4 | 51 refused pipelines | Run logs | Open |

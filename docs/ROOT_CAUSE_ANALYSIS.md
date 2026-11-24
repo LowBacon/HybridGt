@@ -28,3 +28,15 @@ caused each drop; if the G-buffer passes are all drops, fix translation of the t
 shader classes first. Under the 2026-11-24 rule, game runs are made by the user; the
 agent works from logs and dumps the user provides, plus synthetic wave64 mesh-shader
 tests in `hgt-gfxdiag`.
+
+## Update (run 20)
+
+Run 19's game build included an uncommitted mesh-shader emulation experiment.
+It refused 469 mesh shaders ("an emulated wave operation outside uniform control
+flow"), the largest drop class in that run; dropped mesh draws are the most
+likely reason the G-buffer stayed empty. With the experiment set aside (run 20),
+mesh refusals fell to 11, but the GPU was removed about frame 1,651 as the world
+started drawing. The `wave64` check in `hgt-gfxdiag` proves the RTX 4070 Ti
+gives 32-lane ballots where the console code expects 64 — see
+`NVIDIA_WAVE64_COMPATIBILITY.md`. Next: mesh-stage two-half emulation, tested in
+`hgt-gfxdiag` first, then one game run with DRED breadcrumbs.

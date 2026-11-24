@@ -125,3 +125,13 @@ fn hang_prone_cases_are_identified() {
     assert!(!may_hang(stale(Producer::SkippedZeroed), 8, None));
     assert!(!may_hang(stale(Producer::Runs), 8, None));
 }
+
+#[test]
+fn wave64_two_half_emulation_matches_console() {
+    let Some(gpu) = gpu() else { return };
+    let Some(r) = expect("wave64", check_wave64(&gpu)) else { return };
+    eprintln!("wave64: {r:?}");
+    assert!(r.emulated_matches_console, "{r:?}");
+    // Native waves narrower than 64 cannot give the console's answer.
+    assert_eq!(r.native_matches_console, r.host_lanes >= 64, "{r:?}");
+}

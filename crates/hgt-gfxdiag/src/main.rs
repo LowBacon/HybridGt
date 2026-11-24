@@ -79,6 +79,16 @@ fn main() {
             })
         });
     }
+    match check_wave64(&gpu) {
+        Ok(r) => {
+            println!("INFO wave64: {r:?}");
+            if !r.emulated_matches_console {
+                failed += 1;
+                println!("FAIL wave64 two-half emulation");
+            }
+        }
+        Err(e) => println!("INFO wave64: {e}"),
+    }
     std::process::exit(if failed > 0 { 1 } else { 0 });
 }
 

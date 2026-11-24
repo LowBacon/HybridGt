@@ -82,3 +82,23 @@ pub fn compile(source: &str, profile: &str) -> Result<(Vec<u8>, Duration), Error
 fn fnv1a(b: &[u8]) -> u64 {
     b.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &x| (h ^ u64::from(x)).wrapping_mul(0x100_0000_01b3))
 }
+
+/// Wave64 semantics probe. One 64-thread group; lane predicate `t % 3 == 0`.
+/// Per thread: host lane count, host lane index, native ballot .x/.y.
+/// Thread 0 also stores the group-wide 64-bit ballot built from two 32-bit
+/// halves in group-shared memory: the console's wave64 answer, whatever the
+/// host's wave size.
+pub const WAVE64_CS: &str = r#"
+RWByteAddressBuffer o : register(u0);
+groupshared uint g[2];
+[numthreads(64, 1, 1)] void main(uint t : SV_GroupIndex) {
+    bool p = (t % 3) == 0;
+    uint4 b = WaveActiveBallot(p);
+    if (t < 2) g[t] = 0;
+    GroupMemoryBarrierWithGroupSync();
+    if (p) InterlockedOr(g[t / 32], 1u << (t % 32));
+    GroupMemoryBarrierWithGroupSync();
+    o.Store4(t * 16, uint4(WaveGetLaneCount(), WaveGetLaneIndex(), b.x, b.y));
+    if (t == 0) o.Store2(64 * 16, uint2(g[0], g[1]));
+}
+"#;

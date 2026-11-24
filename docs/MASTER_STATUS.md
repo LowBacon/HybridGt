@@ -34,4 +34,4 @@ lighting, characters, gameplay, performance.
 
 ## Tests
 
-`cargo test --workspace`: 24 passed, 0 failed (2026-11-24).
+`cargo test --workspace`: 25 passed, 0 failed (2026-11-24).
