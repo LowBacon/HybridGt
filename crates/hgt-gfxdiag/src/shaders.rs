@@ -56,7 +56,11 @@ pub fn compile(source: &str, profile: &str) -> Result<(Vec<u8>, Duration), Error
     let dxc = dxc_path().ok_or_else(|| Error::Skip("no DXC (set HYBRIDGT_DXC or put dxc on PATH)".into()))?;
     let dir = std::env::temp_dir().join(format!("hgt-gfxdiag-{}", std::process::id()));
     std::fs::create_dir_all(&dir).map_err(|e| Error::Fail(e.to_string()))?;
-    let stem = format!("{profile}-{:016x}", fnv1a(source.as_bytes()));
+    // Unique per call: tests compile the same source on several threads at
+    // once, and a shared name let one read another's half-written output.
+    static CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let stem = format!("{profile}-{:016x}-{n}", fnv1a(source.as_bytes()));
     let src = dir.join(format!("{stem}.hlsl"));
     let out = dir.join(format!("{stem}.dxil"));
     std::fs::write(&src, source).map_err(|e| Error::Fail(e.to_string()))?;
