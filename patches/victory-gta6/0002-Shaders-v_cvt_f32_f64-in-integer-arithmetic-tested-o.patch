@@ -1,7 +1,7 @@
 From 6748339ea8daca194325310a6fc81ce04253743e Mon Sep 17 00:00:00 2001
 From: LowBacon <lenni.a.jokitalo@gmail.com>
 Date: Tue, 24 Nov 2026 22:42:16 +0200
-Subject: [PATCH 2/3] Shaders: v_cvt_f32_f64 in integer arithmetic, tested on
+Subject: [PATCH 2/7] Shaders: v_cvt_f32_f64 in integer arithmetic, tested on
  GPU and WARP (HybridGt)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

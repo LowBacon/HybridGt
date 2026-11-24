@@ -1,0 +1,76 @@
+From aa6d100d4465fbde1e30173f451198326cab2349 Mon Sep 17 00:00:00 2001
+From: LowBacon <lenni.a.jokitalo@gmail.com>
+Date: Tue, 24 Nov 2026 23:24:25 +0200
+Subject: [PATCH 5/7] Shaders: a first interpolation half also read as a value
+ evaluates on its own (PS_DeferredTextured translates) (HybridGt)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ crates/victory-shader/src/io.rs | 51 +++++++++++++++++++++++++++++++++
+ 1 file changed, 51 insertions(+)
+
+diff --git a/crates/victory-shader/src/io.rs b/crates/victory-shader/src/io.rs
+index 09b1f8e..d93caff 100644
+--- a/crates/victory-shader/src/io.rs
++++ b/crates/victory-shader/src/io.rs
+@@ -460,6 +460,57 @@ pub fn raise(p: &Program, native: &NativeProgram) -> Result<Io, ShaderError> {
+             }
+         }
+     }
++    // HybridGt: a first half (`v_interp_p1*`: P0 + i P10) whose result the
++    // program also reads as a value, not only as a second half's first
++    // half, evaluates on its own (`Interp::Weighted`, exact: its row is
++    // then read per vertex). The console compiler does this when a channel
++    // is needed at that precision; such programs were refused ("the first
++    // half of an interpolation") and their draws lost.
++    let mut firsts: Vec<(Site, Value, Attribute)> = Vec::new();
++    for (b, block) in p.blocks.iter().enumerate() {
++        for (i, inst) in block.insts.iter().enumerate() {
++            let (dst, attr) = match (&inst.fields, inst.name()) {
++                (Fields::Vintrp { dst: Operand::Vector { reg, .. }, attr, .. }, "v_interp_p1_f32") => (*reg, *attr),
++                (Fields::Valu(v), "v_interp_p1ll_f16") => match (v.dst, v.src.first()) {
++                    (Some(Operand::Vector { reg, .. }), Some(a)) => (reg, *a),
++                    _ => continue,
++                },
++                _ => continue,
++            };
++            if let (Some(v), Ok(a)) = (inst.write(Reg::V(dst)), attribute(inst, &attr)) {
++                firsts.push(((b, i), v, a));
++            }
++        }
++    }
++    if !firsts.is_empty() {
++        // Reads of first halves as a second half's first half.
++        let mut as_first: std::collections::HashSet<(usize, usize, Value)> = Default::default();
++        for (b, block) in p.blocks.iter().enumerate() {
++            for (i, inst) in block.insts.iter().enumerate() {
++                let reg = match (&inst.fields, inst.name()) {
++                    (Fields::Vintrp { dst: Operand::Vector { reg, .. }, .. }, "v_interp_p2_f32") => Some(*reg),
++                    (Fields::Valu(v), "v_interp_p2_f16") => match v.src.get(2) {
++                        Some(&Operand::Vector { reg, .. }) => Some(reg),
++                        _ => None,
++                    },
++                    _ => None,
++                };
++                if let Some(v) = reg.and_then(|r| inst.read(Reg::V(r))) {
++                    as_first.insert((b, i, v));
++                }
++            }
++        }
++        for (site, value, attribute) in firsts {
++            let other = p.blocks.iter().enumerate().any(|(b, block)| {
++                block.insts.iter().enumerate().any(|(i, inst)| {
++                    inst.reads.iter().any(|&(_, v)| v == value && !as_first.contains(&(b, i, v)))
++                }) || block.phis.iter().any(|phi| phi.args.contains(&value))
++            });
++            if other && !io.interps.iter().any(|(s, _)| *s == site) {
++                io.interps.push((site, Interp::Weighted { attribute }));
++            }
++        }
++    }
+     Ok(io)
+ }
+ 
+-- 
+2.56.1.windows.1
+

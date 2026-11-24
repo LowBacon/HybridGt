@@ -1,7 +1,7 @@
 From b0d5dc404394f18441ca6e552cf683028994a4ae Mon Sep 17 00:00:00 2001
 From: LowBacon <lenni.a.jokitalo@gmail.com>
 Date: Tue, 24 Nov 2026 22:36:13 +0200
-Subject: [PATCH 1/3] Translate: VICTORY_WARM_CACHE fills a run's shader cache
+Subject: [PATCH 1/7] Translate: VICTORY_WARM_CACHE fills a run's shader cache
  offline (HybridGt)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

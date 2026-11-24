@@ -1,7 +1,7 @@
 From e4d393553eff6d30a877a0ce9fdc0238c501594b Mon Sep 17 00:00:00 2001
 From: LowBacon <lenni.a.jokitalo@gmail.com>
 Date: Tue, 24 Nov 2026 22:47:22 +0200
-Subject: [PATCH 3/3] Shaders: v_permlane16_b32 / v_permlanex16_b32, tested on
+Subject: [PATCH 3/7] Shaders: v_permlane16_b32 / v_permlanex16_b32, tested on
  the GPU (HybridGt)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
