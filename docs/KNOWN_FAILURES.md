@@ -1,0 +1,19 @@
+# Known failures
+
+Measured on RTX 4070 Ti with patches 0001–0010 enabled (runs 16–19, before 2026-11-24).
+
+| # | Failure | Evidence | Status |
+|---|---|---|---|
+| 1 | Final frame black apart from the title card | Run 19 frame-1900 dumps: G-buffer flat grey, final image only "PROLOGUE" card | Open, top priority |
+| 2 | 1,400–1,800 draws dropped per second | `victory_logstats.py` on runs 17–19 | Open |
+| 3 | Untranslated shaders: SGPR address not a root parameter; scalar memory read as data (`LinearDepthSkin` mesh shaders); structured buffer of unknown stride | Translator logs, ranked by drops | Open |
+| 4 | 51 refused pipelines | Run logs | Open |
+| 5 | Wave64 mesh shaders on 32-lane NVIDIA: no emulation (compute only) | All 9,282 mesh shaders are wave64; mesh emulation attempt fails "emulated wave operation outside uniform control flow" (not committed) | Open |
+| 6 | Occasional GPU reset | Run 18, frame 2,113 | Open |
+| 7 | ~1 fps | All runs; L0 system-memory shadows read at 8.5 GB/s vs ~277 GB/s VRAM | Open, after rendering |
+
+## Rejected fixes (measured, did not help)
+
+Loop cap 4096; dynamic slots; heap index limit as hang cause; garbage indirect args;
+GPU_UPLOAD shadows (14–48 s/frame); video-memory mirrors (patch 0009, worse);
+compute-only wave64 emulation alone (still hung until queue waits were added).
