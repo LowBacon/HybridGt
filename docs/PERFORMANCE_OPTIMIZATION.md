@@ -342,3 +342,10 @@ Same switches as next36, the user's own save: FSR 1 ran on present; world frames
 (4.5 fps), best 147 ms (6.8), against 143-191 ms at full 1080p in next36. Rendering fewer pixels
 does not shorten the frame: it is bound by the CPU side (copies, copy-back, heap pass, page
 remaps). FSR stays available (`VICTORY_FSR=1`) for when the card becomes the limit.
+
+### Run next38: in-place copies (`VICTORY_COPY_PLAIN=1`) — kept
+
+next36's switches plus `VICTORY_COPY_PLAIN=1`, the user's own save, no crash: copies 48.0 -> 40.6 ms a
+frame on average (-15 %), best frame 132 -> 125 ms, median unchanged at 202 ms (~5 fps). Kept in the
+standard set. The median moves only when the other CPU parts move too (heap pass, copy-back, page
+remaps); next: the per-page remap stalls (plan above), then method 0x1c8.
