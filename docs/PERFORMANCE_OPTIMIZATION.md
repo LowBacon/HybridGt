@@ -515,3 +515,21 @@ debug-layer error (first attempt: 0 of 1,746 - stages swapped; then 2 refused fo
 blending on targets above 0, fixed). On in `play-fast.cmd` (`VICTORY_NATIVE_GRAPHICS=1`).
 Open: stencil operations are not decoded (KEEP); whether the intro and prologue now render, and
 whether the title's own state (vertex buffers, root data) matches, needs a game run.
+
+### First game run with 0x1c8 pipelines (new game, play-fast.cmd)
+
+16,384 0x1c8 pipelines made, 0 missed, no crash (after a fix: the first launch aborted on a
+too-short read of the description). The user: the intro renders partly, "full of triangles", the
+2D layer late, 3-4 fps where 1-2 before. Frame lines: up to 9.6 fps in steady stretches; 100-690
+draws a frame dropped while their host pipelines were made at first draw. Now remembered across
+runs (`console-formats.txt`): from the second launch on they are made during loading. The
+triangles are not explained yet: next, one frame captured with fxceless's built-in shot
+(`VICTORY_SHOT`, diagnostics build) to see which pass draws them.
+
+### Other repositories, 2026-11-25 evening
+
+fxceless/victory-gta6 085ee7c merged (3 commits: windows in a GPU upload heap,
+`VICTORY_WINDOW_UPLOAD=1`; frame shot `VICTORY_SHOT`). Its test
+`indirect::tests::warp_budget_saturates_without_wraparound_and_preserves_draw_fields` fails on its
+own tree too. Marvisak/VIctory +402, DexNom/VIctory +334, Belobug +550 commits since our last
+merges: diverged; to be ported piece by piece. Zettrox/ztrx: repository no longer found.
