@@ -194,3 +194,25 @@ glowing. The blocks fit a shadow mask whose edge-refining pass does not run (can
 compute pipelines the host refused, `6b82bc7d22016cb5`, `2da4beb386509b77`, `02384a60fda6f2d0`).
 The eyes may come from the POPS ped shaders first drawn in this run: that path is now off unless
 `VICTORY_POPS=1` until a run with it off says.
+
+### Runs next19-next21 (in place, geometry stages)
+
+- **next19** (POPS off, `VICTORY_TITLE_GS=1` before the switch existed, `VICTORY_INPLACE=1` with
+  the probe): the title crashed 1 min 57 s in (prologue cutscene prestream; access violation in
+  the title's code reading unmapped memory). Probe on the RTX 4070 Ti: private memory and a
+  **committed page pool section** open in place, read and write; a reserved section is refused.
+- **next20** (only `VICTORY_TITLE_GS=1`): no crash; 3.4-4.5 fps in the cell. The title made no
+  pipeline with a geometry stage there.
+- **next21** (`VICTORY_TITLE_GS=1 VICTORY_POOL_COMMIT=1 VICTORY_INPLACE=2`): **slower, 2.4-3.1 fps**
+  (320-420 ms). In place: 81 windows 384 MB, 3,606 title buffers 40 MB (78 in page pool
+  sections); 1,041 turned down (view memory scattered over the pool, or not committed whole).
+  Copies fell from ~80 to 42-60 ms, copy-back stayed at ~80-100 ms, and GPU time rose to
+  60-130 ms with the card ~100 % busy: placed buffers are in system memory, read over PCIe.
+  Conclusion: in place only for small buffers the CPU rewrites each frame; data the card mostly
+  reads stays in its own memory. Window closed by the user at the end (no crash).
+- Three compute pipelines the host refused (`2da4beb386509b77` alphaResolve prefilter,
+  `6b82bc7d22016cb5` / `02384a60fda6f2d0` VFX triangle clip): **the shaders require 64-lane waves;
+  the RTX 4070 Ti has 32** (debug layer). The cascade shadow program
+  `CS_ShadowRenderTiledCascadesAlpha*` fails for the same reason: wave64 programs whose thread
+  group holds several console waves need branches made group-wide (not yet in the translator).
+- Screenshots of runs: `HybridGt-work/captures/<run>/` (`tools/capture-loop.ps1`, every 30 s).
