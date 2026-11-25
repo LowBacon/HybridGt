@@ -1,17 +1,16 @@
-From a45005a218847455ced0f2815d2dc503d36f25b1 Mon Sep 17 00:00:00 2001
+From 78076afeb1c895cab143bae1a0d9cec5b4f9197b Mon Sep 17 00:00:00 2001
 From: LowBacon <lenni.a.jokitalo@gmail.com>
 Date: Tue, 24 Nov 2026 23:48:20 +0200
-Subject: [PATCH 7/7] FidelityFX pseudo-module (stage 1: NO_PROVIDER, logs
+Subject: [PATCH 02/11] FidelityFX pseudo-module (stage 1: NO_PROVIDER, logs
  descriptor types); constant null descriptors at a join read the null slot;
  finer refusal reasons (HybridGt)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- crates/victory-hle/src/modules/ffx.rs    | 91 ++++++++++++++++++++++++
- crates/victory-hle/src/modules/mod.rs    |  2 +
- crates/victory-shader/src/emit/lower.rs  | 16 ++++-
- crates/victory-shader/src/emit/shader.rs |  5 ++
- 4 files changed, 112 insertions(+), 2 deletions(-)
+ crates/victory-hle/src/modules/ffx.rs   | 91 +++++++++++++++++++++++++
+ crates/victory-hle/src/modules/mod.rs   |  2 +
+ crates/victory-shader/src/emit/lower.rs | 16 ++++-
+ 3 files changed, 107 insertions(+), 2 deletions(-)
  create mode 100644 crates/victory-hle/src/modules/ffx.rs
 
 diff --git a/crates/victory-hle/src/modules/ffx.rs b/crates/victory-hle/src/modules/ffx.rs
@@ -132,10 +131,10 @@ index 51e3590..4b4cc96 100644
      #[cfg(windows)]
      all.push(apu::module());
 diff --git a/crates/victory-shader/src/emit/lower.rs b/crates/victory-shader/src/emit/lower.rs
-index 1f841c2..315c6a0 100644
+index 63c4de7..1fc5b73 100644
 --- a/crates/victory-shader/src/emit/lower.rs
 +++ b/crates/victory-shader/src/emit/lower.rs
-@@ -6147,7 +6147,7 @@ impl<'a> Lower<'a> {
+@@ -6381,7 +6381,7 @@ impl<'a> Lower<'a> {
              if self.block[q].is_none() {
                  continue;
              }
@@ -144,7 +143,7 @@ index 1f841c2..315c6a0 100644
              let at = self.edges.get(&(q, block)).copied().unwrap_or(tail);
              let index = match arg {
                  Source::Loaded { load, first } => {
-@@ -6159,7 +6159,19 @@ impl<'a> Lower<'a> {
+@@ -6393,7 +6393,19 @@ impl<'a> Lower<'a> {
                  Source::Phi { block: inner, args: inner_args } if depth > 0 => {
                      self.descriptor_phi(*inner, inner_args, sampler, depth - 1)?
                  }
@@ -152,8 +151,8 @@ index 1f841c2..315c6a0 100644
 +                // HybridGt: a descriptor the code builds whose fourth dword is 0 (no channels,
 +                // no format): every read through it gives 0, which is what the host heap's
 +                // null slot gives (the console's way of binding nothing on some paths).
-+                Source::Constant(w) if !sampler && w[3] == 0 && super::shader::view_null_slot() != 0 => {
-+                    self.s.m.i32(super::shader::view_null_slot())
++                Source::Constant(w) if !sampler && w[3] == 0 && super::shader::view_heap_limit() != 0 => {
++                    self.s.m.i32(super::shader::view_heap_limit())
 +                }
 +                Source::Phi { .. } => return Err("a descriptor chosen by control flow (joins nested too deep)"),
 +                _ => {
@@ -165,22 +164,6 @@ index 1f841c2..315c6a0 100644
              };
              incoming.push((index, at));
          }
-diff --git a/crates/victory-shader/src/emit/shader.rs b/crates/victory-shader/src/emit/shader.rs
-index b49bc6d..71bcee3 100644
---- a/crates/victory-shader/src/emit/shader.rs
-+++ b/crates/victory-shader/src/emit/shader.rs
-@@ -124,6 +124,11 @@ pub fn set_view_heap_limit(null_slot: u32) {
-     VIEW_LIMIT.store(null_slot, std::sync::atomic::Ordering::Relaxed);
- }
- 
-+/// HybridGt: the host view heap's null slot (0: the heap is not capped, none is kept).
-+pub(crate) fn view_null_slot() -> u32 {
-+    VIEW_LIMIT.load(std::sync::atomic::Ordering::Relaxed)
-+}
-+
- pub(crate) struct Shader {
-     pub m: Module,
-     pub t: Types,
 -- 
 2.56.1.windows.1
 

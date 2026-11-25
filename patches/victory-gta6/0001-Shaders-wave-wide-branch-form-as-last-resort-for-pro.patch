@@ -1,7 +1,7 @@
-From a1066ba8b93dd3e5b26c36993fd52e63c7eb25e4 Mon Sep 17 00:00:00 2001
+From 71e30febea66fa902f0fe6baa7910d80026856cd Mon Sep 17 00:00:00 2001
 From: LowBacon <lenni.a.jokitalo@gmail.com>
 Date: Tue, 24 Nov 2026 23:05:32 +0200
-Subject: [PATCH 4/7] Shaders: wave-wide branch form as last resort for
+Subject: [PATCH 01/11] Shaders: wave-wide branch form as last resort for
  programs otherwise refused on 32-lane hosts; translate VICTORY_SAVE_HASHES
  (HybridGt)
 
@@ -12,12 +12,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  2 files changed, 24 insertions(+)
 
 diff --git a/apps/victory/src/translate.rs b/apps/victory/src/translate.rs
-index ee23a47..c8b24ba 100644
+index 640d210..697a6ea 100644
 --- a/apps/victory/src/translate.rs
 +++ b/apps/victory/src/translate.rs
-@@ -329,6 +329,15 @@ fn translate(
-     // "shader does not translate", "host pipeline refused").
-     let hash = blake3::hash(&bytes).to_hex()[..16].to_owned();
+@@ -416,6 +416,15 @@ fn translate(
+         return;
+     }
      let example = || format!("{}{} #{hash}", path.display(), source.label());
 +    // HybridGt: `VICTORY_SAVE_HASHES=<dir>;<hash>,<hash>,...` writes the
 +    // containers a run's log names (by these hashes) to `<dir>/<hash>.cdxil`.
@@ -29,13 +29,13 @@ index ee23a47..c8b24ba 100644
 +        let _ = std::fs::write(std::path::Path::new(dir).join(format!("{hash}.cdxil")), &bytes);
 +    }
      t.containers += 1;
-     // HybridGt: `VICTORY_WARM_CACHE=<cache dir>` also puts the run's own
-     // translation of this container into that cache (see `warming`).
+     let Ok(container) = Container::parse(&bytes) else {
+         return t.fail("no DXIL part (SM5 or older)".into(), example);
 diff --git a/crates/victory-shader/src/emit/mod.rs b/crates/victory-shader/src/emit/mod.rs
-index 3a7646c..cda7ee5 100644
+index 5217df8..1dff7dc 100644
 --- a/crates/victory-shader/src/emit/mod.rs
 +++ b/crates/victory-shader/src/emit/mod.rs
-@@ -461,6 +461,21 @@ pub fn emit(
+@@ -504,6 +504,21 @@ pub fn emit(
                  }
              }
          }

@@ -14,7 +14,7 @@ HybridGt is **not a standalone runtime**. The game runs inside
 
 No game files, extracted assets or shaders are in this repository.
 
-## Status (2026-11-24)
+## Status (2026-11-25)
 
 **Not playable.** The first gameplay scene (the prison prologue) renders and the player can move,
 at **3.5–3.8 fps** (about 270 ms per frame) on an RTX 4070 Ti. Shadowed areas are black.
@@ -30,17 +30,29 @@ at **3.5–3.8 fps** (about 270 ms per frame) on an RTX 4070 Ti. Shadowed areas 
 | Shader translation: 14,160 of 14,259 vertex/pixel, 2,718 of 2,734 compute, 8,762 of 8,765 mesh programs | offline `translate` over the title's shaders |
 | No GPU hang or device removal in the last runs | run logs `fork6`, `fork8` |
 
-### Done by HybridGt (in `patches/victory-gta6/`, each tested)
+### Runtime base and patches (`patches/victory-gta6/`, on fork commit `a26859f`)
 
-| Patch | What it fixes | Test |
-|---|---|---|
-| 0001 | `VICTORY_WARM_CACHE`: translate every shader into the run's cache offline (no translation stalls in game) | 24,400+ entries written |
-| 0002 | `v_cvt_f32_f64` (double to float), which the translator lacked | GPU test vs IEEE rounding, RTX 4070 Ti and WARP |
-| 0003 | `v_permlane16_b32` / `v_permlanex16_b32` | GPU test, all 32 lanes, RTX 4070 Ti |
-| 0004 | Wave-wide branch form as a last resort for wave64 programs a 32-lane GPU would refuse: the indirect-light probe shaders (`IrradianceCache_Shade*`) now translate | 4 refused pipelines now created |
-| 0005 | A first interpolation half used as a value: `PS_DeferredTextured` (main textured material) translates | DXIL validator + pipeline on the GPU |
-| 0006 | Image descriptors read only for their size (`PS_PuddleDetect`, 40 programs) | DXIL validator + pipeline on the GPU |
-| 0007 | FidelityFX (FSR) module, stage 1: the title's FSR DLL now loads and answers "no provider"; its requests are logged | builds; HLE tests pass; game test pending |
+Since 2026-11-25 the patches apply to fxceless/victory-gta6 `a26859f`. That commit already
+contains all of [ZTRX](https://github.com/Zettrox/ztrx) `main`. It also adds:
+- depth bounds;
+- textures picked by index re-checked after upload;
+- byte-copied descriptor mirroring;
+- faster defaults.
+
+See [docs/ZTRX_IMPLEMENTATION_AUDIT.md](docs/ZTRX_IMPLEMENTATION_AUDIT.md).
+
+| Patch | What it does | Source | Test |
+|---|---|---|---|
+| 0001 | Wave-wide branch form as a last resort for wave64 programs a 32-lane GPU would refuse | HybridGt | shader tests |
+| 0002–0003 | FidelityFX (FSR): the title's FSR DLL loads; its calls run AMD's PC upscaler on the host list (`VICTORY_FFX_DIR`) | HybridGt | builds, HLE tests; game test pending |
+| 0004 | Samplers built as constants at a join get reserved slots 2032–2047 of the host sampler heap | HybridGt | shader + GPU tests |
+| 0005–0006 | No blending on integer render targets (a refused world mesh pipeline: missing walls); LDS-flag regions run as two host waves (`CS_Tiling_Generate_Opaque`) | ZTRX PR #36 | GPU tests, RTX 4070 Ti |
+| 0007–0008 | Guarded textures re-checked every frame after a change (intro video jumping back and forth) | ZTRX PR #32 | GPU tests; game test pending |
+| 0009–0010 | `ds_bpermute_b32` / `ds_permute_b32` across two host waves (shadow-mask trace programs) | ZTRX PR #43 | card tests, RTX 4070 Ti |
+| 0011 | Test fix-up | HybridGt | — |
+
+`cargo test --release -p victory-shader -p victory-gpu -p victory-hle` on the RTX 4070 Ti: **467 passed, 0 failed, 6 ignored** (2026-11-25).
+None of these changes has been run in the game yet.
 
 Also in `crates/hgt-gfxdiag`: GPU checks proving the RTX 4070 Ti runs 32-lane waves and that
 two-half wave64 emulation gives the console's answer in compute and mesh shaders, including
@@ -83,7 +95,7 @@ Xbox Series files in a folder outside every repository.
 ```powershell
 git clone https://github.com/fxceless/victory-gta6
 cd victory-gta6
-git checkout 1684989
+git checkout a26859f
 git switch -c hybridgt
 git am <path to HybridGt>\patches\victory-gta6\*.patch
 cargo build --release -p victory
@@ -98,21 +110,23 @@ $env:VICTORY_DATA_DIR  = '<a save-data folder>'
 ```
 
 Translate every shader into the cache once per build (about 20 minutes; it reads the game files
-and writes only to the cache). On an NVIDIA GPU these two settings match what the game run picks:
+and writes only to the cache). On an NVIDIA GPU this setting matches what the game run picks:
 
 ```powershell
-$env:VICTORY_HOST_WAVE = '32'; $env:VICTORY_VIEW_LIMIT = '999999'; $env:VICTORY_WARM_CACHE = $env:VICTORY_CACHE_DIR
-.\target\release\victory.exe translate $env:VICTORY_GAME_DIR
-Remove-Item Env:VICTORY_HOST_WAVE, Env:VICTORY_VIEW_LIMIT, Env:VICTORY_WARM_CACHE
+$env:VICTORY_HOST_MAX_WAVE = '32'
+.\target\release\victory.exe translate --warm all $env:VICTORY_GAME_DIR
+Remove-Item Env:VICTORY_HOST_MAX_WAVE
 ```
 
-Run with the settings that measured fastest:
+Run. On `a26859f` the fork's own defaults already include the speed settings HybridGt used
+to set by hand: relay stage 2, wide copy-back, and card copies from 1 to 1,024 MB. Upstream
+measured about 230 ms per frame with them, where it was about 400 ms, on an RTX 4070. HybridGt
+has not measured them on its RTX 4070 Ti yet.
 
 ```powershell
 $env:VICTORY_DISPLAY_MODE = '1920x1080'
-$env:VICTORY_LATE_WAIT = '3'; $env:VICTORY_WIDE_BACK = '1'
-$env:VICTORY_CARD_BUFFERS_MIN_MB = '1'; $env:VICTORY_CARD_BUFFERS_MB = '1024'
-.\target\release\victory.exe run "$env:VICTORY_GAME_DIR\game_scarlett_master.exe" --execute
+$env:VICTORY_FFX_DIR = '<folder with amd_fidelityfx_loader_dx12.dll and amd_fidelityfx_upscaler_dx12.dll>'
+.\target\release\victory.exe run "$env:VICTORY_GAME_DIR\<the game's exe>" --execute
 ```
 
 Keyboard without a pad: Enter = A, Esc = Menu, WASD = left stick. The first run after a build
