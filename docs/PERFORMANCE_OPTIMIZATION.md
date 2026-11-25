@@ -62,3 +62,38 @@ load, at about 3 fps. Steady world frames 08:18:57–08:19:27 against next1:
 
 FidelityFX: the title made no FidelityFX call in the Series X profile (no "FidelityFX" log line in
 next1 or next3). It asked for the upscaler only in Series S mode (`--console series-s`, run fork13).
+
+## Benchmark procedure (from run next8 on)
+
+The same save (`HybridGt-work/data`), Series X profile, 1080p, cache `cache-next3` (pipelines
+saved). `VICTORY_KEYS` presses Enter every 4 s from 20 s to 120 s. `autoclose.sh` closes the game
+3 minutes after the first 3 consecutive frame lines under 500 ms with 3,000+ draws. No user
+input. "Steady" means frame lines after the world settled with the camera still.
+
+## Runs on victory-gta6 `9376fd6` (fork's CPU-side frame commit) + ZTRX shader PRs #10, #51, #56
+
+| Run | Change against the run before | Steady world fps | ms/frame | Notes |
+|---|---|---|---|---|
+| next7 | new base and new cache, no saved pipelines | (first run) | 335–700 | 1,000 pipelines made in the run; cutscene draws dropped, slow load. Not a regression |
+| next8 | remaps: scatter pages joined into ranges | crash | — | joined pages were several placeholders: `MapViewOfFile3` error 487. Fixed in next9 |
+| next9 | remaps: both locks once per scatter call; no-op remaps skipped | **3.5–3.6** | **276–284** | 15 min, no crash. Steady frames: preparing 96–104, GPU 150–155, copy-back 165–181 ms |
+| next10 | `VICTORY_CARD_FETCH_INFLIGHT=1` (fork switch) | 1.5–1.7 | 578–700 | GPU 420–480 ms (×3): 87 MB a frame copied to PC memory inside the GPU's timeline. Copy-back thread 70–90 ms. **Rejected** |
+
+next9 against next3 (the best run on the old base): 276–284 ms vs 296–332 ms per steady world
+frame. Several changes came in together (upstream `9376fd6`, the ZTRX shader PRs, the remap
+locking), so the gain is not attributed to one of them.
+
+### Remap lock (from the next9 counters)
+- While loading: 127–900 lock takings a frame, 1,700–3,500 pages, **held 700–1,300 ms a frame**,
+  waited for up to 12 ms. So after the change the cost is the holding: about 0.5 ms a page.
+- Steady world: 4–40 pages a frame, about 1 ms held.
+
+Next: split the held time between system calls and GPU-side notifications (timers added, next11).
+
+### Copy-back (next9, steady)
+- The submitting thread waits 154 ms a frame in "title memory read" settles (2 a frame: one for
+  a title buffer copy, one for an upload fill).
+- The relay thread waits 134 ms for 7 fetches.
+- The GPU is 64% busy.
+
+Next: title buffer copies on the card instead of waiting (`VICTORY_GPU_BUFFER_COPIES=1`, next11).
