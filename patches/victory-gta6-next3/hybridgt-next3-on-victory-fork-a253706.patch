@@ -374,7 +374,7 @@ index 5fddd5b..7ce38e2 100644
  blake3.workspace = true
  memchr.workspace = true
 diff --git a/apps/victory/src/main.rs b/apps/victory/src/main.rs
-index ead9f7c..402d047 100644
+index ead9f7c..f379436 100644
 --- a/apps/victory/src/main.rs
 +++ b/apps/victory/src/main.rs
 @@ -7,6 +7,7 @@ mod census;
@@ -385,7 +385,7 @@ index ead9f7c..402d047 100644
  mod translate;
  
  use std::path::PathBuf;
-@@ -58,6 +59,18 @@ enum Command {
+@@ -58,6 +59,23 @@ enum Command {
      },
      /// Find shader containers in files or directories (also inside engine
      /// archives, if uncompressed) and report their layout.
@@ -397,6 +397,11 @@ index ead9f7c..402d047 100644
 +    },
 +    /// HybridGt: make host pipelines for saved device-method 0x1c8
 +    /// descriptions (`VICTORY_SAVE_PIPELINES`), as the runtime does.
++    /// HybridGt: the programs the runtime takes for ray-tracing structure
++    /// builder stages (spilled user-data tables).
++    Spilled {
++        archive: PathBuf,
++    },
 +    ConsolePipelines {
 +        dump: PathBuf,
 +        index: PathBuf,
@@ -404,16 +409,17 @@ index ead9f7c..402d047 100644
      ShaderInfo {
          paths: Vec<PathBuf>,
          /// Print one line per container found.
-@@ -148,6 +161,8 @@ fn main() -> Result<()> {
+@@ -148,6 +166,9 @@ fn main() -> Result<()> {
              missing,
          } => census::run(paths, strict, missing),
          Command::LibExports { lib, list } => inspect::lib_exports(&lib, list),
 +        Command::ShaderIndex { archive, out } => native_index::build(&archive, &out),
++        Command::Spilled { archive } => native_index::list_spilled(&archive),
 +        Command::ConsolePipelines { dump, index } => native_index::check_console(&dump, &index),
          Command::ShaderInfo {
              paths,
              verbose,
-@@ -174,6 +189,7 @@ fn main() -> Result<()> {
+@@ -174,6 +195,7 @@ fn main() -> Result<()> {
              }
              translate::run(paths, validate, pipelines, list, jobs)
          }
@@ -423,10 +429,10 @@ index ead9f7c..402d047 100644
              unimplemented,
 diff --git a/apps/victory/src/native_index.rs b/apps/victory/src/native_index.rs
 new file mode 100644
-index 0000000..0424684
+index 0000000..f10cbcb
 --- /dev/null
 +++ b/apps/victory/src/native_index.rs
-@@ -0,0 +1,165 @@
+@@ -0,0 +1,185 @@
 +//! HybridGt: from a native program's code header to its shader container.
 +//!
 +//! Device methods 0x1c8 and 0x218 hand the runtime standalone GFX10 code in
@@ -536,6 +542,26 @@ index 0000000..0424684
 +    for (why, n) in results {
 +        println!("  {n:5}  {why}");
 +    }
++    Ok(())
++}
++
++/// HybridGt: the containers of `archive` with a program the runtime takes
++/// for a stage of the ray-tracing structure builder (a spilled user-data
++/// table, `victory_shader::spill::is_spilled`): label, stage and hash.
++pub fn list_spilled(archive: &Path) -> Result<()> {
++    let data = std::fs::read(archive)?;
++    let mut n = 0;
++    for source in sources(&data) {
++        let Some(bytes) = source.bytes() else { continue };
++        let Ok(container) = Container::parse(&bytes) else { continue };
++        let Some(dxil) = container.part(FourCC::DXIL) else { continue };
++        let Ok(programs) = native_programs(dxil.data) else { continue };
++        for p in programs.iter().filter(|p| victory_shader::spill::is_spilled(p)) {
++            n += 1;
++            println!("{} {:?} #{}", source.label(), p.stage, &blake3::hash(&bytes).to_hex()[..16]);
++        }
++    }
++    println!("{n} programs with a spilled user-data table");
 +    Ok(())
 +}
 +

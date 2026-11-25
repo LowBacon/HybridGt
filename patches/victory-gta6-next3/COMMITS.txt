@@ -1,3 +1,4 @@
+7d07b7f victory spilled <file>: list the programs the runtime takes for ray-tracing structure builder stages
 c49b353 Rectangle stage for 0x1c8 pipelines behind VICTORY_NATIVE_RECTS=1 (off): the first launch with it lost the GPU 84 s in (device removed, invalid command)
 b6cab2d 0x1c8 pipelines drawn as rectangle lists get the rectangle-completing geometry stage
 1d2a23d 0x1c8: target formats remembered across runs (console-formats.txt in the cache dir); known pipelines start being made when the title creates them

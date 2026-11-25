@@ -546,3 +546,24 @@ rectangle version of all 1,649 captured vertex pipelines made, stage present, no
 Launch 2 with it: **the GPU was lost 84 s in** (device removed, "invalid command"), as the intro
 began, where launch 1 ran on. The stage is behind `VICTORY_NATIVE_RECTS=1`, off; next a diagnostics
 launch with the D3D12 debug layer to name the command.
+
+### Session while the user was away (2026-11-25/26 night)
+
+- **Rectangle stage, again**: with the D3D12 debug layer and DRED (diagnostics build) the intro ran 9
+  minutes with it, no device loss, no error naming it; then the normal build with it ran to its stop
+  too. 2 clean runs against 1 loss: intermittent. **The intro's triangle grids are gone**: ocean,
+  beach, pier, rooms and the credits art render. On in `play-fast.cmd` (`VICTORY_NATIVE_RECTS=1`).
+- **Frame rate, same new-game stretch** (frame lines with 300+ draws): launch 1 (no rectangle stage,
+  nothing made ahead) median 2.1 fps, mean 2.9, 436 draws dropped a frame; with the rectangle
+  stage and the format memory (1,483 format sets) median **5.6 fps**, mean 4.4, 371 dropped.
+- **Dropped draws** (diagnostics run): almost all are the console ray-tracing structure builder's
+  stages (230-998 a frame), held off as before; `victory spilled` shows all 52 builder programs come
+  from `XboxBvhBuilder.dll`, none from the game's shader pack.
+- **Characters without bodies (hair floating)**: frame shots (`VICTORY_SHOT`, frame 2514, 4,726
+  draws, 50 pass pictures): the G-buffer and depth hold the hair, never the head or body. Not
+  dropped: the body draws are issued (`MS_VS_PedTransformPreSkinD` + `PS_DeferredPedTexturedNC`, 103;
+  its depth pass `..._PositionOnly`, 169; shadow passes), and the skinning programs run
+  (`CS_PedStandardSkinning_*`, 154+). The body draws are indirect mesh dispatches whose counts the
+  pre-skinned meshlet culling writes (`meshlet_culling:CS_BatchCullPreSkinnedMeshlets`, indirect
+  dispatches themselves); it translates exactly. Next: trace the indirect path (the shader trace
+  hooks direct dispatches only, so the culling run found nothing).
