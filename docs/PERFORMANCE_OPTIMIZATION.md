@@ -303,3 +303,8 @@ frame log (diagnostics build, next29) to see where those milliseconds and the sp
   (`+0x23cf683`), nothing deferred. next33 passed it by timing. The remaining suspect is method
   0x1c8 (graphics), still failing there. Next: 0x1c8 from containers, with its graphics state read
   from the register block (w1/w2, 0x184 bytes, starting `4005d808`).
+- **next35** (old save from a separate `data-bench` folder, 0x218 native, lazy copy-back): crashed
+  in the world (`+0x2215c35`, as next27). Lazy copy-back cut copy-back to 15 ms but fetching on
+  touch cost ~60 ms a frame and copies rose to 150 ms: as built it loses most of its gain and still
+  lets a stale read through. Keep it off; the dependable route to more frames is method 0x1c8 (so
+  runs survive the prologue) and then cheaper copies.
