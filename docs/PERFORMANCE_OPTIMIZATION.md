@@ -180,3 +180,17 @@ shaders (no geometry stage in the translator; they also read a driver table thro
 0-1), 29 DXBC programs inside the console's FidelityFX DLL (never run: the host's upscaler is used),
 5 shadow-ray programs (read the BVH's address from a descriptor; useless until the BVH builder
 works), 1 nested waterfall (opaque lane mask), 1 lane mask exchanged under a partial EXEC.
+
+### Run next18b (next3 + xmem change + POPS shaders, warm cache, same switches as next17)
+
+New game, prison cell after the opening: **4.3-5.3 fps** (190-230 ms a frame, 4,700-6,600
+draws), dropped 250-390 draws a frame without a host pipeline. Of a frame: copies of title
+memory about 80 ms (130-160 MB), copy-back about 100 ms (50-58 MB); remapping 0.6-2 ms (the
+scene was not streaming, so the xmem change is not measured by this).
+
+Seen by the user: sunlight edges in tile-sized blocks on faces and clothes, and characters' eyes
+glowing. The blocks fit a shadow mask whose edge-refining pass does not run (candidates:
+`CS_ShadowRenderTiledCascadesAlpha*` and `CS_TraceShadowRays_*`, both still untranslated; three
+compute pipelines the host refused, `6b82bc7d22016cb5`, `2da4beb386509b77`, `02384a60fda6f2d0`).
+The eyes may come from the POPS ped shaders first drawn in this run: that path is now off unless
+`VICTORY_POPS=1` until a run with it off says.

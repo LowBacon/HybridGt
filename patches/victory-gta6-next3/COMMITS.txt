@@ -1,3 +1,5 @@
+6535505 Shaders: legacy GFX10 geometry programs as host geometry shaders (ES-GS ring reads -> loadInput per vertex, GS-VS ring writes -> outputs at GS_EMIT, GS_CUT -> cutStream, the driver's ring table read as zeros); POPS path behind VICTORY_POPS=1 (glowing eyes in next18b)
+f582be6 Cargo.lock: embed-resource for the icon
 83a39d6 Shaders: POPS (ordered pixel shading) programs take the no-overlap path: the hardware ordering SGPR and src_pops_exiting_wave_id read as zero (after upstream 522d2bc by beloooo); the 10 ped cut-out pixel shaders translate
 36107f1 xmem: no split call where our own unmap left the exact placeholder, no commit call for section pages committed already (fewer system calls per remapped page)
 bee284e FSR 1 (AMD FidelityFX, MIT, vendored unmodified) on present: VICTORY_FSR=1 upscales the title's image to VICTORY_FSR_OUTPUT (1920x1080) with EASU + RCAS; hardware test

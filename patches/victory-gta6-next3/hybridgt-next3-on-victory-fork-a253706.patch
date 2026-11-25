@@ -1,3 +1,109 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 29bab8c..1c8e0a1 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -169,6 +169,20 @@ dependencies = [
+  "libc",
+ ]
+ 
++[[package]]
++name = "embed-resource"
++version = "3.0.12"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "6168487b5e7eb2673e6efe1200b1848016e436a6ca0b8031bf04bd9d493a249f"
++dependencies = [
++ "cc",
++ "memchr",
++ "rustc_version",
++ "toml",
++ "vswhom",
++ "winreg",
++]
++
+ [[package]]
+ name = "equivalent"
+ version = "1.0.3"
+@@ -358,6 +372,15 @@ version = "0.8.12"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "d902046e6a28a1e4c3cab97258a0ce11e994903f01c2d97a9447a0b3df85f4f6"
+ 
++[[package]]
++name = "rustc_version"
++version = "0.4.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
++dependencies = [
++ "semver",
++]
++
+ [[package]]
+ name = "rustix"
+ version = "1.1.6"
+@@ -380,6 +403,12 @@ dependencies = [
+  "winapi-util",
+ ]
+ 
++[[package]]
++name = "semver"
++version = "1.0.28"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
++
+ [[package]]
+ name = "serde"
+ version = "1.0.229"
+@@ -635,6 +664,7 @@ dependencies = [
+  "anyhow",
+  "blake3",
+  "clap",
++ "embed-resource",
+  "memchr",
+  "victory-core",
+  "victory-game",
+@@ -745,6 +775,26 @@ dependencies = [
+  "zlib-rs",
+ ]
+ 
++[[package]]
++name = "vswhom"
++version = "0.1.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "be979b7f07507105799e854203b470ff7c78a1639e330a58f183b5fea574608b"
++dependencies = [
++ "libc",
++ "vswhom-sys",
++]
++
++[[package]]
++name = "vswhom-sys"
++version = "0.1.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "fb067e4cbd1ff067d1df46c9194b5de0e98efd2810bbc95c5d5e5f25a3231150"
++dependencies = [
++ "cc",
++ "libc",
++]
++
+ [[package]]
+ name = "walkdir"
+ version = "2.5.1"
+@@ -889,6 +939,16 @@ version = "1.0.5"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "8c3b93199df0ab874cdf0c6a94f0a0dc3423fe41f1cafb62b8bd7b1deb277aef"
+ 
++[[package]]
++name = "winreg"
++version = "0.56.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "7d6f32a0ff4a9f6f01231eb2059cc85479330739333e0e58cadf03b6af2cca10"
++dependencies = [
++ "cfg-if",
++ "windows-sys",
++]
++
+ [[package]]
+ name = "xtask"
+ version = "0.1.0"
 diff --git a/apps/victory/Cargo.toml b/apps/victory/Cargo.toml
 index 5fddd5b..ded0161 100644
 --- a/apps/victory/Cargo.toml
@@ -644,7 +750,7 @@ index 0000000..ed1719b
 @@ -0,0 +1 @@
 +1 ICON "victory.ico"
 diff --git a/apps/victory/src/translate.rs b/apps/victory/src/translate.rs
-index 640d210..e180fe9 100644
+index 640d210..2c89f23 100644
 --- a/apps/victory/src/translate.rs
 +++ b/apps/victory/src/translate.rs
 @@ -416,6 +416,15 @@ fn translate(
@@ -681,6 +787,15 @@ index 640d210..e180fe9 100644
      for p in programs {
          t.programs += 1;
          match victory_shader::spill::build(&p) {
+@@ -504,7 +513,7 @@ fn translate_programs(container: &Container, programs: Vec<NativeProgram>, examp
+                 let graphics = matches!(p.stage, HwStage::Vs | HwStage::Ps);
+                 let compute = p.stage == HwStage::Cs;
+                 let mut raised = None;
+-                if graphics || compute || p.stage == HwStage::Ms {
++                if graphics || compute || matches!(p.stage, HwStage::Ms | HwStage::Gs) {
+                     t.io_programs += usize::from(graphics);
+                     match io::raise(&program, &p) {
+                         Ok(r) => {
 @@ -544,10 +553,24 @@ fn translate_programs(container: &Container, programs: Vec<NativeProgram>, examp
                              *counter(t, p.stage, 1) += 1;
                              check(shader, t, checks, label);
@@ -710,6 +825,16 @@ index 640d210..e180fe9 100644
                          Err(e) => t.fail(format!("emit: {e}"), label),
                      }
                  }
+@@ -636,6 +659,9 @@ fn check(
+             HwStage::Vs => h.pipeline(&shader, stub_ps).map(drop),
+             HwStage::Cs => h.compute_pipeline(&shader).map(drop),
+             HwStage::Ms => h.mesh_pipeline(&shader, stub_ps).map(drop),
++            // HybridGt: a geometry stage needs its vertex stage to link with;
++            // the validator checks it here.
++            HwStage::Gs => return,
+             _ => host::stub_vs(&shader).and_then(|vs| h.pipeline(&vs, &shader).map(drop)),
+         };
+         match made {
 diff --git a/crates/victory-gpu/src/descriptor.rs b/crates/victory-gpu/src/descriptor.rs
 index c96ff17..9b1c9fd 100644
 --- a/crates/victory-gpu/src/descriptor.rs
@@ -8748,22 +8873,27 @@ index 0266579..9ba54c5 100644
      if let Ok(mut v) = validator::Validator::load(validator::Validator::default_path().as_deref()) {
          let mut copy = shader.dxil.clone();
 diff --git a/crates/victory-shader/src/emit/lower.rs b/crates/victory-shader/src/emit/lower.rs
-index 63c4de7..386d9b7 100644
+index 63c4de7..5795e1a 100644
 --- a/crates/victory-shader/src/emit/lower.rs
 +++ b/crates/victory-shader/src/emit/lower.rs
-@@ -20,6 +20,11 @@ use crate::native::{HwStage, NativeProgram, ResourceType, RootType, StageIo, Usa
- use crate::resource::{Address, CODE, MEMORY, Resources, Role, Site, Source};
+@@ -17,9 +17,15 @@ use crate::gfx10::{Dpp, Fields, NULL, Operand};
+ use crate::io::{Barycentric, Export, Input, Interp, Io, Target};
+ use crate::ir::{EXEC, Exit, Inst, Program, Reg, Value};
+ use crate::native::{HwStage, NativeProgram, ResourceType, RootType, StageIo, Usage, UsedResource};
+-use crate::resource::{Address, CODE, MEMORY, Resources, Role, Site, Source};
++use crate::resource::{Address, CODE, DRIVER, MEMORY, Resources, Role, Site, Source};
  use crate::structure::{Atom, Bool, LaneExit, Structured};
  
 +/// Packed dot-product lowering (`v_dot*`), a child module so it shares the
 +/// emitter's state without growing this file.
 +#[path = "dot.rs"]
 +mod dot;
++mod gs;
 +
  /// The ray-tracing node test (`image_bvh_intersect_ray`), a child module so
  /// it shares the emitter's state.
  #[path = "intersect.rs"]
-@@ -57,6 +62,9 @@ pub(crate) struct Lowered {
+@@ -57,6 +63,9 @@ pub(crate) struct Lowered {
      pub root_uavs: Vec<u8>,
      pub user_data: Vec<UserData>,
      pub samplers: Vec<[u32; 4]>,
@@ -8773,7 +8903,7 @@ index 63c4de7..386d9b7 100644
      /// The wave size the shader requires of the host, if any.
      pub wave_size: Option<u32>,
      /// Heap handles made with a non-uniform index.
-@@ -67,6 +75,12 @@ pub(crate) struct Lowered {
+@@ -67,6 +76,12 @@ pub(crate) struct Lowered {
      pub wave_ops: bool,
  }
  
@@ -8786,7 +8916,21 @@ index 63c4de7..386d9b7 100644
  pub(crate) struct Parts<'a> {
      pub native: &'a NativeProgram,
      pub p: &'a Program,
-@@ -202,6 +216,8 @@ struct Lower<'a> {
+@@ -105,6 +120,13 @@ pub(crate) fn lower(parts: &Parts) -> Result<Lowered, ShaderError> {
+ }
+ 
+ const TWO_PI: f32 = std::f32::consts::TAU;
++
++/// HybridGt: whether POPS programs take the no-overlap path (`VICTORY_POPS=1`;
++/// off by default, see `Lower::inputs`).
++fn pops_on() -> bool {
++    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *ON.get_or_init(|| std::env::var_os("VICTORY_POPS").is_some_and(|v| v == "1"))
++}
+ /// `s_sendmsg` id of a mesh or NGG stage's output allocation request.
+ const GS_ALLOC_REQ: u16 = 9;
+ 
+@@ -202,6 +224,8 @@ struct Lower<'a> {
      user_data: Option<V>,
      user_reads: BTreeMap<u32, UserData>,
      samplers: Vec<[u32; 4]>,
@@ -8795,7 +8939,16 @@ index 63c4de7..386d9b7 100644
      descriptors: HashMap<(Site, bool), &'a Source>,
      scalar: HashMap<Site, Address>,
      exports: HashMap<Site, &'a Export>,
-@@ -262,6 +278,10 @@ struct Lower<'a> {
+@@ -239,6 +263,8 @@ struct Lower<'a> {
+     /// With `split_lds`, LDS accesses in lane branches: per IR block whether every lane runs
+     /// it, and whether the host waves meet at its start and before its exit ([`lds_meetings`]).
+     lds_meet: Option<(Vec<bool>, Vec<(bool, bool)>)>,
++    /// HybridGt: a legacy geometry program's ring accesses (`gs.rs`).
++    gs: Option<gs::Gs>,
+     /// A console wave64 program run as two host waves of 32 that exchange through LDS: the first
+     /// of two exchange dwords, whether the group has no upper half (32 threads or fewer), and per
+     /// IR block whether every lane runs it (exchanges need both halves there).
+@@ -262,6 +288,10 @@ struct Lower<'a> {
      clane: Option<V>,
      /// The first exchange dword of this thread's console wave ([`Self::exchange_pair`]).
      pair: Option<V>,
@@ -8806,7 +8959,7 @@ index 63c4de7..386d9b7 100644
      /// A console wave64 program in host waves of 32: the LDS dword counting the console threads
      /// handed to host waves (`wave_base`), and the base made in the entry block.
      halves: Option<u32>,
-@@ -475,22 +495,53 @@ fn lane_uniform(p: &Program, st: &Structured, all: &[bool]) -> HashSet<Value> {
+@@ -475,22 +505,53 @@ fn lane_uniform(p: &Program, st: &Structured, all: &[bool]) -> HashSet<Value> {
                  {
                      v.src.clone()
                  }
@@ -8867,7 +9020,7 @@ index 63c4de7..386d9b7 100644
                  _ => true,
              });
              if alike {
-@@ -882,8 +933,15 @@ fn lds_meetings(p: &crate::ir::Program, st: &Structured, all: &[bool]) -> Option
+@@ -882,8 +943,15 @@ fn lds_meetings(p: &crate::ir::Program, st: &Structured, all: &[bool]) -> Option
              }
          }
      }
@@ -8885,7 +9038,7 @@ index 63c4de7..386d9b7 100644
      }
      let mut meet = vec![(false, false); n];
      for b in 0..n {
-@@ -900,6 +958,250 @@ fn lds_meetings(p: &crate::ir::Program, st: &Structured, all: &[bool]) -> Option
+@@ -900,6 +968,250 @@ fn lds_meetings(p: &crate::ir::Program, st: &Structured, all: &[bool]) -> Option
      Some(meet)
  }
  
@@ -9136,7 +9289,20 @@ index 63c4de7..386d9b7 100644
  /// Masks held as numbers or constant lane sets in guards or lane branches: the lane tests its
  /// own bit by its console lane.
  fn lane_constant_masks(st: &Structured) -> bool {
-@@ -1270,6 +1572,9 @@ impl<'a> Lower<'a> {
+@@ -1257,6 +1569,12 @@ impl<'a> Lower<'a> {
+         let mut s = Shader::new(x.native.stage == HwStage::Ps);
+         s.inputs = x.inputs.clone();
+         s.outputs = x.outputs.clone();
++        // HybridGt: a legacy geometry program is the host's geometry stage.
++        if x.native.stage == HwStage::Gs {
++            s.geometry = Some(super::shader::Geometry {
++                max_vertices: gs::emits(x.p),
++            });
++        }
+         let insts = || p.blocks.iter().flat_map(|b| &b.insts);
+         let writes_uavs = insts().any(|i| {
+             matches!(i.fields, Fields::Image { .. } | Fields::Buffer { .. })
+@@ -1270,6 +1588,9 @@ impl<'a> Lower<'a> {
          let mut lds_meet: Option<(Vec<bool>, Vec<(bool, bool)>)> = None;
          // a console wave64 program in two host waves of 32 (`exchange`)
          let mut exchange: Option<(u32, bool, Vec<bool>)> = None;
@@ -9146,7 +9312,7 @@ index 63c4de7..386d9b7 100644
          // a console wave64 program in host waves of 32: the LDS dword of `wave_base`'s counter
          let mut halves: Option<u32> = None;
          if let StageIo::Cs(cs) = x.native.io {
-@@ -1351,6 +1656,20 @@ impl<'a> Lower<'a> {
+@@ -1351,6 +1672,20 @@ impl<'a> Lower<'a> {
                                  // numbers go through two exchange dwords past the program's LDS
                                  exchange = Some((s.lds_dwords, group <= 32, all));
                                  s.lds_dwords += 2 * group.div_ceil(64);
@@ -9167,7 +9333,7 @@ index 63c4de7..386d9b7 100644
                              }
                          }
                      }
-@@ -1503,6 +1822,7 @@ impl<'a> Lower<'a> {
+@@ -1503,6 +1838,7 @@ impl<'a> Lower<'a> {
              user_data: None,
              user_reads: BTreeMap::new(),
              samplers: Vec::new(),
@@ -9175,7 +9341,18 @@ index 63c4de7..386d9b7 100644
              descriptors: x
                  .res
                  .descriptors
-@@ -1557,6 +1877,7 @@ impl<'a> Lower<'a> {
+@@ -1541,6 +1877,10 @@ impl<'a> Lower<'a> {
+             console_lanes,
+             split_lds,
+             lds_meet,
++            gs: (x.native.stage == HwStage::Gs).then(|| {
++                let rows = x.outputs.iter().filter_map(|e| e.row).max().map_or(0, |r| r + 1);
++                gs::Gs::new(x.p, rows)
++            }),
+             local: exchange.is_some() && LOCAL_WAVES.get(),
+             local_ok: false,
+             local_any: LOCAL_ANY.get(),
+@@ -1557,6 +1897,7 @@ impl<'a> Lower<'a> {
              exchange,
              clane: None,
              pair: None,
@@ -9183,7 +9360,7 @@ index 63c4de7..386d9b7 100644
              halves,
              wave_base: None,
              flat: None,
-@@ -2292,6 +2613,7 @@ impl<'a> Lower<'a> {
+@@ -2292,6 +2633,7 @@ impl<'a> Lower<'a> {
              dxil: self.s.finish(),
              user_data,
              samplers: self.samplers,
@@ -9191,7 +9368,7 @@ index 63c4de7..386d9b7 100644
          })
      }
  
-@@ -2307,6 +2629,17 @@ impl<'a> Lower<'a> {
+@@ -2307,6 +2649,20 @@ impl<'a> Lower<'a> {
      /// Values of the program's input registers.
      fn inputs(&mut self) -> Result<(), Stop> {
          let io_inputs: HashMap<Value, Input> = self.x.io.inputs.iter().copied().collect();
@@ -9202,32 +9379,42 @@ index 63c4de7..386d9b7 100644
 +        // leave. Zero takes the no-overlap path straight into the critical
 +        // section. shortcut: the host gives no ordering between overlapping
 +        // pixels of one draw there (no rasterizer-ordered views yet).
-+        let uses_pops = self.s.pixel
++        // Off unless `VICTORY_POPS=1`: the first run with it on showed the
++        // eyes of characters glowing (run next18b; cause not yet known).
++        let uses_pops = pops_on()
++            && self.s.pixel
 +            && self.x.p.blocks.iter().flat_map(|b| &b.insts).any(|inst| {
 +                matches!(&inst.fields, Fields::Sop { src, .. } if src.contains(&Operand::Const(239)))
 +            });
          for &(reg, v) in &self.x.p.inputs {
              let val = match reg {
                  Reg::S(_) if self.params.contains_key(&v) => continue, // loaded on first use
-@@ -2329,6 +2662,7 @@ impl<'a> Lower<'a> {
+@@ -2329,6 +2685,14 @@ impl<'a> Lower<'a> {
                      // paths only seem to allow it before any save: the lane of a VGPR
                      // nobody wrote, and VGPRs nobody set read as zero.
                      None if n >= crate::ir::PARKED => Val::I32(self.s.m.i32(0)),
++                    // HybridGt: a legacy geometry program's system SGPRs:
++                    // s3 holds the wave's thread counts (64 GS threads: every
++                    // lane runs, each host invocation being one primitive);
++                    // the ring offsets read as zero.
++                    None if self.x.native.stage == HwStage::Gs && n < 8 => {
++                        Val::I32(self.s.m.i32(if n == 3 { 64 << 8 } else { 0 }))
++                    }
 +                    None if uses_pops && n <= 105 => Val::I32(self.s.m.i32(0)),
                      None => Val::Missing("a hardware SGPR input"),
                  },
                  Reg::Scc => Val::Missing("SCC on entry"),
-@@ -3181,6 +3515,9 @@ impl<'a> Lower<'a> {
+@@ -3181,6 +3545,9 @@ impl<'a> Lower<'a> {
                  let v = inst.read(Reg::V(reg)).ok_or("an unread operand")?;
                  self.i32_of(v)
              }
 +            // HybridGt: `src_pops_exiting_wave_id` (see `inputs`): no
 +            // older overlapping wave is ever waited for.
-+            Operand::Const(239) => Ok(self.s.m.i32(0)),
++            Operand::Const(239) if pops_on() => Ok(self.s.m.i32(0)),
              Operand::Const(c) => crate::resource::inline(c)
                  .map(|x| self.s.m.i32(x))
                  .ok_or("a special operand (vccz, execz, scc, lds_direct)"),
-@@ -3520,18 +3857,42 @@ impl<'a> Lower<'a> {
+@@ -3520,18 +3887,42 @@ impl<'a> Lower<'a> {
          self.s.m.select(c, exact, zero, r)
      }
  
@@ -9280,7 +9467,7 @@ index 63c4de7..386d9b7 100644
      }
  
      /// `0 × anything = 0`, as in D3D9.
-@@ -3545,6 +3906,243 @@ impl<'a> Lower<'a> {
+@@ -3545,6 +3936,243 @@ impl<'a> Lower<'a> {
          self.s.m.select(c, z, zero, m)
      }
  
@@ -9524,7 +9711,20 @@ index 63c4de7..386d9b7 100644
      // ---- lane booleans ----
  
      fn boolean(&mut self, b: Bool, at: usize) -> Result<V, Why> {
-@@ -4429,14 +5027,73 @@ impl<'a> Lower<'a> {
+@@ -3617,6 +4245,12 @@ impl<'a> Lower<'a> {
+             Atom::Quad(_) => Ok(self.s.m.bool(true)),
+             // With console lanes, a mask held as a number is the console's:
+             // the lane tests its own bit.
++            // HybridGt: a legacy geometry program's EXEC is set from the wave's
++            // thread count ("lane < GS threads", `s_bfm_b64`); every host
++            // invocation of the geometry stage is a primitive, so it holds.
++            // shortcut: a geometry program that held other masks as numbers
++            // would take them as all lanes too.
++            Atom::Opaque(_) if self.gs.is_some() => Ok(self.s.m.bool(true)),
+             Atom::Opaque(v) if self.console_lanes => {
+                 let hi = match self.pair_high(v) {
+                     Some(h) => Some(self.get(h)?),
+@@ -4429,14 +5063,73 @@ impl<'a> Lower<'a> {
              // the title's checkerboard shadow-mask generators read their
              // neighbours' samples with it; without them every shadowed light
              // was multiplied by an empty mask.)
@@ -9605,7 +9805,7 @@ index 63c4de7..386d9b7 100644
              }
              let at = self.vgprs(inst, addr.as_ref().ok_or("a permute address")?, 1)?[0];
              let x = self.vgprs(inst, data.first().ok_or("a permute source")?, 1)?[0];
-@@ -4458,6 +5115,78 @@ impl<'a> Lower<'a> {
+@@ -4458,6 +5151,97 @@ impl<'a> Lower<'a> {
              self.write(inst, Reg::V(reg), r, guard);
              return Ok(());
          }
@@ -9681,10 +9881,37 @@ index 63c4de7..386d9b7 100644
 +            self.write(inst, Reg::V(reg), r, guard);
 +            return Ok(());
 +        }
++        // HybridGt: a geometry program's ring accesses (`gs.rs`).
++        if self.gs.is_some() {
++            let w = match name.rsplit('_').next() {
++                Some("b64") => 2,
++                Some("b96") => 3,
++                Some("b128") => 4,
++                _ => 1,
++            };
++            let rest = name.trim_start_matches("ds_read").trim_start_matches("ds_write");
++            let elements: Vec<(u32, u32)> = if rest.starts_with('2') {
++                let scale = 4 * w * if name.contains("st64") { 64 } else { 1 };
++                vec![(u32::from(*offset0) * scale, w), (u32::from(*offset1) * scale, w)]
++            } else {
++                vec![(offset, w)]
++            };
++            if self.gs_ds(inst, &elements, dst_reg, &data[..])? {
++                return Ok(());
++            }
++        }
          if self.s.lds_dwords == 0 {
              return Err("LDS the program does not allocate");
          }
-@@ -5097,6 +5826,20 @@ impl<'a> Lower<'a> {
+@@ -4818,6 +5602,7 @@ impl<'a> Lower<'a> {
+                     .op(self.cur, "barrier", Attr::NoDuplicate, void, 80, &[mode]);
+                 Ok(())
+             }
++            Fields::Sopp { imm } if name == "s_sendmsg" && self.gs.is_some() => self.gs_sendmsg(*imm, b, i),
+             Fields::Sopp { .. } => Ok(()),
+             Fields::Smem { .. } => self.smem(inst, (b, i)),
+             Fields::Valu(_) if name.starts_with("v_interp_") => self.interp(inst, (b, i)),
+@@ -5097,6 +5882,20 @@ impl<'a> Lower<'a> {
                  l.s.m.cmp(c, pred::NE, o, z)
              };
              return match name {
@@ -9705,7 +9932,7 @@ index 63c4de7..386d9b7 100644
                  "s_bcnt1_i32_b64" => {
                      let (a, b) = (half(self, 0, 0)?, half(self, 0, 1)?);
                      let i32t = self.s.t.i32;
-@@ -5222,6 +5965,10 @@ impl<'a> Lower<'a> {
+@@ -5222,6 +6021,10 @@ impl<'a> Lower<'a> {
          let (r, carry): (V, Option<V>) = match name {
              "s_mov_b32" => (src32(self, 0)?, None),
              "s_movk_i32" => (sext16(self), None),
@@ -9716,7 +9943,7 @@ index 63c4de7..386d9b7 100644
              "s_cselect_b32" => {
                  let cond = self.scc_in(inst)?;
                  let (a, b) = (src32(self, 0)?, src32(self, 1)?);
-@@ -5415,6 +6162,30 @@ impl<'a> Lower<'a> {
+@@ -5415,6 +6218,30 @@ impl<'a> Lower<'a> {
          Ok(())
      }
  
@@ -9747,7 +9974,49 @@ index 63c4de7..386d9b7 100644
      /// `a + b (+ cin)` or `a - b (- cin)` with the carry (borrow) out, as the
      /// scalar and vector add-with-carry instructions set it.
      fn add_sub_carry(&mut self, c: usize, add: bool, a: V, b: V, cin: Option<V>) -> (V, V) {
-@@ -6381,7 +7152,7 @@ impl<'a> Lower<'a> {
+@@ -5465,6 +6292,9 @@ impl<'a> Lower<'a> {
+         if self.scalar.get(&site).is_some_and(|a| a.param == MEMORY) {
+             return self.memory_smem(inst);
+         }
++        if self.scalar.get(&site).is_some_and(|a| a.param == DRIVER) {
++            return self.driver_smem(inst);
++        }
+         let Some(rest) = name.strip_prefix("s_buffer_load_dword") else {
+             return self.descriptor_data(inst, site);
+         };
+@@ -6016,6 +6846,31 @@ impl<'a> Lower<'a> {
+         Ok(())
+     }
+ 
++    /// HybridGt: `s_load_dword*` from the console driver's table
++    /// (`resource::DRIVER`): zeros.
++    fn driver_smem(&mut self, inst: &Inst) -> Result<(), Why> {
++        let Fields::Smem {
++            data: Some(Operand::Scalar { code, .. }),
++            ..
++        } = inst.fields
++        else {
++            return Err("a scalar load");
++        };
++        let count = match inst.name().strip_prefix("s_load_dword") {
++            Some("") => 1u32,
++            Some("x2") => 2,
++            Some("x4") => 4,
++            Some("x8") => 8,
++            Some("x16") => 16,
++            _ => return Err("a buffer load from the driver's table"),
++        };
++        for k in 0..count {
++            let zero = self.s.m.i32(0);
++            self.write(inst, Reg::S(code + k as u8), zero, None);
++        }
++        Ok(())
++    }
++
+     /// The dword at a computed byte address of a constant buffer.
+     fn cbuffer_dword(&mut self, h: V, a: V) -> V {
+         let c = self.cur;
+@@ -6381,7 +7236,7 @@ impl<'a> Lower<'a> {
              if self.block[q].is_none() {
                  continue;
              }
@@ -9756,7 +10025,7 @@ index 63c4de7..386d9b7 100644
              let at = self.edges.get(&(q, block)).copied().unwrap_or(tail);
              let index = match arg {
                  Source::Loaded { load, first } => {
-@@ -6393,7 +7164,32 @@ impl<'a> Lower<'a> {
+@@ -6393,7 +7248,32 @@ impl<'a> Lower<'a> {
                  Source::Phi { block: inner, args: inner_args } if depth > 0 => {
                      self.descriptor_phi(*inner, inner_args, sampler, depth - 1)?
                  }
@@ -9790,7 +10059,7 @@ index 63c4de7..386d9b7 100644
              };
              incoming.push((index, at));
          }
-@@ -6777,28 +7573,37 @@ impl<'a> Lower<'a> {
+@@ -6777,28 +7657,37 @@ impl<'a> Lower<'a> {
          if let Some(op) = name.strip_prefix("v_pk_") {
              return self.packed16(inst, op, guard);
          }
@@ -9835,7 +10104,7 @@ index 63c4de7..386d9b7 100644
                      self.lane_bits.insert(w, carry);
                  }
                  for &(_, w) in &inst.writes {
-@@ -7214,6 +8019,63 @@ impl<'a> Lower<'a> {
+@@ -7214,6 +8103,63 @@ impl<'a> Lower<'a> {
                  };
                  float(self, r)
              }
@@ -9899,7 +10168,7 @@ index 63c4de7..386d9b7 100644
              "v_cvt_i32_f32" | "v_cvt_u32_f32" | "v_cvt_flr_i32_f32" | "v_cvt_rpi_i32_f32" => {
                  let mut a = f(self, 0)?;
                  if name == "v_cvt_rpi_i32_f32" {
-@@ -7334,22 +8196,10 @@ impl<'a> Lower<'a> {
+@@ -7334,22 +8280,10 @@ impl<'a> Lower<'a> {
                  let Some(Operand::Vector { reg, .. }) = v.dst else {
                      return Err("a mixed-precision result");
                  };
@@ -9923,7 +10192,7 @@ index 63c4de7..386d9b7 100644
                  self.write(inst, Reg::V(reg), x, guard);
                  Ok(())
              }
-@@ -7654,8 +8504,16 @@ impl<'a> Lower<'a> {
+@@ -7654,8 +8588,16 @@ impl<'a> Lower<'a> {
                  let x = crate::resource::inline(k).ok_or("a special operand")?;
                  Ok(self.s.m.int_const(i64t, i64::from(x as i32)))
              }
@@ -9941,7 +10210,7 @@ index 63c4de7..386d9b7 100644
                  let x = self.operand(inst, &op)?;
                  Ok(self.s.m.cast(c, Cast::ZExt, x, i64t))
              }
-@@ -7951,6 +8809,28 @@ impl<'a> Lower<'a> {
+@@ -7951,6 +8893,28 @@ impl<'a> Lower<'a> {
          Ok(f)
      }
  
@@ -9970,7 +10239,7 @@ index 63c4de7..386d9b7 100644
      /// Writes a 16-bit result (low bits of `x`) into the destination's low
      /// half, or its high half with op_sel bit 3 (or an SDWA WORD_1 select);
      /// the other half is kept (GFX10).
-@@ -7974,22 +8854,7 @@ impl<'a> Lower<'a> {
+@@ -7974,22 +8938,7 @@ impl<'a> Lower<'a> {
                  _ => return Err("an SDWA destination of a 16-bit operation"),
              }
          }
@@ -9994,7 +10263,7 @@ index 63c4de7..386d9b7 100644
          self.write_placed(inst, Reg::V(reg), r, guard);
          Ok(())
      }
-@@ -8377,6 +9242,35 @@ impl<'a> Lower<'a> {
+@@ -8377,6 +9326,35 @@ impl<'a> Lower<'a> {
          Ok(self.s.m.bin(c, Bin::And, x, m))
      }
  
@@ -10030,7 +10299,7 @@ index 63c4de7..386d9b7 100644
      /// Packed 16-bit operations (`v_pk_*`): each half computed as the
      /// 16-bit operation does, f16 through f32 as in [`Self::valu16`].
      fn packed16(&mut self, inst: &Inst, op: &str, guard: Option<V>) -> Result<(), Why> {
-@@ -8385,7 +9279,7 @@ impl<'a> Lower<'a> {
+@@ -8385,7 +9363,7 @@ impl<'a> Lower<'a> {
          };
          let float = op.ends_with("_f16");
          let n = match op {
@@ -10039,7 +10308,7 @@ index 63c4de7..386d9b7 100644
              "add_f16" | "mul_f16" | "min_f16" | "max_f16" | "add_u16" | "sub_u16" | "add_i16"
              | "sub_i16" | "mul_lo_u16" | "lshlrev_b16" | "lshrrev_b16" | "ashrrev_i16"
              | "max_u16" | "min_u16" | "max_i16" | "min_i16" => 2,
-@@ -8394,13 +9288,22 @@ impl<'a> Lower<'a> {
+@@ -8394,13 +9372,22 @@ impl<'a> Lower<'a> {
          if v.omod != 0 || !float && (v.clamp || v.neg != 0 || v.neg_hi != 0) {
              return Err("modifiers on a packed integer operation");
          }
@@ -10063,7 +10332,7 @@ index 63c4de7..386d9b7 100644
                  if float {
                      let mut f = self
                          .s
-@@ -8498,7 +9401,7 @@ impl<'a> Lower<'a> {
+@@ -8498,7 +9485,7 @@ impl<'a> Lower<'a> {
          };
          Ok(match name {
              "v_and_b32" | "v_or_b32" | "v_xor_b32" | "v_add_nc_u32" | "v_sub_nc_u32"
@@ -10072,7 +10341,7 @@ index 63c4de7..386d9b7 100644
                  let (a, b) = (s(self, 0)?, s(self, 1)?);
                  let (op, a, b) = match name {
                      "v_and_b32" => (Bin::And, a, b),
-@@ -8608,6 +9511,131 @@ impl<'a> Lower<'a> {
+@@ -8608,6 +9595,131 @@ impl<'a> Lower<'a> {
                  let (a, b) = (s(self, 0)?, s(self, 1)?);
                  self.mul_hi(a, b, name == "v_mul_hi_i32")
              }
@@ -10204,7 +10473,7 @@ index 63c4de7..386d9b7 100644
              "v_alignbit_b32" | "v_alignbyte_b32" => {
                  // The low dword of {a, b} >> shift.
                  let (a, b, sh) = (s(self, 0)?, s(self, 1)?, s(self, 2)?);
-@@ -9358,15 +10386,7 @@ impl<'a> Lower<'a> {
+@@ -9358,15 +10470,7 @@ impl<'a> Lower<'a> {
      /// `x` (an f16 in the low bits) as the low half of VGPR `reg`: 16-bit
      /// results keep the register's high half (GFX10).
      fn low_half(&mut self, inst: &Inst, reg: u8, x: V) -> V {
@@ -10221,7 +10490,7 @@ index 63c4de7..386d9b7 100644
      }
  
      fn image(&mut self, inst: &Inst, b: usize, i: usize) -> Result<(), Why> {
-@@ -9707,7 +10727,10 @@ impl<'a> Lower<'a> {
+@@ -9707,7 +10811,10 @@ impl<'a> Lower<'a> {
              if kind == 5 && (*unorm || op == 81) {
                  return Err("a cube sample with texel coordinates or a level query");
              }
@@ -10233,7 +10502,7 @@ index 63c4de7..386d9b7 100644
                  let x = addr_packed(self, coord_base, k)?;
                  *slot = to_float(self, x);
              }
-@@ -11556,6 +12579,44 @@ mod tests {
+@@ -11556,6 +12663,44 @@ mod tests {
          }
      }
  
@@ -10278,7 +10547,7 @@ index 63c4de7..386d9b7 100644
      fn perm_features(selector: u32) -> u64 {
          // Synthetic compute shader:
          // v0 is the thread ID and can supply a dynamic selector.
-@@ -11893,4 +12954,19 @@ mod tests {
+@@ -11893,4 +13038,19 @@ mod tests {
          // A 16-bit float is a half already, sign included.
          assert_eq!(half(0xBC00 << half_shift(16)), -1.0);
      }
@@ -10298,8 +10567,275 @@ index 63c4de7..386d9b7 100644
 +        lower_with(&words, vec![], vec![]).expect("v_cvt_f32_f64 must lower");
 +    }
  }
+diff --git a/crates/victory-shader/src/emit/lower/gs.rs b/crates/victory-shader/src/emit/lower/gs.rs
+new file mode 100644
+index 0000000..9d471a6
+--- /dev/null
++++ b/crates/victory-shader/src/emit/lower/gs.rs
+@@ -0,0 +1,261 @@
++//! HybridGt: legacy (non-NGG) GFX10 geometry programs as host geometry
++//! shaders.
++//!
++//! On the console the geometry program reads its primitive's vertices from
++//! the ES-GS ring in LDS, at byte offsets the hardware passes packed in `v0`
++//! (vertices 0 and 1, low and high halves) and `v1` (vertex 2), and writes
++//! each vertex it emits to the GS-VS ring at its own slot, then sends
++//! `GS_EMIT`; a copy shader the driver makes reads the ring and exports.
++//! Ring dword `k` of a vertex is signature register `k / 4`, column `k % 4`
++//! (the title's `ISG1`/`OSG1` rows; seen in `GS_VoxelizeGeneric`: 5 output
++//! registers, 20 dwords a vertex).
++//!
++//! Here: ES-GS reads at a vertex's offset become `loadInput` of that vertex;
++//! GS-VS writes are kept per vertex (dword `d` of the slot is vertex
++//! `d / stride`), and the `n`th `GS_EMIT` stores vertex `n` as the outputs
++//! and emits it; `GS_CUT` ends the strip. The driver's ring placement
++//! (`resource::DRIVER`, `s2`) drops out.
++
++use std::collections::{HashMap, HashSet};
++
++use super::super::bitcode::{Attr, V};
++use crate::gfx10::{Fields, Operand};
++use crate::ir::{Inst, Program, Reg, Value};
++
++/// `s_sendmsg` ids and operations (GFX10).
++const MSG_GS: u16 = 2;
++const MSG_GS_DONE: u16 = 3;
++const OP_CUT: u16 = 1;
++const OP_EMIT: u16 = 2;
++
++pub(super) struct Gs {
++    /// VGPR values holding a vertex's ES-GS ring offset in bytes, by vertex.
++    esgs: HashMap<Value, u32>,
++    /// VGPR values holding this primitive's GS-VS ring slot.
++    gsvs: HashSet<Value>,
++    /// Ring dwords per emitted vertex.
++    stride: u32,
++    /// GS-VS ring dwords written: (vertex, dword of the vertex) -> value.
++    staged: HashMap<(u32, u32), V>,
++    emitted: u32,
++}
++
++/// How many vertices the program emits at most (its `GS_EMIT` messages, the
++/// program having no loops around them; at least one).
++pub(super) fn emits(p: &Program) -> u32 {
++    let n = p
++        .blocks
++        .iter()
++        .flat_map(|b| &b.insts)
++        .filter(|i| i.name() == "s_sendmsg")
++        .filter(|i| matches!(i.fields, Fields::Sopp { imm } if imm & 0xF == MSG_GS && (imm >> 4) & 2 != 0))
++        .count() as u32;
++    n.max(1)
++}
++
++impl Gs {
++    /// The classification of `p`'s ring addresses; `outputs` registers set the
++    /// GS-VS stride (4 dwords a register).
++    pub(super) fn new(p: &Program, output_rows: u32) -> Gs {
++        let input = |v: Value| p.inputs.iter().find(|(_, x)| *x == v).map(|(r, _)| *r);
++        let mut consts: HashMap<Value, u32> = HashMap::new();
++        let mut esgs: HashMap<Value, u32> = HashMap::new();
++        let mut gsvs: HashSet<Value> = HashSet::new();
++        let num = |inst: &Inst, op: &Operand, consts: &HashMap<Value, u32>| -> Option<u32> {
++            match *op {
++                Operand::Const(c @ 128..=192) => Some(u32::from(c) - 128),
++                Operand::Literal(x) => Some(x),
++                Operand::Scalar { code, .. } => inst.read(Reg::S(code)).and_then(|v| consts.get(&v).copied()),
++                _ => None,
++            }
++        };
++        let vval = |inst: &Inst, op: &Operand| match *op {
++            Operand::Vector { reg, .. } => inst.read(Reg::V(reg)),
++            _ => None,
++        };
++        for inst in p.blocks.iter().flat_map(|b| &b.insts) {
++            let name = inst.name();
++            if let Fields::Sop { src, .. } = &inst.fields
++                && name == "s_mov_b32"
++                && let (Some(&(_, out)), Some(k)) = (inst.writes.first(), src.first().and_then(|s| num(inst, s, &consts)))
++            {
++                consts.insert(out, k);
++                continue;
++            }
++            let Fields::Valu(f) = &inst.fields else {
++                continue;
++            };
++            let Some(&(Reg::V(_), out)) = inst.writes.first() else {
++                continue;
++            };
++            match name {
++                // A vertex's offset: v0 low half (vertex 0), v0 high half
++                // (vertex 1), v1 low half (vertex 2), times 4.
++                "v_lshlrev_b32" if f.src.len() == 2 && num(inst, &f.src[0], &consts) == Some(2) => {
++                    let Some(v) = vval(inst, &f.src[1]) else { continue };
++                    let high = f.sdwa.is_some_and(|s| s.src_sel[1] == 5);
++                    let vertex = match input(v) {
++                        Some(Reg::V(0)) => Some(u32::from(high)),
++                        Some(Reg::V(1)) => Some(2 + u32::from(high)),
++                        _ => None,
++                    };
++                    if let Some(vertex) = vertex {
++                        esgs.insert(out, vertex);
++                    }
++                }
++                // Masked to the ring: the same vertex.
++                "v_and_b32" if f.src.len() == 2 => {
++                    for (a, m) in [(1, 0), (0, 1)] {
++                        if let (Some(v), Some(_)) = (vval(inst, &f.src[a]), num(inst, &f.src[m], &consts))
++                            && let Some(&vertex) = esgs.get(&v)
++                        {
++                            esgs.insert(out, vertex);
++                        }
++                    }
++                }
++                "v_mov_b32" => {
++                    if let Some(v) = f.src.first().and_then(|s| vval(inst, s)) {
++                        if let Some(&vertex) = esgs.get(&v) {
++                            esgs.insert(out, vertex);
++                        }
++                        if gsvs.contains(&v) {
++                            gsvs.insert(out);
++                        }
++                    }
++                }
++                // The primitive's slot: lane x slot bytes + the wave's base.
++                "v_mad_u32_u24" if f.src.first().and_then(|s| num(inst, s, &consts)).is_some_and(|k| k >= 16) => {
++                    gsvs.insert(out);
++                }
++                _ => {}
++            }
++        }
++        Gs {
++            esgs,
++            gsvs,
++            stride: 4 * output_rows.max(1),
++            staged: HashMap::new(),
++            emitted: 0,
++        }
++    }
++}
++
++impl<'a> super::Lower<'a> {
++    /// An LDS access of a geometry program; `Ok(false)` if it is no ring
++    /// access this module knows.
++    pub(super) fn gs_ds(&mut self, inst: &Inst, elements: &[(u32, u32)], dst: Option<u8>, data: &[Operand]) -> Result<bool, super::Why> {
++        let Some(gs) = self.gs.as_ref() else {
++            return Ok(false);
++        };
++        let Fields::Ds { addr: Some(Operand::Vector { reg, .. }), .. } = &inst.fields else {
++            return Ok(false);
++        };
++        let Some(a) = inst.read(Reg::V(*reg)) else {
++            return Ok(false);
++        };
++        let name = inst.name();
++        if name.starts_with("ds_read") {
++            let Some(&vertex) = gs.esgs.get(&a) else {
++                return Err("an LDS read in a geometry program that is no vertex's input");
++            };
++            let reg = dst.ok_or("an LDS read result")?;
++            let mut n = 0;
++            for &(off, w) in elements {
++                for k in 0..w {
++                    let byte = off + 4 * k;
++                    let x = self.gs_input(vertex, byte / 16, ((byte / 4) % 4) as u8);
++                    self.write(inst, Reg::V(reg + n), x, None);
++                    n += 1;
++                }
++            }
++            return Ok(true);
++        }
++        if name.starts_with("ds_write") {
++            if !gs.gsvs.contains(&a) {
++                return Err("an LDS write in a geometry program that is no emitted vertex");
++            }
++            let stride = gs.stride;
++            let mut staged = Vec::new();
++            for (e, &(off, w)) in elements.iter().enumerate() {
++                let vals = self.vgprs(inst, data.get(e).ok_or("an LDS write")?, w as u8)?;
++                for (k, x) in vals.into_iter().enumerate() {
++                    let dword = (off + 4 * k as u32) / 4;
++                    staged.push(((dword / stride, dword % stride), x));
++                }
++            }
++            let gs = self.gs.as_mut().expect("checked above");
++            gs.staged.extend(staged);
++            return Ok(true);
++        }
++        Err("an LDS operation in a geometry program")
++    }
++
++    /// Input register `row`, column `col` of `vertex`, as an i32 (zero where
++    /// the signature has no such column).
++    fn gs_input(&mut self, vertex: u32, row: u32, col: u8) -> V {
++        let found = self.s.inputs.iter().enumerate().find_map(|(id, e)| {
++            (e.row == Some(row) && col >= e.col && col < e.col + e.cols).then_some((id, col - e.col, e.comp == 9))
++        });
++        let Some((id, col, float)) = found else {
++            return self.s.m.i32(0);
++        };
++        let (name, ty) = if float { ("loadInput.f32", self.s.t.f32) } else { ("loadInput.i32", self.s.t.i32) };
++        let args = [self.s.m.i32(id as u32), self.s.m.i32(0), self.s.m.i8(col), self.s.m.i32(vertex)];
++        let x = self.s.op(self.cur, name, Attr::ReadNone, ty, 4, &args);
++        if float { self.as_int(x) } else { x }
++    }
++
++    /// `s_sendmsg` in a geometry program: `Ok(false)` if not a GS message.
++    pub(super) fn gs_msg(&mut self, imm: u16, guarded: bool) -> Result<bool, super::Why> {
++        if self.gs.is_none() {
++            return Ok(false);
++        }
++        let (msg, op) = (imm & 0xF, (imm >> 4) & 3);
++        if msg == MSG_GS_DONE {
++            return Ok(true);
++        }
++        if msg != MSG_GS {
++            return Ok(false);
++        }
++        if guarded {
++            return Err("a geometry emit where not every lane runs");
++        }
++        let stream = self.s.m.i8(((imm >> 8) & 3) as u8);
++        let void = self.s.t.void;
++        if op & OP_EMIT != 0 {
++            let gs = self.gs.as_mut().expect("checked above");
++            let n = gs.emitted;
++            gs.emitted += 1;
++            let outputs: Vec<(usize, u32, u8, u8, bool)> = self
++                .s
++                .outputs
++                .iter()
++                .enumerate()
++                .filter_map(|(id, e)| Some((id, e.row?, e.col, e.cols, e.comp == 9)))
++                .collect();
++            for (id, row, col0, cols, float) in outputs {
++                for c in 0..cols {
++                    let dword = row * 4 + u32::from(col0 + c);
++                    let staged = self.gs.as_ref().and_then(|g| g.staged.get(&(n, dword)).copied());
++                    let x = staged.unwrap_or_else(|| self.s.m.i32(0));
++                    let (name, x) = if float { ("storeOutput.f32", self.as_float(x)) } else { ("storeOutput.i32", x) };
++                    let args = [self.s.m.i32(id as u32), self.s.m.i32(0), self.s.m.i8(c), x];
++                    self.s.op(self.cur, name, Attr::NoUnwind, void, 5, &args);
++                }
++            }
++            self.s.op(self.cur, "emitStream", Attr::NoUnwind, void, 97, &[stream]);
++        }
++        if op & OP_CUT != 0 {
++            self.s.op(self.cur, "cutStream", Attr::NoUnwind, void, 98, &[stream]);
++        }
++        Ok(true)
++    }
++}
++
++impl<'a> super::Lower<'a> {
++    /// `s_sendmsg` at block `b`, instruction `i` of a geometry program.
++    pub(super) fn gs_sendmsg(&mut self, imm: u16, b: usize, i: usize) -> Result<(), super::Why> {
++        let guarded = self.guard(b, i)?.is_some();
++        self.gs_msg(imm, guarded).map(|_| ())
++    }
++}
 diff --git a/crates/victory-shader/src/emit/mod.rs b/crates/victory-shader/src/emit/mod.rs
-index 5217df8..3ad247d 100644
+index 5217df8..9ad0300 100644
 --- a/crates/victory-shader/src/emit/mod.rs
 +++ b/crates/victory-shader/src/emit/mod.rs
 @@ -91,6 +91,8 @@ pub mod host;
@@ -10355,7 +10891,26 @@ index 5217df8..3ad247d 100644
      }
      // SCC of a mask operation joined with a scalar test behind a per-lane skip (the 32-lane
      // trace programs): right once the wave takes that skip together ([`widen`]; the
-@@ -701,6 +725,7 @@ fn emit_program(
+@@ -636,6 +660,18 @@ fn emit_program(
+             _ => 0,
+         };
+     }
++    // HybridGt: a geometry program's inputs are its vertex stage's outputs,
++    // with the same modes.
++    if native.stage == HwStage::Gs {
++        for e in &mut inputs {
++            e.interp = match (e.kind, e.comp) {
++                (3, _) => 4,
++                (0 | 6 | 7, 9) => 2,
++                (0, _) => 1,
++                _ => 0,
++            };
++        }
++    }
+     // With a conservative depth output (SV_DepthLessEqual, GreaterEqual) DXIL
+     // wants the position centroid (or per sample), as DXC declares it then.
+     if pixel && outputs.iter().any(|e| matches!(e.kind, 18 | 19)) {
+@@ -701,6 +737,7 @@ fn emit_program(
          root_srvs: l.root_srvs,
          root_uavs: l.root_uavs,
          root_indexed_views: res.root_indexed_views.clone(),
@@ -10363,7 +10918,7 @@ index 5217df8..3ad247d 100644
      };
      Ok((shader, wave_size))
  }
-@@ -1010,6 +1035,241 @@ mod tests {
+@@ -1010,6 +1047,241 @@ mod tests {
          stores_v1(&[0x7E04_028B, 0xDACC_0000, 0x0100_0200]).unwrap();
      }
  
@@ -10605,7 +11160,7 @@ index 5217df8..3ad247d 100644
      /// A carry-in reading a join of compares after a divergent branch. A
      /// lane that skipped the inner compare has VCC clear there (VOPC clears
      /// inactive lanes), not the first compare's bit, so the join is no
-@@ -1076,6 +1336,7 @@ mod tests {
+@@ -1076,6 +1348,7 @@ mod tests {
              root_srvs: Vec::new(),
              root_uavs: Vec::new(),
              root_indexed_views: Vec::new(),
@@ -10613,7 +11168,7 @@ index 5217df8..3ad247d 100644
          };
          let file = |var: &str, stage| {
              std::env::var(var).ok().map(|p| super::HostShader {
-@@ -1088,6 +1349,7 @@ mod tests {
+@@ -1088,6 +1361,7 @@ mod tests {
                  root_srvs: Vec::new(),
                  root_uavs: Vec::new(),
                  root_indexed_views: Vec::new(),
@@ -10621,7 +11176,7 @@ index 5217df8..3ad247d 100644
              })
          };
          let ps = file("VICTORY_REF_PS", crate::HwStage::Ps).unwrap_or(ps);
-@@ -1377,6 +1639,7 @@ mod tests {
+@@ -1377,6 +1651,7 @@ mod tests {
                  root_srvs: l.root_srvs,
                  root_uavs: l.root_uavs,
                  root_indexed_views: Vec::new(),
@@ -10629,7 +11184,7 @@ index 5217df8..3ad247d 100644
              };
              let (root, pso) = host.compute_pipeline(&cs).unwrap();
              let inputs: Vec<u32> = [
-@@ -1667,6 +1930,24 @@ mod barycentric_tests {
+@@ -1667,6 +1942,24 @@ mod barycentric_tests {
          validate(&shader);
      }
  
@@ -10654,7 +11209,7 @@ index 5217df8..3ad247d 100644
      /// Both: the attribute is interpolated and J is used as a value.
      #[test]
      fn interpolation_and_a_barycentric_value_together() {
-@@ -1783,4 +2064,192 @@ mod barycentric_tests {
+@@ -1783,4 +2076,192 @@ mod barycentric_tests {
          let words = [0xC812_0000, e0, e1, S_ENDPGM];
          assert!(pixel(&words, PERSP_CENTER).is_err());
      }
@@ -12588,7 +13143,7 @@ index 55cc55d..28e1aa8 100644
 +    eprintln!("ran on the hardware device: first-lane read of a uniform LDS load inside a lane branch");
 +}
 diff --git a/crates/victory-shader/src/io.rs b/crates/victory-shader/src/io.rs
-index 09b1f8e..aaffe23 100644
+index 09b1f8e..dd124d3 100644
 --- a/crates/victory-shader/src/io.rs
 +++ b/crates/victory-shader/src/io.rs
 @@ -138,8 +138,7 @@ pub enum Interp {
@@ -12601,7 +13156,18 @@ index 09b1f8e..aaffe23 100644
      /// attribute's vertex values (`v_interp_p1*`: P0 + i P10, with P10 =
      /// P1 - P0; `v_interp_p2*`: its old dst + j P20, with P20 = P2 - P0).
      Weighted { attribute: Attribute },
-@@ -369,6 +368,7 @@ pub fn raise(p: &Program, native: &NativeProgram) -> Result<Io, ShaderError> {
+@@ -302,6 +301,10 @@ pub fn raise(p: &Program, native: &NativeProgram) -> Result<Io, ShaderError> {
+             ];
+             (loaded, &[][..], &ms.outputs[..])
+         }
++        // HybridGt: a legacy geometry program's inputs and outputs are its
++        // ring accesses, which the lowering turns into the host geometry
++        // stage's own (`emit::lower::gs`); nothing is raised here.
++        (_, HwStage::Gs) => (Vec::new(), &[][..], &[][..]),
+         _ => return Err(unsupported(0, "I/O of this stage")),
+     };
+     let inputs: Vec<(Value, Input)> = p
+@@ -369,6 +372,7 @@ pub fn raise(p: &Program, native: &NativeProgram) -> Result<Io, ShaderError> {
          defs: &defs,
          phis: &phis,
      };
@@ -12609,7 +13175,7 @@ index 09b1f8e..aaffe23 100644
      for (b, block) in p.blocks.iter().enumerate() {
          for (i, inst) in block.insts.iter().enumerate() {
              let site = (b, i);
-@@ -382,7 +382,9 @@ pub fn raise(p: &Program, native: &NativeProgram) -> Result<Io, ShaderError> {
+@@ -382,7 +386,9 @@ pub fn raise(p: &Program, native: &NativeProgram) -> Result<Io, ShaderError> {
                              io.interps
                                  .push((site, Interp::Vertex { attribute, vertex }));
                          }
@@ -12620,7 +13186,7 @@ index 09b1f8e..aaffe23 100644
                          ("v_interp_p2_f32", Operand::Vector { reg, .. }) => {
                              let Operand::Vector { reg: d, .. } = *dst else {
                                  return Err(unsupported(at, "an interpolation operand"));
-@@ -460,6 +462,25 @@ pub fn raise(p: &Program, native: &NativeProgram) -> Result<Io, ShaderError> {
+@@ -460,6 +466,25 @@ pub fn raise(p: &Program, native: &NativeProgram) -> Result<Io, ShaderError> {
              }
          }
      }
@@ -12646,3 +13212,31 @@ index 09b1f8e..aaffe23 100644
      Ok(io)
  }
  
+diff --git a/crates/victory-shader/src/resource.rs b/crates/victory-shader/src/resource.rs
+index 2b6edd4..1a03345 100644
+--- a/crates/victory-shader/src/resource.rs
++++ b/crates/victory-shader/src/resource.rs
+@@ -45,6 +45,10 @@ pub const CODE: usize = usize::MAX;
+ /// structures). Offset and computed term are not used: lowering takes the
+ /// 64-bit address from the instruction's operands.
+ pub const MEMORY: usize = usize::MAX - 1;
++/// HybridGt: the console driver's own table a legacy geometry program reads
++/// through user data 0-1 (its GS-VS ring placement); read as zeros on the
++/// host, whose geometry stage has no ring.
++pub const DRIVER: usize = usize::MAX - 2;
+ 
+ /// The reasons an address traces to no root parameter for which the
+ /// address is then taken as it stands ([`MEMORY`]).
+@@ -882,6 +886,12 @@ impl<'a> Tracer<'a> {
+                 offset: 0,
+                 dynamic: None,
+             })
++        } else if self.stage == HwStage::Gs && why == "an address in an SGPR that is no root parameter" {
++            Ok(Address {
++                param: DRIVER,
++                offset: 0,
++                dynamic: None,
++            })
+         } else {
+             Err(why)
+         }
