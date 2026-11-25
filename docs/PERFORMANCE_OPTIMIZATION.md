@@ -149,3 +149,34 @@ Correctness checks:
   have been skipped forever.
 - `card_merge_tests::the_merge_writes_the_masked_bytes_and_nothing_else`: on the RTX 4070 Ti,
   every byte of a 64 KiB buffer is checked.
+
+## 2026-11-25, afternoon: merges, runs next16-next17
+
+Branch `hybridgt/next3` (exported as `patches/victory-gta6-next3/`, one diff on
+fxceless/victory-fork `a253706`):
+
+- Merged fxceless/victory-gta6 `f85101b` (submit thread `VICTORY_ASYNC_SUBMIT`, copy queue
+  `VICTORY_QUEUE2`, indirect draw windows, profiler) and fxceless/victory-fork `a253706` (frame
+  log, driver watch, heap lock; their figure: 6.0 -> 8.9 fps with `VICTORY_INDIRECT_WINDOW=1` on
+  an RTX 4070, first room). Our relay copy-queue fetch defers to `VICTORY_QUEUE2`.
+- 13 ZTRX PR commits (shader lowering: f64, packed dot, quad masks, interpolation, LOD; uniform
+  LDS reads, which make the last 3 BVH builder programs translate; batched texture probes).
+- POPS pixel shaders translate (10 ped cut-out programs), after upstream `522d2bc`.
+- xmem: no split call where our own unmap left an exact placeholder; no commit call for
+  section pages committed already.
+- FSR 1 (AMD, MIT, vendored) on present: `VICTORY_FSR=1`, `VICTORY_FSR_OUTPUT=WxH`; GPU test.
+- `victory.exe` has an icon of its own (original design).
+
+| Run | Build / switches | Scene | Frames |
+|---|---|---|---|
+| next16 | next2 + `VICTORY_FETCH_COPY_QUEUE=1` | world, user playing and driving | median 300 ms (next14: 255 ms); not the same scene, no gain claimed |
+| next17 | next3 + async submit, queue2, windows, texture no-wait | **new game** (saves moved to `save-backup/`): prologue cutscene and streaming | 0.6-4.2 fps; remapping held 372 ms/frame (6,200 pages, 260 ms in system calls), card ~11 % busy, up to 866 draws dropped while pipelines were first built (new cache) |
+
+The new-game scene is not comparable with next14's save. Next: a run on the warm cache with the
+xmem change, then 1080p against 720p+FSR.
+
+Shader translation (offline, after the POPS fix): 25,751 of 25,985 programs. Left: 196 geometry
+shaders (no geometry stage in the translator; they also read a driver table through user data
+0-1), 29 DXBC programs inside the console's FidelityFX DLL (never run: the host's upscaler is used),
+5 shadow-ray programs (read the BVH's address from a descriptor; useless until the BVH builder
+works), 1 nested waterfall (opaque lane mask), 1 lane mask exchanged under a partial EXEC.
