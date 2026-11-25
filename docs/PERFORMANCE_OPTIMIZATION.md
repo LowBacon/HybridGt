@@ -533,3 +533,16 @@ fxceless/victory-gta6 085ee7c merged (3 commits: windows in a GPU upload heap,
 `indirect::tests::warp_budget_saturates_without_wraparound_and_preserves_draw_fields` fails on its
 own tree too. Marvisak/VIctory +402, DexNom/VIctory +334, Belobug +550 commits since our last
 merges: diverged; to be ported piece by piece. Zettrox/ztrx: repository no longer found.
+
+### The intro's "triangles": console rectangle lists (2026-11-25, 23:13-23:25)
+
+Launch 1 (play-fast.cmd, new game, 7 min, no crash, 1,046 pipeline format sets recorded, frames up
+to 9.9 fps): the intro's 3D scenes show through regular grids in which every square has one of its
+two triangles filled. The title draws those as console rectangle lists (3 corners, the hardware
+adds the 4th); stream pipelines naming that topology get a geometry stage that completes them,
+the new 0x1c8 pipelines declared triangles, so each rectangle drew its first triangle.
+A 0x1c8 pipeline drawn with rectangles now gets a host pipeline with that stage (offline: the
+rectangle version of all 1,649 captured vertex pipelines made, stage present, no debug error).
+Launch 2 with it: **the GPU was lost 84 s in** (device removed, "invalid command"), as the intro
+began, where launch 1 ran on. The stage is behind `VICTORY_NATIVE_RECTS=1`, off; next a diagnostics
+launch with the D3D12 debug layer to name the command.
