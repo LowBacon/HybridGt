@@ -1,7 +1,7 @@
 From 396407e55850502f00e6b405dc43211b13142d1a Mon Sep 17 00:00:00 2001
 From: LowBacon <lenni.a.jokitalo@gmail.com>
 Date: Tue, 24 Nov 2026 23:05:32 +0200
-Subject: [PATCH 01/22] Shaders: wave-wide branch form as last resort for
+Subject: [PATCH 01/25] Shaders: wave-wide branch form as last resort for
  programs otherwise refused on 32-lane hosts; translate VICTORY_SAVE_HASHES
  (HybridGt)
 

@@ -1,7 +1,7 @@
 From 537abf98c2cc34b32cc50dbd685af4fbf0327328 Mon Sep 17 00:00:00 2001
 From: Z User <z@container>
 Date: Wed, 25 Nov 2026 06:16:44 +0000
-Subject: [PATCH 10/22] Shaders: ds_permute_b32 across two host waves, through
+Subject: [PATCH 10/25] Shaders: ds_permute_b32 across two host waves, through
  the same table
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

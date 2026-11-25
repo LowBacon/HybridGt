@@ -1,7 +1,7 @@
 From f00ed8a4d994d477c703a85289ca7a674dabde9c Mon Sep 17 00:00:00 2001
 From: IAmTheSween <thesweenclips@gmail.com>
 Date: Wed, 25 Nov 2026 01:39:08 -0500
-Subject: [PATCH 13/22] Shaders: ignore missing prior values on v_fma_mixlo_f16
+Subject: [PATCH 13/25] Shaders: ignore missing prior values on v_fma_mixlo_f16
  and v_fma_mixhi_f16
 
 Extracts Lower::place_half for partial 16-bit VGPR updates so v_fma_mixlo_f16 and v_fma_mixhi_f16 treat an unlowered prior value (such as the dead destination of an earlier v_interp_p1ll_f16) as 0 in the untouched half, matching write_half and low_half. Unblocks all 8 deferred pixel shaders failing with 'the first half of an interpolation'. Tested on NVIDIA RTX 5070 and Windows SDK dxil.dll 10.0.26100.0.

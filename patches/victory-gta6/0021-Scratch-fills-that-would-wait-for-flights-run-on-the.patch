@@ -1,7 +1,7 @@
 From 7e6cceb86b51a7ebb62cd9d0783266836be54f78 Mon Sep 17 00:00:00 2001
 From: LowBacon <lenni.a.jokitalo@gmail.com>
 Date: Wed, 25 Nov 2026 11:53:09 +0200
-Subject: [PATCH 21/22] Scratch fills that would wait for flights run on the
+Subject: [PATCH 21/25] Scratch fills that would wait for flights run on the
  card from host copies (VICTORY_GPU_FILLS=1; scratch chunks then in shared
  memory) (HybridGt)
 

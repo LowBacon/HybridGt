@@ -1,7 +1,7 @@
 From 7f7f6babebc7e555b977075b01e231277e40ac0d Mon Sep 17 00:00:00 2001
 From: LowBacon <lenni.a.jokitalo@gmail.com>
 Date: Wed, 25 Nov 2026 10:52:50 +0200
-Subject: [PATCH 16/22] Descriptor mirroring: VICTORY_SYNC_TIMING=1 times its
+Subject: [PATCH 16/25] Descriptor mirroring: VICTORY_SYNC_TIMING=1 times its
  phases per frame (HybridGt diagnostic)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

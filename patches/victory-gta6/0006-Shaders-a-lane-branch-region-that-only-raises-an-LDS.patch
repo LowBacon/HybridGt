@@ -1,7 +1,7 @@
 From 561592d901ce7a4ddff81c9d4244c51496743349 Mon Sep 17 00:00:00 2001
 From: FrancescoGelosoEterea <francescogeloso890@gmail.com>
 Date: Wed, 25 Nov 2026 02:21:06 +0100
-Subject: [PATCH 06/22] Shaders: a lane-branch region that only raises an LDS
+Subject: [PATCH 06/25] Shaders: a lane-branch region that only raises an LDS
  flag runs as two host waves
 
 A console wave64 program with LDS in a group over 32 threads runs on a

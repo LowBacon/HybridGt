@@ -1,7 +1,7 @@
 From a033d6f64b6a1136d86c000e639cce561403ed8c Mon Sep 17 00:00:00 2001
 From: S1M40 <simasvasconcelos@gmail.com>
 Date: Wed, 25 Nov 2026 03:52:05 +0000
-Subject: [PATCH 07/22] Fix stale frames for guarded textures
+Subject: [PATCH 07/25] Fix stale frames for guarded textures
 
 Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
 (cherry picked from commit afa33722b4b2d99a74512e45364e7fb30ecb47e6)

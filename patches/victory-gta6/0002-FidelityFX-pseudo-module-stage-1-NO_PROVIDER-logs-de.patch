@@ -1,7 +1,7 @@
 From 5bb68f7787cf2dddb59d63b22181553c338c8d8e Mon Sep 17 00:00:00 2001
 From: LowBacon <lenni.a.jokitalo@gmail.com>
 Date: Tue, 24 Nov 2026 23:48:20 +0200
-Subject: [PATCH 02/22] FidelityFX pseudo-module (stage 1: NO_PROVIDER, logs
+Subject: [PATCH 02/25] FidelityFX pseudo-module (stage 1: NO_PROVIDER, logs
  descriptor types); constant null descriptors at a join read the null slot;
  finer refusal reasons (HybridGt)
 

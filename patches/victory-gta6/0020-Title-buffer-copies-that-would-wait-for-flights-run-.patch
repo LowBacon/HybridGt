@@ -1,7 +1,7 @@
 From 88dfff9f5e07ad70dfe104551878094c8ef75884 Mon Sep 17 00:00:00 2001
 From: LowBacon <lenni.a.jokitalo@gmail.com>
 Date: Wed, 25 Nov 2026 11:42:31 +0200
-Subject: [PATCH 20/22] Title buffer copies that would wait for flights run on
+Subject: [PATCH 20/25] Title buffer copies that would wait for flights run on
  the card, in the list's prelude (VICTORY_GPU_BUFFER_COPIES=1, off by default)
  (HybridGt)
 

@@ -1,7 +1,7 @@
 From a40a791911d8804155c04816c062aa6663af7fd1 Mon Sep 17 00:00:00 2001
 From: scoresby13 <60326087+scoresby13@users.noreply.github.com>
 Date: Wed, 25 Nov 2026 14:08:52 +0800
-Subject: [PATCH 14/22] Shaders: lower mul_hi without INT64
+Subject: [PATCH 14/25] Shaders: lower mul_hi without INT64
 
 (cherry picked from commit b867c03cbd12118533cc0e944e885c86144848f8)
 ---

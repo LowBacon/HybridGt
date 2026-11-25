@@ -131,3 +131,21 @@ from about 185 MB to about 160 MB a frame.
   - hashing of the merged pages after the merge.
 
   This is the next target. It would remove the remaining 77 ms settle.
+
+## Runs next13–next14: masked merge on the card (patches 0023–0025)
+
+| Run | Change | Steady world fps | ms/frame | Settle left |
+|---|---|---|---|---|
+| next12 | (reference) | 3.7–4.0 | 252–270 | 77 ms "title memory changed under shader writes" |
+| next13 | `VICTORY_GPU_MERGE=1`, log in a tree | 3.4–4.0 | 252–298 | that settle gone (35 ms "lists in the air"). CPU preparation rose to 125–183 ms: 242,000 runs a frame, a tree insert each |
+| next14 | log as one vector per send, binary search | **3.7–4.2** | **239–272** | 69 ms "256 lists in the air" (`VICTORY_LATE_WAIT_LISTS`) |
+
+In next14 the merge step takes 10–23 ms of the submitting thread for 114,000–486,000 dwords a
+frame. Those are merged on the card in 1.5–6.4 dispatches. No device loss, no crash.
+
+Correctness checks:
+- `merge_log_tests`: masks, joined dwords, unseen runs, pruning, runs merged again. This test
+  found a bug: a run merged again at the same offset replaced the older one, and that run would
+  have been skipped forever.
+- `card_merge_tests::the_merge_writes_the_masked_bytes_and_nothing_else`: on the RTX 4070 Ti,
+  every byte of a 64 KiB buffer is checked.

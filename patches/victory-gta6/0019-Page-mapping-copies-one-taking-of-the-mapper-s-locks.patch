@@ -1,7 +1,7 @@
 From 8822fb72a1575a862834ae492684fcaf550c7307 Mon Sep 17 00:00:00 2001
 From: LowBacon <lenni.a.jokitalo@gmail.com>
 Date: Wed, 25 Nov 2026 11:29:55 +0200
-Subject: [PATCH 19/22] Page-mapping copies: one taking of the mapper's locks
+Subject: [PATCH 19/25] Page-mapping copies: one taking of the mapper's locks
  per CopyPageMappingsBatchX call, no-op aliases skipped; remap timers split
  system calls from GPU-side notifications (HybridGt)
 

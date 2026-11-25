@@ -1,7 +1,7 @@
 From 6102b2cd99e1bdc7031eea4bbb6b48c8ad89177a Mon Sep 17 00:00:00 2001
 From: LowBacon <lenni.a.jokitalo@gmail.com>
 Date: Wed, 25 Nov 2026 11:13:40 +0200
-Subject: [PATCH 18/22] Memory remapping: scatter pages mapped one by one again
+Subject: [PATCH 18/25] Memory remapping: scatter pages mapped one by one again
  under the one lock (joined pages were several placeholders; error 487 stopped
  the title, run next8) (HybridGt)
 

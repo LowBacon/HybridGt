@@ -1,7 +1,7 @@
 From 3c093de277ca62084eafbd2cbfa8eb48570f534e Mon Sep 17 00:00:00 2001
 From: LowBacon <lenni.a.jokitalo@gmail.com>
 Date: Wed, 25 Nov 2026 11:12:18 +0200
-Subject: [PATCH 17/22] Memory remapping: locks once per scatter call,
+Subject: [PATCH 17/25] Memory remapping: locks once per scatter call,
  contiguous pages as one range, no-op remaps skipped; remap lock counters;
  VICTORY_KEYS in release builds (HybridGt)
 

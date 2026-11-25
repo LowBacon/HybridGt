@@ -1,7 +1,7 @@
 From 537bd5fc2a5bcf787f0eb2ea732f8528eb20b9d8 Mon Sep 17 00:00:00 2001
 From: pgm1207 <104554896+pgm1207@users.noreply.github.com>
 Date: Tue, 24 Nov 2026 12:13:53 +0100
-Subject: [PATCH 05/22] GPU: no blending on integer render targets in host
+Subject: [PATCH 05/25] GPU: no blending on integer render targets in host
  pipelines
 
 The console ignores blending on integer render targets and the title

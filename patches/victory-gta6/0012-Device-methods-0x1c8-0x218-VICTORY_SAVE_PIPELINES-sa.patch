@@ -1,7 +1,7 @@
 From f34dab2a031d07101935358fff5d82ba342103ed Mon Sep 17 00:00:00 2001
 From: LowBacon <lenni.a.jokitalo@gmail.com>
 Date: Wed, 25 Nov 2026 10:30:32 +0200
-Subject: [PATCH 12/22] Device methods 0x1c8/0x218: VICTORY_SAVE_PIPELINES
+Subject: [PATCH 12/25] Device methods 0x1c8/0x218: VICTORY_SAVE_PIPELINES
  saves what their descriptions point at (HybridGt diagnostic)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

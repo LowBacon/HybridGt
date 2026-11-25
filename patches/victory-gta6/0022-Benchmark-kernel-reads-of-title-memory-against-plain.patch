@@ -1,7 +1,7 @@
 From 151f32dcca6e4e9fe5ed7d67f980219369920dca Mon Sep 17 00:00:00 2001
 From: LowBacon <lenni.a.jokitalo@gmail.com>
 Date: Wed, 25 Nov 2026 12:06:30 +0200
-Subject: [PATCH 22/22] Benchmark: kernel reads of title memory against plain
+Subject: [PATCH 22/25] Benchmark: kernel reads of title memory against plain
  copies (ignored test read_cost) (HybridGt)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

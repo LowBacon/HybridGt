@@ -1,7 +1,7 @@
 From 3b1664d78b0ac0b8b785908c9625759e1b63ce2b Mon Sep 17 00:00:00 2001
 From: LowBacon <lenni.a.jokitalo@gmail.com>
 Date: Wed, 25 Nov 2026 09:29:06 +0200
-Subject: [PATCH 11/22] Shaders: the f64 conversion test's HostShader carries
+Subject: [PATCH 11/25] Shaders: the f64 conversion test's HostShader carries
  heap_samplers (HybridGt)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

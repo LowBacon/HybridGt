@@ -1,7 +1,7 @@
 From e53a84d786876d8f66b8a673a8c3a5a35969af68 Mon Sep 17 00:00:00 2001
 From: LowBacon <lenni.a.jokitalo@gmail.com>
 Date: Wed, 25 Nov 2026 00:31:52 +0200
-Subject: [PATCH 04/22] Constant samplers at a join: kept slots 2032-2047 of
+Subject: [PATCH 04/25] Constant samplers at a join: kept slots 2032-2047 of
  every host sampler heap, written from the translation (cache carries them)
  (HybridGt)
 
