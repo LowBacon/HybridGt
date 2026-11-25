@@ -216,3 +216,23 @@ The eyes may come from the POPS ped shaders first drawn in this run: that path i
   `CS_ShadowRenderTiledCascadesAlpha*` fails for the same reason: wave64 programs whose thread
   group holds several console waves need branches made group-wide (not yet in the translator).
 - Screenshots of runs: `HybridGt-work/captures/<run>/` (`tools/capture-loop.ps1`, every 30 s).
+
+### Runs next22-next23: where the remaining frame goes
+
+- **next22** (`VICTORY_READ_PROBE=8`): of 153,816 copied-back pieces probed (7.2 GB), the
+  title's CPU touched **10,046 (6.5 %)** before the card wrote them again. About 93 % of the
+  copy-back (80-100 ms a frame) is never read. 4.5 fps; heap pass 87 ms, copies 66 ms,
+  copy-back 99 ms.
+- **next23** (heap pass timed in parts, `VICTORY_UNWATCHED_FRAMES=2`): 4.4-4.9 fps. The heap
+  pass is **45-53 ms over buffer slots** (14,000-50,000 slots re-made a frame) and **0.5-0.8 ms
+  refreshing**; refreshing unwatched memory every second frame changed nothing.
+- Research (web, summarised): shadPS4 (PS4 on PC, same AMD unified memory) has a "precise"
+  readback mode: GPU-written pages lose CPU access and are downloaded on first touch (a 512 KiB
+  window), 2.7-7.2 ms a frame measured on an RTX 5090. Xenia mirrors guest memory in one VRAM
+  buffer (tiled, default heaps) and never copies back. Ryujinx moves buffers between memory kinds
+  by how they are used. `D3D12_HEAP_TYPE_GPU_UPLOAD` (Resizable BAR) lets the CPU write VRAM
+  directly. No project runs wave64 shaders on 32-wide NVIDIA hardware other than by groupshared
+  emulation.
+- Built from that (fork `70cf037`): copy-back on first touch (`VICTORY_LAZY_BACK=1`) and the
+  heap pass keeping slots whose records are unchanged (on by default; `VICTORY_SLOT_PRINTS=0`).
+  Measured in next24.
