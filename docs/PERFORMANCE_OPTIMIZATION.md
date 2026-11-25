@@ -319,3 +319,19 @@ heap pass 33-132 ms (now the largest and most variable part), dropped draws 87-1
 ~350: the 0x218 pipelines draw). No crash in the world. User: water looks rough compared with the
 console build. Next: the heap pass, method 0x1c8 (graphics pipelines, likely materials such as water
 and glass), then copies.
+
+### The streaming stalls (from fxceless d510ee4) and the plan for them
+
+fxceless measured the dips while moving: in streaming frames the title waits on its own page
+mapping (`CopyPageMappingsBatchX` -> `xmem::map_alias`), about 850 one-page remaps a frame, each a
+view taken away and one mapped in the kernel: 246 ms of a streaming frame, nearly all waiting on the
+process's address-space lock. Here `map_alias_locked` already goes through `map()` with the
+placeholder and commit calls skipped (2 kernel calls a page instead of 4). Joining pages into longer
+views was tried by fxceless and broke faces (black/red), so not that.
+
+Plan (not built yet): keep the remaps as a table (address page -> section, offset) without kernel
+calls; GPU-side reads of those pages go through the runtime's own section views; the title's own
+view is made only when its CPU touches the address (exception handler), and every runtime path
+that reads title memory there asks the table first. Same shape as the copy-back on first touch,
+whose missed paths crashed: build with a probe first (how often the title's CPU touches tiled-heap
+pages at all), then the table.
