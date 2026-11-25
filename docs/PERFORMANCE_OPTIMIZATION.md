@@ -25,3 +25,21 @@ remaining cost is the mirroring itself. Not yet measured in a game run.
 
 `VICTORY_FIRSTLANE_OWN` is part of the shader cache key, so next2 needs its own warm-up
 (`cache-next2`).
+
+## Run next2 (2026-11-25): builder + levels on demand + wide refresh. Result: crash
+
+Shader cache warmed with `VICTORY_FIRSTLANE_OWN=1`: 25,741 translated, 244 refused (3 more than
+next1 translate). The run used `VICTORY_BVH_BUILDER=1`, `VICTORY_LEVELS_ON_DEMAND=1`,
+`VICTORY_WIDE_REFRESH=1` and `VICTORY_WIDE_MERGE=1`. Log: `logs/next2.log`.
+
+- The ray-tracing structure builder ran: "all of its programs have host pipelines pipelines=53".
+- Levels on demand worked: 3,014 MB of the card not allocated for levels the title does not
+  hold. Still 13,932 texture slots waiting while the world loaded.
+- About 2 min in, still loading, the title crashed: access violations on many title threads at
+  once, with registers holding float bounds (`0xff8000007f800000`, `0xff800000ff800000`). This
+  is the failure `docs/fork-ray-tracing.md` describes for a partly wrong builder (upstream run 98):
+  box bounds stored over the title's own pointers.
+- Likely cause: `VICTORY_FIRSTLANE_OWN=1` is a shortcut, exact only when the value is the same in
+  every lane of the console wave. At least one builder program reads a value that differs per
+  lane. The fix is an exact cross-wave first-lane read (the console wave's first active lane can
+  be in the other host wave). Until then the builder stays off.
