@@ -20,7 +20,7 @@ Updated with each run. Measured numbers only.
 
 | Area | Progress | Detail |
 |---|---|---|
-| Shader programs translated | `███████████████████░` 99.8 % | 43 left: 29 FidelityFX DXBC the game never runs, 10 POPS ped shaders (off: glowing eyes), 5 shadow-ray (BVH), 1 cascade shadow (wave64 in multi-wave groups); 2 more fixed this round |
+| Shader programs translated | `███████████████████░` 99.9 % | `shaders.rpf`: 26,069 of 26,084 programs emit; 15 do not: 5 ray-traced shadow (`CS_TraceShadowRays_*`, descriptor read as data), 10 POPS ped pixel shaders (`PS_PedTexturedCutOutTint_Zero`, off: glowing eyes). The 29 FidelityFX DXBC shaders live in other files and are not counted here (inventory reconciled 2026-11-25: earlier "45/43" mixed sources) |
 | Shaders passing Microsoft's DXIL validator | `███████████████████░` 99.1 % | the rest: signature rows mixing flat and interpolated values, 71 mesh shaders over 32 KiB of outputs (NVIDIA takes them) |
 | Geometry shaders (voxel lighting) | `████████████████████` 100.0 % | translate and validate; host pipelines behind `VICTORY_TITLE_GS=1` |
 | Console pipeline methods 0x218 / 0x1c8 | `██████████░░░░░░░░░░` 50.0 % | 0x218 (compute) builds pipelines from the containers of its code (`VICTORY_NATIVE_PIPELINES=1`, 2,048 made, 0 missed); 0x1c8 decoded as 2D/overlay pipelines (immediate-mode vertices, alpha blend, no depth), not built yet |

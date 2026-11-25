@@ -1,3 +1,5 @@
+7c03e96 Shader trace takes several hashes (water lookups and face shaders in one run), first 20 dispatches per shader logged
+8d1d2f2 Remaps: census of the title's page mappings by kind and system call, and joined runs for the GPU's page-mapping copies (VICTORY_REMAP_RUNS=1, off)
 438e50f Translator: a descriptor joined from one edge that holds it and others that hold none takes that edge's (VICTORY_PHI_ONE_DESCRIPTOR=0: not done)
 1bfb0ec Shader trace (VICTORY_TRACE_SHADER=<hash>): log the ranges a traced compute shader writes and what title memory holds there
 613497c Descriptor mirror: lock-free answer for slots already made from the same record; heap pass times mirror()

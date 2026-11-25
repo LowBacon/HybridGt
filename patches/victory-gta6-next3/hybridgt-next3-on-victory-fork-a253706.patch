@@ -1152,7 +1152,7 @@ index dfbf2b2..9a2001e 100644
  /// methods `ID3D12Device1` to `ID3D12Device8` add, in order: 3, 1, 3, 6, 9,
  /// 1, 2, 9 (0x298-0x3a0, the console's own among them), then those of
 diff --git a/crates/victory-gpu/src/draw.rs b/crates/victory-gpu/src/draw.rs
-index c5e7655..0332d16 100644
+index c5e7655..eaf67ef 100644
 --- a/crates/victory-gpu/src/draw.rs
 +++ b/crates/victory-gpu/src/draw.rs
 @@ -190,6 +190,152 @@ fn windows() -> bool {
@@ -1507,25 +1507,27 @@ index c5e7655..0332d16 100644
              once!("a dispatch with a graphics pipeline");
              return;
          }
-+        let traced = crate::host::trace_shader().is_some_and(|h| p.name.contains(h));
-+        let steps_before = if traced { list.steps_len() } else { 0 };
++        let traced = crate::host::traced(&p.name);
++        let steps_before = if traced.is_some() { list.steps_len() } else { 0 };
          if !self.bind(list, p, true) {
              DROPPED.fetch_add(1, Ordering::Relaxed);
              // A stage of the structure builder that cannot be bound is a
-@@ -2091,6 +2358,12 @@ impl State {
+@@ -2091,6 +2358,14 @@ impl State {
          // SAFETY: an open list with everything set.
          unsafe { list.list.Dispatch(x, y, z) };
          DISPATCHED.fetch_add(1, Ordering::Relaxed);
-+        if traced {
++        if let Some(hash) = traced {
 +            let writes = list.gpu_writes_since(steps_before);
-+            once!(name = %p.name, ranges = ?writes, "shader trace: first dispatch of the traced shader and the ranges it writes");
-+            crate::host::trace_note(writes, [x, y, z]);
++            if crate::host::trace_dispatch_logged(hash) {
++                tracing::info!(name = %p.name, ranges = ?writes, groups = ?[x, y, z], "shader trace: a dispatch of a traced shader and the ranges it writes");
++            }
++            crate::host::trace_note(writes, [x, y, z], hash);
 +            crate::host::trace_values();
 +        }
      }
  
      /// What a draw or dispatch runs, for the device-removed report
-@@ -2348,6 +2621,9 @@ impl State {
+@@ -2348,6 +2623,9 @@ impl State {
      /// programs are one-dimensional).
      pub(crate) fn dispatch_mesh(&mut self, list: &HostList, x: u32) {
          self.window = None;
@@ -1535,7 +1537,7 @@ index c5e7655..0332d16 100644
          #[cfg(feature = "diagnostics")]
          self.trace("mesh", x, 0);
          let ran = mesh_test() != 1
-@@ -2739,6 +3015,9 @@ impl State {
+@@ -2739,6 +3017,9 @@ impl State {
          first_instance: u32,
      ) {
          self.window = None;
@@ -1545,7 +1547,7 @@ index c5e7655..0332d16 100644
          #[cfg(feature = "diagnostics")]
          self.trace("draw", vertices, first);
          let ready = self.prepare(list, false);
-@@ -2844,6 +3123,9 @@ impl State {
+@@ -2844,6 +3125,9 @@ impl State {
          first_instance: u32,
      ) {
          self.window = None;
@@ -1555,7 +1557,7 @@ index c5e7655..0332d16 100644
          #[cfg(feature = "diagnostics")]
          self.trace("indexed", indices, first);
          // Indexed rectangles are drawn by the rectangle geometry stage
-@@ -2983,9 +3265,37 @@ impl State {
+@@ -2983,9 +3267,37 @@ impl State {
              && !p.stages.iter().any(|stage| stage.translated().stores);
          // Another host list (a new one after a cut, or this one after its
          // reset) has another scratch buffer, or this one's with old bytes.
@@ -1594,7 +1596,7 @@ index c5e7655..0332d16 100644
          let same = |w: &Window| w.copy == args.id() && w.kind == kind && w.stride == stride;
          let hit = self
              .window
-@@ -2993,8 +3303,18 @@ impl State {
+@@ -2993,8 +3305,18 @@ impl State {
              .filter(|w| same(w) && offset >= w.base)
              .filter(|w| (offset - w.base) % u64::from(w.step) == 0 && (offset - w.base) / u64::from(w.step) < u64::from(w.records))
              .map(|w| (w.scratch.clone(), offset - w.base, w.step));
@@ -1615,7 +1617,7 @@ index c5e7655..0332d16 100644
                  // Diagnostics of windows: the record clamped again and
                  // compared (`crate::indirect::window_check`).
                  if crate::indirect::window_check()
-@@ -3009,9 +3329,37 @@ impl State {
+@@ -3009,9 +3331,37 @@ impl State {
                      self.host_pipeline = 0;
                      self.host_roots[1] = 0;
                  }
@@ -1654,7 +1656,7 @@ index c5e7655..0332d16 100644
                  // A record a short step after the last window's last one
                  // (the same step as that window's, if it had one): the
                  // title walks the buffer, so the ones that step apart
-@@ -3033,6 +3381,22 @@ impl State {
+@@ -3033,6 +3383,22 @@ impl State {
                      }
                      _ => (stride, max),
                  };
@@ -1677,7 +1679,7 @@ index c5e7655..0332d16 100644
                  args.refresh(list, arguments, len.max(u64::from(step) * u64::from(records)));
                  if let Some((s, at)) = &counter {
                      s.refresh(list, *at, 4);
-@@ -3053,6 +3417,31 @@ impl State {
+@@ -3053,6 +3419,31 @@ impl State {
                      why("not bounded (no clamp, or arguments not 4-byte aligned)");
                      return false;
                  };
@@ -1709,7 +1711,7 @@ index c5e7655..0332d16 100644
                  self.host_pipeline = 0;
                  self.host_roots[1] = 0;
                  self.window = windowed.then(|| Window {
-@@ -3067,6 +3456,10 @@ impl State {
+@@ -3067,6 +3458,10 @@ impl State {
                  (bounded, 0)
              }
          };
@@ -1720,7 +1722,7 @@ index c5e7655..0332d16 100644
          let ran = match kind {
              DRAW | INDEXED => self.prepare(list, kind == INDEXED),
              MESH => self.prepare_for(list, false, true),
-@@ -3449,3 +3842,25 @@ pub(crate) fn depth_bounds(list: &HostList, min: f32, max: f32) {
+@@ -3449,3 +3844,25 @@ pub(crate) fn depth_bounds(list: &HostList, min: f32, max: f32) {
          unsafe { l1.OMSetDepthBounds(min, max) };
      }
  }
@@ -2921,7 +2923,7 @@ index 0000000..c53860d
 +    }
 +}
 diff --git a/crates/victory-gpu/src/host.rs b/crates/victory-gpu/src/host.rs
-index b559f64..4c34f61 100644
+index b559f64..814621f 100644
 --- a/crates/victory-gpu/src/host.rs
 +++ b/crates/victory-gpu/src/host.rs
 @@ -590,6 +590,7 @@ pub(crate) fn host() -> Option<&'static Host> {
@@ -3244,7 +3246,7 @@ index b559f64..4c34f61 100644
      // SAFETY: a plain event of our own.
      let Ok(event) = (unsafe { CreateEventW(None, false, false, None) }) else {
          fail(format_args!("no event for the thread that lands submissions sent ahead (VICTORY_RELAY=1)"));
-@@ -3594,9 +3812,68 @@ fn read_backs(list: &HostList) {
+@@ -3594,9 +3812,101 @@ fn read_backs(list: &HostList) {
      }
  }
  
@@ -3252,22 +3254,54 @@ index b559f64..4c34f61 100644
 +/// whose dispatches' written ranges are watched, and what title memory holds
 +/// there after the copy-back, logged once a second (the water height lookups
 +/// the title's physics reads, `ShallowWaterSim:CS_ResolveHeightLookUps`).
-+pub(crate) fn trace_shader() -> Option<&'static str> {
-+    static S: OnceLock<Option<String>> = OnceLock::new();
-+    S.get_or_init(|| std::env::var("VICTORY_TRACE_SHADER").ok().filter(|s| !s.is_empty())).as_deref()
++/// Several hashes, comma-separated: the water lookups and the face shaders in
++/// one run (`play-trace.cmd`).
++pub(crate) fn trace_shader() -> Option<&'static [String]> {
++    static S: OnceLock<Vec<String>> = OnceLock::new();
++    let s = S.get_or_init(|| {
++        std::env::var("VICTORY_TRACE_SHADER")
++            .unwrap_or_default()
++            .split(',')
++            .map(|h| h.trim().to_owned())
++            .filter(|h| h.len() == 16)
++            .collect()
++    });
++    (!s.is_empty()).then_some(s.as_slice())
 +}
 +
-+static TRACED: Mutex<Vec<(usize, usize, [u32; 3])>> = Mutex::new(Vec::new());
++/// Whether pipeline `name` (its shaders' hashes) is traced; the hash if so.
++pub(crate) fn traced(name: &str) -> Option<&'static str> {
++    trace_shader()?.iter().find(|h| name.contains(h.as_str())).map(String::as_str)
++}
 +
-+pub(crate) fn trace_note(ranges: Vec<(usize, usize)>, groups: [u32; 3]) {
++static TRACED: Mutex<Vec<(usize, usize, [u32; 3], &'static str)>> = Mutex::new(Vec::new());
++
++/// Whether this dispatch of the traced shader `hash` is one of its first 20
++/// (each logged with the ranges it writes).
++pub(crate) fn trace_dispatch_logged(hash: &'static str) -> bool {
++    static SEEN: Mutex<Vec<(&'static str, u32)>> = Mutex::new(Vec::new());
++    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
++    match seen.iter_mut().find(|s| s.0 == hash) {
++        Some(s) => {
++            s.1 += 1;
++            s.1 <= 20
++        }
++        None => {
++            seen.push((hash, 1));
++            true
++        }
++    }
++}
++
++pub(crate) fn trace_note(ranges: Vec<(usize, usize)>, groups: [u32; 3], hash: &'static str) {
 +    let mut t = TRACED.lock().unwrap_or_else(|e| e.into_inner());
 +    for (a, n) in ranges {
 +        t.retain(|r| r.0 != a);
-+        t.push((a, n, groups));
++        t.push((a, n, groups, hash));
 +    }
 +    let len = t.len();
-+    if len > 8 {
-+        t.drain(..len - 8);
++    if len > 24 {
++        t.drain(..len - 24);
 +    }
 +}
 +
@@ -3281,7 +3315,7 @@ index b559f64..4c34f61 100644
 +        *last = Some(std::time::Instant::now());
 +    }
 +    let ranges = TRACED.lock().unwrap_or_else(|e| e.into_inner()).clone();
-+    for (at, len, groups) in ranges {
++    for (at, len, groups, shader) in ranges {
 +        let n = len.min(64);
 +        let mut bytes = vec![0u8; n];
 +        if read_into(at as *const u8, &mut bytes) {
@@ -3291,6 +3325,7 @@ index b559f64..4c34f61 100644
 +                at = format_args!("{at:#x}"),
 +                len,
 +                ?groups,
++                shader,
 +                "shader trace (VICTORY_TRACE_SHADER): title memory at a later dispatch: [{}]",
 +                f.join(" ")
 +            );
@@ -3313,7 +3348,7 @@ index b559f64..4c34f61 100644
      if crate::shadow::wide_back() {
          // Every range first (the pieces that differ, found on several
          // threads), then the merges, in order, as below.
-@@ -3796,6 +4073,8 @@ impl Host {
+@@ -3796,6 +4106,8 @@ impl Host {
                  window_check: OnceLock::new(),
                  _alive: Counted::new(),
                  meter: AtomicU32::new(u32::MAX),
@@ -3322,7 +3357,7 @@ index b559f64..4c34f61 100644
                  #[cfg(feature = "diagnostics")]
                  notes: Mutex::default(),
                  #[cfg(feature = "diagnostics")]
-@@ -3904,7 +4183,11 @@ impl Host {
+@@ -3904,7 +4216,11 @@ impl Host {
                  },
                  ..Default::default()
              })?;
@@ -3334,7 +3369,7 @@ index b559f64..4c34f61 100644
                  sync: vec![list()?],
                  check: vec![list()?],
                  fetch: list()?,
-@@ -3919,6 +4202,53 @@ impl Host {
+@@ -3919,6 +4235,53 @@ impl Host {
          }
      }
  
@@ -3388,7 +3423,7 @@ index b559f64..4c34f61 100644
      /// [`CardInflight`] for `results` bytes of the compare's results; `None`
      /// (and the old fetch) if the shader or the memory cannot be had.
      fn make_card_inflight(&self, results: u64) -> Option<CardInflight> {
-@@ -4049,6 +4379,14 @@ impl Host {
+@@ -4049,6 +4412,14 @@ impl Host {
              None => 0,
          };
          let mut dirty = crate::shadow::card_dirty(sent_as);
@@ -3403,7 +3438,7 @@ index b559f64..4c34f61 100644
          // With fetches on a copy queue (`crate::queue2`, bit 1 of
          // `VICTORY_QUEUE2`): the send's number is signalled on the direct
          // queue behind the send, so that a fetch knows which sends the card
-@@ -4066,6 +4404,39 @@ impl Host {
+@@ -4066,6 +4437,39 @@ impl Host {
          }
          let mut work = CARD_WORK.lock().unwrap_or_else(|e| e.into_inner());
          let work = work.as_mut()?;
@@ -3443,7 +3478,7 @@ index b559f64..4c34f61 100644
          // A copy whose shader writes are declared for the first time gets
          // its bytes from before, whole.
          let mut whole: Vec<Arc<crate::shadow::Shadow>> = Vec::new();
-@@ -4148,6 +4519,52 @@ impl Host {
+@@ -4148,6 +4552,52 @@ impl Host {
                          let Some((staging, before, size)) = shadow.card_sides() else {
                              continue;
                          };
@@ -3496,7 +3531,7 @@ index b559f64..4c34f61 100644
                          for &(a, b) in ranges {
                              match &landed {
                                  Some(landing) => list.CopyBufferRegion(&shadow.buffer, a as u64, landing, at, (b - a) as u64),
-@@ -4181,7 +4598,10 @@ impl Host {
+@@ -4181,7 +4631,10 @@ impl Host {
                          let runs: Vec<crate::shadow::CardSpan> = if whole.iter().any(|s| Arc::ptr_eq(s, shadow)) {
                              vec![shadow.card_run(0, usize::MAX)]
                          } else {
@@ -3508,7 +3543,7 @@ index b559f64..4c34f61 100644
                          };
                          // The same pieces in fewer passes (`rehash_runs`).
                          let runs = if rehash_runs() { crate::shadow::joined_piece_runs(runs) } else { runs };
-@@ -4214,6 +4634,7 @@ impl Host {
+@@ -4214,6 +4667,7 @@ impl Host {
              sent_as,
              inflight: false,
              inflight_landed: 0,
@@ -3516,7 +3551,7 @@ index b559f64..4c34f61 100644
          };
          // Each byte once, as the copy-back joins the declared ranges. The
          // results go behind those of plans still in the air.
-@@ -4356,6 +4777,9 @@ impl Host {
+@@ -4356,6 +4810,9 @@ impl Host {
          for (check, list) in plan.lists {
              if check { work.check.push(list) } else { work.sync.push(list) }
          }
@@ -3526,7 +3561,7 @@ index b559f64..4c34f61 100644
          work.out = work.out.saturating_sub(1);
          // With the relay other plans may be on the card, their results
          // not read yet: the area starts again only when none is out.
-@@ -4371,12 +4795,34 @@ impl Host {
+@@ -4371,12 +4828,34 @@ impl Host {
          unsafe {
              let fence: ID3D12Fence = self.device.CreateFence(0, D3D12_FENCE_FLAG_NONE).ok()?;
              let event = CreateEventW(None, false, false, None).ok()?;
@@ -3561,7 +3596,7 @@ index b559f64..4c34f61 100644
              })
          }
      }
-@@ -4408,6 +4854,82 @@ impl Host {
+@@ -4408,6 +4887,82 @@ impl Host {
      /// of the last flight being landed: a piece an earlier fetch on the
      /// copy queue brought down beside one of these flights is fetched
      /// whatever the compare says ([`BESIDE`]).
@@ -3644,7 +3679,7 @@ index b559f64..4c34f61 100644
      fn relay_card_back(&self, plans: &[(u64, &CardPlan)], fetch: &mut Option<RelayFetch>, behind: u64, landed: u64) {
          if inflight_fetch() {
              let only: Vec<&CardPlan> = plans.iter().map(|p| p.1).collect();
-@@ -4479,6 +5001,16 @@ impl Host {
+@@ -4479,6 +5034,16 @@ impl Host {
              }
          }
          BESIDE_STATS[0].fetch_add(again, Ordering::Relaxed);
@@ -3661,7 +3696,7 @@ index b559f64..4c34f61 100644
          if pieces.is_empty() {
              if inflight_fetch() {
                  // The next merge may be of a flight in the air now, with
-@@ -4521,6 +5053,53 @@ impl Host {
+@@ -4521,6 +5086,53 @@ impl Host {
          f.sent += 1;
          let ((allocator, list), fence, event, sent) = (f.list.clone(), f.fence.clone(), f.event, f.sent);
          let waiting = std::time::Instant::now();
@@ -3715,7 +3750,7 @@ index b559f64..4c34f61 100644
          // SAFETY: the list's last run was waited for by this thread; live
          // buffers (the copies are held by the plans); the fence and the
          // event are this thread's.
-@@ -5310,6 +5889,9 @@ impl Host {
+@@ -5310,6 +5922,9 @@ impl Host {
          // Flights in the air ([`late`]): a submission that is waited for
          // settles them first, one sent ahead only if preparing it reads
          // what they write.
@@ -3725,7 +3760,7 @@ index b559f64..4c34f61 100644
          if !late {
              self.settle(&mut submitted, WHY_SYNC);
          } else if let Some(why) = late_blocked(runs) {
-@@ -5382,7 +5964,10 @@ impl Host {
+@@ -5382,7 +5997,10 @@ impl Host {
              // may write too, and this submission refreshes it. The flights
              // are settled, and the asking made again: the copy-back wrote
              // title memory, which other copies of it must see.
@@ -3737,7 +3772,7 @@ index b559f64..4c34f61 100644
                  let settling = std::time::Instant::now();
                  self.settle(&mut submitted, WHY_STALE);
                  settled += settling.elapsed();
-@@ -5921,7 +6506,24 @@ impl HostList {
+@@ -5921,7 +6539,24 @@ impl HostList {
              self.indirect_common(&scratch);
          }
          self.card_budget_out();
@@ -3763,7 +3798,7 @@ index b559f64..4c34f61 100644
          #[cfg(feature = "diagnostics")]
          if let Some((heap, back)) = self.stamps() {
              let count = (self.notes.lock().unwrap_or_else(|e| e.into_inner()).len() as u32).min(STAMPS - 1);
-@@ -5949,6 +6551,16 @@ impl HostList {
+@@ -5949,6 +6584,16 @@ impl HostList {
          self.states.lock().unwrap_or_else(|e| e.into_inner()).clear();
          self.twins.lock().unwrap_or_else(|e| e.into_inner()).clear();
          self.pipelines.lock().unwrap_or_else(|e| e.into_inner()).clear();
@@ -3780,7 +3815,7 @@ index b559f64..4c34f61 100644
          #[cfg(feature = "diagnostics")]
          self.notes.lock().unwrap_or_else(|e| e.into_inner()).clear();
          {
-@@ -6259,7 +6871,28 @@ impl HostList {
+@@ -6259,7 +6904,28 @@ impl HostList {
              (real != *first)
                  .then(|| transition(&copy.texture, host_state(real), host_state(*first)))
          }));
@@ -3810,7 +3845,7 @@ index b559f64..4c34f61 100644
              return None;
          }
          let Some((allocator, list)) = self
-@@ -6283,6 +6916,55 @@ impl HostList {
+@@ -6283,6 +6949,55 @@ impl HostList {
                  if !barriers.is_empty() {
                      list.ResourceBarrier(&barriers);
                  }
@@ -3866,7 +3901,7 @@ index b559f64..4c34f61 100644
                  list.Close()
              })
          };
-@@ -6292,6 +6974,73 @@ impl HostList {
+@@ -6292,6 +7007,73 @@ impl HostList {
          list.cast().ok()
      }
  
@@ -3940,7 +3975,7 @@ index b559f64..4c34f61 100644
      /// Notes what the command about to be recorded does, as a marker
      /// command whose text the list keeps (diagnostics, with device-removed
      /// data on): the report pairs the breadcrumbs' marker commands with the
-@@ -6358,14 +7107,40 @@ impl HostList {
+@@ -6358,12 +7140,38 @@ impl HostList {
              && self.twins.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
      }
  
@@ -3955,14 +3990,14 @@ index b559f64..4c34f61 100644
 +            if !pipelines.contains(name) {
 +                pipelines.insert(name.to_owned());
 +            }
-+        }
+         }
 +        if crate::cardmeter::pipelines() {
 +            // The pipeline before it ends here on the card's clock.
 +            crate::cardmeter::end(&self.list, crate::cardmeter::Span::from_raw(self.pipeline_meter.swap(u32::MAX, Ordering::Relaxed)));
 +            self.pipeline_meter.store(crate::cardmeter::begin_named(&self.list, name).raw(), Ordering::Relaxed);
-         }
-     }
- 
++        }
++    }
++
 +    /// HybridGt trace: how many steps the list holds so far.
 +    pub(crate) fn steps_len(&self) -> usize {
 +        self.deferred().copies.len()
@@ -3980,12 +4015,10 @@ index b559f64..4c34f61 100644
 +                _ => None,
 +            })
 +            .collect()
-+    }
-+
-     fn deferred(&self) -> std::sync::MutexGuard<'_, Deferred> {
-         self.deferred.lock().unwrap_or_else(|e| e.into_inner())
      }
-@@ -6444,6 +7219,16 @@ impl HostList {
+ 
+     fn deferred(&self) -> std::sync::MutexGuard<'_, Deferred> {
+@@ -6444,6 +7252,16 @@ impl HostList {
          self.deferred().writes.push((dst as usize, what, bytes));
      }
  
@@ -4002,7 +4035,7 @@ index b559f64..4c34f61 100644
      /// A mapped upload buffer of `size` bytes, alive until the list is
      /// reset.
      ///
-@@ -6492,6 +7277,15 @@ impl HostList {
+@@ -6492,6 +7310,15 @@ impl HostList {
  
      /// The bytes of scratch chunks the list holds now (after a reset:
      /// none while lists share their chunks).
@@ -4018,7 +4051,7 @@ index b559f64..4c34f61 100644
      pub(crate) fn scratch_kept(&self) -> u64 {
          let scratch = self.scratch.lock().unwrap_or_else(|e| e.into_inner());
          scratch.chunks.iter().map(|c| c.1).sum()
-@@ -6791,6 +7585,9 @@ impl HostList {
+@@ -6791,6 +7618,9 @@ impl HostList {
                      }
                      continue;
                  }
@@ -4028,7 +4061,7 @@ index b559f64..4c34f61 100644
                  Step::Texture(staging) => {
                      if batch.texture_due(staging) {
                          staging.refresh();
-@@ -6840,9 +7637,33 @@ fn wide_refresh() -> bool {
+@@ -6840,9 +7670,33 @@ fn wide_refresh() -> bool {
  /// before they were submitted. A title buffer copy of ours takes its
  /// bytes out of what counts as up to date ([`Batch::title_wrote`]); any
  /// other step that writes title memory takes everything out.
@@ -4064,7 +4097,7 @@ index b559f64..4c34f61 100644
  }
  
  /// A submission's refreshes not done yet, merged per buffer copy into the
-@@ -7069,6 +7890,13 @@ pub(crate) fn copy_mapped(dst: *mut u8, src: *const u8, len: usize, title_dst: b
+@@ -7069,6 +7923,13 @@ pub(crate) fn copy_mapped(dst: *mut u8, src: *const u8, len: usize, title_dst: b
      if ask_first && !crate::texture::committed(dst, len) {
          return;
      }
@@ -4078,7 +4111,7 @@ index b559f64..4c34f61 100644
      if title_dst {
          // The kernel writes the destination: it must not be guarded.
          crate::watch::writing(dst as usize, len);
-@@ -7105,6 +7933,7 @@ pub(crate) fn copy_mapped(dst: *mut u8, src: *const u8, len: usize, title_dst: b
+@@ -7105,6 +7966,7 @@ pub(crate) fn copy_mapped(dst: *mut u8, src: *const u8, len: usize, title_dst: b
  /// After a failed bulk read into host memory, skip contiguous holes. Never
  /// cache the query across copies: the title may remap the same address.
  fn read_sparse(src: *const u8, dst: *mut u8, len: usize) {
@@ -4086,7 +4119,7 @@ index b559f64..4c34f61 100644
      use windows_sys::Win32::System::Memory::{
          MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_NOACCESS, VirtualQuery,
      };
-@@ -7136,6 +7965,7 @@ fn read_sparse(src: *const u8, dst: *mut u8, len: usize) {
+@@ -7136,6 +7998,7 @@ fn read_sparse(src: *const u8, dst: *mut u8, len: usize) {
  }
  
  fn read_pieces(src: *const u8, dst: *mut u8, len: usize) {
@@ -4094,7 +4127,7 @@ index b559f64..4c34f61 100644
      // Something is unmapped: page by page (64 KiB, then 4 KiB in a piece
      // that fails), zeros for what cannot be read.
      for_pieces(src as usize, len, 64 << 10, |at, n| {
-@@ -7157,7 +7987,10 @@ fn read_pieces(src: *const u8, dst: *mut u8, len: usize) {
+@@ -7157,7 +8020,10 @@ fn read_pieces(src: *const u8, dst: *mut u8, len: usize) {
  /// Reads title memory at `src` into `dst`; false if a page of it is not
  /// readable.
  pub(crate) fn read_into(src: *const u8, dst: &mut [u8]) -> bool {
@@ -4106,7 +4139,7 @@ index b559f64..4c34f61 100644
  }
  
  /// Copies `len` bytes from `src` to `dst` unless a source page is not
-@@ -7199,6 +8032,7 @@ fn direct_writes() -> bool {
+@@ -7199,6 +8065,7 @@ fn direct_writes() -> bool {
  /// Copies host memory into title memory after a submission (what shaders
  /// wrote), leaving pages that are not mapped alone.
  pub(crate) fn write_mapped(dst: *mut u8, src: *const u8, len: usize) {
@@ -4114,7 +4147,7 @@ index b559f64..4c34f61 100644
      use windows_sys::Win32::System::Diagnostics::Debug::WriteProcessMemory;
      use windows_sys::Win32::System::Threading::GetCurrentProcess;
      let direct = direct_writes();
-@@ -7365,6 +8199,8 @@ struct Presenter {
+@@ -7365,6 +8232,8 @@ struct Presenter {
      ahead: Vec<(HostList, u64)>,
      hwnd: HWND,
      meter: Meter,
@@ -4123,7 +4156,7 @@ index b559f64..4c34f61 100644
  }
  
  /// The frame rate, shown in the window's caption every second and logged
-@@ -7412,6 +8248,7 @@ impl Meter {
+@@ -7412,6 +8281,7 @@ impl Meter {
          let drawn = crate::draw::drawn();
          let frames = f64::from(self.frames);
          let fps = frames / elapsed.as_secs_f64();
@@ -4131,7 +4164,7 @@ index b559f64..4c34f61 100644
          let ms = elapsed.as_secs_f64() * 1000.0 / frames;
          let draws = (drawn - self.drawn) as f64 / frames;
          (self.since, self.frames, self.drawn) = (std::time::Instant::now(), 0, drawn);
-@@ -7439,6 +8276,15 @@ impl Meter {
+@@ -7439,6 +8309,15 @@ impl Meter {
          // the card's memory.)
          {
              let [texture_us, slots] = [0, 1].map(|i| crate::draw::HEAP_PASS_PARTS[i].swap(0, Ordering::Relaxed));
@@ -4147,7 +4180,7 @@ index b559f64..4c34f61 100644
              tracing::info!(
                  "the pass over the heap per frame (the frame line's \"heap buffers ... ms\" is both parts): {:.1} ms in its                  pass over textures picked by index; {:.0} buffer slots looked at by its pass over buffer views",
                  texture_us as f64 / 1e3 / frames,
-@@ -7484,6 +8330,47 @@ impl Meter {
+@@ -7484,6 +8363,47 @@ impl Meter {
                       hold still (the runtime remapping it); the rest is reading, hashing and detiling"
                  );
              }
@@ -4195,7 +4228,7 @@ index b559f64..4c34f61 100644
              let [through, left] = [0, 1].map(|i| crate::texture::UNLOCKED[i].swap(0, Ordering::Relaxed) as f64 / frames);
              if through + left > 0.0 {
                  tracing::info!(
-@@ -7690,7 +8577,10 @@ impl Host {
+@@ -7690,7 +8610,10 @@ impl Host {
              tracing::warn!(format = desc.Format.0, "cannot present this format");
              return None;
          };
@@ -4207,7 +4240,7 @@ index b559f64..4c34f61 100644
          let mut presenter = self.presenter.lock().unwrap_or_else(|e| e.into_inner());
          if presenter.is_none() {
              *presenter = match self.presenter(width, height, format) {
-@@ -7759,6 +8649,26 @@ impl Host {
+@@ -7759,6 +8682,26 @@ impl Host {
              };
              copy.reset();
              let list = &copy.list;
@@ -4234,7 +4267,7 @@ index b559f64..4c34f61 100644
              list.ResourceBarrier(&[
                  transition(texture, state, D3D12_RESOURCE_STATE_COPY_SOURCE),
                  transition(
-@@ -7768,6 +8678,9 @@ impl Host {
+@@ -7768,6 +8711,9 @@ impl Host {
                  ),
              ]);
              list.CopyResource(&back, texture);
@@ -4244,7 +4277,7 @@ index b559f64..4c34f61 100644
              #[cfg(feature = "diagnostics")]
              let capture = crate::capture::wanted(frame)
                  .then(|| crate::capture::read_back(&self.device, list, texture))
-@@ -7848,6 +8761,7 @@ impl Host {
+@@ -7848,6 +8794,7 @@ impl Host {
                  ahead: Vec::new(),
                  hwnd,
                  meter: Meter::new(),
@@ -4252,7 +4285,7 @@ index b559f64..4c34f61 100644
              })
          }
      }
-@@ -8405,6 +9319,95 @@ mod batch {   // Batch::texture_due lives here; `mod tests` is already taken at
+@@ -8405,6 +9352,95 @@ mod batch {   // Batch::texture_due lives here; `mod tests` is already taken at
      }
  }
  
@@ -12246,7 +12279,7 @@ index 51e3590..4b4cc96 100644
      #[cfg(windows)]
      all.push(apu::module());
 diff --git a/crates/victory-hle/src/modules/xmem.rs b/crates/victory-hle/src/modules/xmem.rs
-index e898459..dbe4691 100644
+index e898459..a4ad412 100644
 --- a/crates/victory-hle/src/modules/xmem.rs
 +++ b/crates/victory-hle/src/modules/xmem.rs
 @@ -383,6 +383,14 @@ struct Physical {
@@ -12341,7 +12374,7 @@ index e898459..dbe4691 100644
      }
      1
  }
-@@ -668,24 +699,64 @@ pub extern "system" fn XMemMapPhysicalPages(
+@@ -668,24 +699,73 @@ pub extern "system" fn XMemMapPhysicalPages(
      n: usize,
      pages: *const usize,
  ) -> *mut c_void {
@@ -12361,7 +12394,9 @@ index e898459..dbe4691 100644
 +        address
 +    } else {
 +        std::ptr::null_mut()
-+    }
+     }
+-    // SAFETY: the title passes `n` page numbers.
+-    let pages = unsafe { std::slice::from_raw_parts(pages, n) };
 +}
 +
 +/// HybridGt: whether `[base, base + pages.len() pages)` shows exactly `pages`
@@ -12391,14 +12426,21 @@ index e898459..dbe4691 100644
 +/// it again cost four system calls a view and told the GPU side the range
 +/// was new.
 +fn map_pages(physical: &mut Physical, base: usize, n: usize, pages: Option<&[usize]>) -> bool {
++    let started = std::time::Instant::now();
++    let ok = map_pages_inner(physical, base, n, pages);
++    census::add(census::MAP_CALLS, 1);
++    census::add(census::MAP_PAGES, n as u64);
++    census::op(started.elapsed().as_micros() as u64, if pages.is_some() { "map" } else { "unmap" }, base, n);
++    ok
++}
++
++fn map_pages_inner(physical: &mut Physical, base: usize, n: usize, pages: Option<&[usize]>) -> bool {
 +    if let Some(pages) = pages
 +        && shows_already(physical, base, pages)
 +    {
 +        victory_gpu::title_memory_remap_pages(n, true);
 +        return true;
-     }
--    // SAFETY: the title passes `n` page numbers.
--    let pages = unsafe { std::slice::from_raw_parts(pages, n) };
++    }
 +    victory_gpu::title_memory_remap_pages(n, false);
 +    unmap(physical, base, n * PAGE);
 +    let Some(pages) = pages else {
@@ -12413,7 +12455,7 @@ index e898459..dbe4691 100644
          };
          // One view per run of consecutive slices of one section.
          let run = 1 + pages[i + 1..]
-@@ -697,16 +768,23 @@ pub extern "system" fn XMemMapPhysicalPages(
+@@ -697,16 +777,23 @@ pub extern "system" fn XMemMapPhysicalPages(
                  })
              })
              .count();
@@ -12440,7 +12482,7 @@ index e898459..dbe4691 100644
  pub extern "system" fn XMemMapPhysicalPagesScatter(
      addresses: *const *mut c_void,
      n: usize,
-@@ -715,19 +793,16 @@ pub extern "system" fn XMemMapPhysicalPagesScatter(
+@@ -715,72 +802,270 @@ pub extern "system" fn XMemMapPhysicalPagesScatter(
      if addresses.is_null() {
          return 0;
      }
@@ -12470,7 +12512,123 @@ index e898459..dbe4691 100644
              return 0;
          }
      }
-@@ -740,29 +815,69 @@ pub extern "system" fn XMemMapPhysicalPagesScatter(
+     1
+ }
+ 
++/// HybridGt remap census, logged every 2 s while remaps happen
++/// ([`remap_report`]): what the title's page mappings cost, by kind and by
++/// system call, how many pages of the GPU's page-mapping copies come in runs
++/// of consecutive section pages (one view each with `VICTORY_REMAP_RUNS=1`),
++/// and the slowest single operations.
++mod census {
++    use std::sync::Mutex;
++    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
++
++    pub(super) const ALIAS_CALLS: usize = 0;
++    pub(super) const ALIAS_PAGES: usize = 1;
++    pub(super) const ALIAS_RUNS: usize = 2;
++    pub(super) const MAP_CALLS: usize = 3;
++    pub(super) const MAP_PAGES: usize = 4;
++    pub(super) const UNMAP_N: usize = 5;
++    pub(super) const UNMAP_US: usize = 6;
++    pub(super) const SPLIT_N: usize = 7;
++    pub(super) const SPLIT_US: usize = 8;
++    pub(super) const VIEW_N: usize = 9;
++    pub(super) const VIEW_US: usize = 10;
++    pub(super) const COMMIT_N: usize = 11;
++    pub(super) const COMMIT_US: usize = 12;
++    pub(super) const COALESCE_N: usize = 13;
++    pub(super) const COALESCE_US: usize = 14;
++    pub(super) const JOINED_PAGES: usize = 15;
++    pub(super) const UNCHANGED_PAGES: usize = 16;
++    pub(super) const OP_US: usize = 17;
++
++    pub(super) static C: [AtomicU64; 18] = [const { AtomicU64::new(0) }; 18];
++
++    pub(super) fn add(i: usize, n: u64) {
++        C[i].fetch_add(n, Relaxed);
++    }
++
++    /// The five slowest operations since the last report: microseconds,
++    /// kind, address, pages.
++    static SLOWEST: Mutex<Vec<(u64, &'static str, usize, usize)>> = Mutex::new(Vec::new());
++    static LAST: Mutex<Option<std::time::Instant>> = Mutex::new(None);
++
++    pub(super) fn op(us: u64, kind: &'static str, at: usize, pages: usize) {
++        add(OP_US, us);
++        let mut s = SLOWEST.lock().unwrap_or_else(|e| e.into_inner());
++        if s.len() < 5 || s.last().is_some_and(|l| l.0 < us) {
++            s.push((us, kind, at, pages));
++            s.sort_unstable_by(|a, b| b.0.cmp(&a.0));
++            s.truncate(5);
++        }
++    }
++
++    /// Logs and resets the census, at most once every 2 seconds.
++    pub(super) fn report() {
++        {
++            let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
++            match *last {
++                Some(at) if at.elapsed().as_secs() < 2 => return,
++                None => {
++                    *last = Some(std::time::Instant::now());
++                    return;
++                }
++                _ => {}
++            }
++            let secs = last.map_or(2.0, |l| l.elapsed().as_secs_f64());
++            *last = Some(std::time::Instant::now());
++            let c: Vec<u64> = C.iter().map(|x| x.swap(0, Relaxed)).collect();
++            let ms = |i: usize| c[i] as f64 / 1000.0 / secs;
++            let per = |i: usize| c[i] as f64 / secs;
++            let slowest = std::mem::take(&mut *SLOWEST.lock().unwrap_or_else(|e| e.into_inner()));
++            tracing::info!(
++                "remap census per second (HybridGt): GPU page-mapping copies {:.0} calls {:.0} pages \
++                 ({:.0} pages already as asked, {:.0} runs of consecutive section pages, {:.0} pages mapped as joined runs: \
++                 VICTORY_REMAP_RUNS=1), title page maps {:.0} calls {:.0} pages; {:.1} ms in all; system calls: \
++                 unmap {:.0}x {:.1} ms, split {:.0}x {:.1} ms, map view {:.0}x {:.1} ms, commit {:.0}x {:.1} ms, \
++                 coalesce {:.0}x {:.1} ms; slowest (us, kind, address, pages): {:x?}",
++                per(ALIAS_CALLS),
++                per(ALIAS_PAGES),
++                per(UNCHANGED_PAGES),
++                per(ALIAS_RUNS),
++                per(JOINED_PAGES),
++                per(MAP_CALLS),
++                per(MAP_PAGES),
++                ms(OP_US),
++                per(UNMAP_N),
++                ms(UNMAP_US),
++                per(SPLIT_N),
++                ms(SPLIT_US),
++                per(VIEW_N),
++                ms(VIEW_US),
++                per(COMMIT_N),
++                ms(COMMIT_US),
++                per(COALESCE_N),
++                ms(COALESCE_US),
++                slowest
++            );
++        }
++    }
++}
++
++/// HybridGt: whether the GPU's page-mapping copies map each run of
++/// consecutive section pages as one view (`VICTORY_REMAP_RUNS=1`; off by
++/// default): the placeholders the old views leave in the range are joined
++/// first (one `VirtualFree` with `MEM_COALESCE_PLACEHOLDERS`), then one
++/// `MapViewOfFile3` per run instead of one per 64 KiB page. Where the
++/// placeholders cannot be joined, page by page as before. In runs next39-42
++/// those copies remapped about 1,500 pages a busy frame at 100-160 us each,
++/// 94 % of it in system calls. fxceless tried longer views before and saw
++/// faces break; this stays off until a run shows it holds.
++fn remap_runs() -> bool {
++    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *ON.get_or_init(|| std::env::var_os("VICTORY_REMAP_RUNS").is_some_and(|v| v == "1"))
++}
++
+ /// Maps the physical pages shown at `[from, from + len)` at `to` as well,
+ /// in place of what `to` shows; `from` 0 unmaps. The GPU's page-mapping
+ /// copies (`victory_gpu`, queue `CopyPageMappingsBatchX`):
  /// the title maps pages into a pool view, then has the GPU map them into its tiled
  /// heap. Page by page; false if a source page is not mapped physical memory.
  pub fn map_alias(to: u64, from: u64, len: u64) -> bool {
@@ -12479,7 +12637,25 @@ index e898459..dbe4691 100644
      // As in `XMemMapPhysicalPages`: no read in place meets the gap.
      let _changing = victory_gpu::title_memory_remapping();
 -    unmap(&mut physical, to, len);
-+    map_alias_locked(&mut physical, to as usize, from as usize, len as usize)
+-    for k in (0..len).step_by(PAGE) {
+-        if from == 0 {
+-            break;
+-        }
+-        let at = from + k;
+-        let Some(slice) = physical
+-            .views
+-            .range(..=at)
+-            .next_back()
+-            .filter(|(base, (size, _))| at < *base + size)
+-            .map(|(base, (_, s))| Slice {
+-                index: s.index + (at - base) / PAGE,
+-                section: s.section.clone(),
+-            })
+-        else {
++    let ok = map_alias_locked(&mut physical, to as usize, from as usize, len as usize, remap_runs());
++    drop(physical);
++    census::report();
++    ok
 +}
 +
 +/// HybridGt: [`map_alias`] for every `(to, from, len)` of one page-mapping
@@ -12491,8 +12667,10 @@ index e898459..dbe4691 100644
 +    let _changing = victory_gpu::title_memory_remapping();
 +    let mut ok = true;
 +    for &(to, from, len) in ops {
-+        ok &= map_alias_locked(&mut physical, to as usize, from as usize, len as usize);
++        ok &= map_alias_locked(&mut physical, to as usize, from as usize, len as usize, remap_runs());
 +    }
++    drop(physical);
++    census::report();
 +    ok
 +}
 +
@@ -12513,8 +12691,17 @@ index e898459..dbe4691 100644
 +/// what `from` shows already, page for page, is left as it is (the same
 +/// physical pages: nothing the title can see changes), and so is an unmap
 +/// of a range nothing is mapped in.
-+fn map_alias_locked(physical: &mut Physical, to: usize, from: usize, len: usize) -> bool {
++fn map_alias_locked(physical: &mut Physical, to: usize, from: usize, len: usize, runs: bool) -> bool {
++    let started = std::time::Instant::now();
++    let ok = map_alias_inner(physical, to, from, len, runs);
++    census::op(started.elapsed().as_micros() as u64, if from == 0 { "alias unmap" } else { "alias" }, to, len.div_ceil(PAGE));
++    ok
++}
++
++fn map_alias_inner(physical: &mut Physical, to: usize, from: usize, len: usize, runs: bool) -> bool {
 +    let pages = len.div_ceil(PAGE);
++    census::add(census::ALIAS_CALLS, 1);
++    census::add(census::ALIAS_PAGES, pages as u64);
 +    let same = |a: &Slice, b: &Slice| Arc::ptr_eq(&a.section, &b.section) && a.index == b.index;
 +    let unchanged = if from == 0 {
 +        // Views do not overlap: the last one starting before the end is the
@@ -12528,33 +12715,67 @@ index e898459..dbe4691 100644
 +    };
 +    victory_gpu::title_memory_remap_pages(pages, unchanged);
 +    if unchanged {
++        census::add(census::UNCHANGED_PAGES, pages as u64);
 +        return true;
 +    }
 +    unmap(physical, to, len);
-     for k in (0..len).step_by(PAGE) {
-         if from == 0 {
-             break;
-         }
--        let at = from + k;
--        let Some(slice) = physical
--            .views
--            .range(..=at)
--            .next_back()
--            .filter(|(base, (size, _))| at < *base + size)
--            .map(|(base, (_, s))| Slice {
--                index: s.index + (at - base) / PAGE,
--                section: s.section.clone(),
--            })
--        else {
-+        let Some(slice) = slice_at(physical, from + k) else {
++    if from == 0 {
++        return true;
++    }
++    // What `from` shows, page by page, and where runs of consecutive pages
++    // of one section start (each a run the census counts).
++    let mut sources = Vec::with_capacity(pages);
++    for k in 0..pages {
++        let Some(slice) = slice_at(physical, from + k * PAGE) else {
              return false;
          };
 -        if !map(&mut physical, to + k, PAGE, slice) {
-+        if !map(physical, to + k, PAGE, slice) {
++        sources.push(slice);
++    }
++    let follows = |a: &Slice, b: &Slice| Arc::ptr_eq(&a.section, &b.section) && b.index == a.index + 1;
++    let run_starts: Vec<usize> = (0..pages).filter(|&k| k == 0 || !follows(&sources[k - 1], &sources[k])).collect();
++    census::add(census::ALIAS_RUNS, run_starts.len() as u64);
++    if runs && run_starts.len() < pages && coalesce(physical, to, pages * PAGE) {
++        for (n, &k) in run_starts.iter().enumerate() {
++            let end = run_starts.get(n + 1).copied().unwrap_or(pages);
++            if !map(physical, to + k * PAGE, (end - k) * PAGE, sources[k].clone()) {
++                return false;
++            }
++            census::add(census::JOINED_PAGES, (end - k) as u64);
++        }
++        return true;
++    }
++    for (k, slice) in sources.into_iter().enumerate() {
++        if !map(physical, to + k * PAGE, PAGE, slice) {
              return false;
          }
      }
-@@ -775,12 +890,8 @@ fn map(physical: &mut Physical, base: usize, len: usize, slice: Slice) -> bool {
+     true
+ }
+ 
++/// HybridGt: joins the placeholders that lie exactly over
++/// `[base, base + len)` into one (after [`unmap`] there, each old view left
++/// one). False, with nothing changed, if the range is not made of whole
++/// placeholders (the system refuses then).
++fn coalesce(physical: &mut Physical, base: usize, len: usize) -> bool {
++    /// `VirtualFree`'s flag (winnt.h; not in windows-sys).
++    const MEM_COALESCE_PLACEHOLDERS: u32 = 0x1;
++    let started = std::time::Instant::now();
++    // SAFETY: acts only on placeholders, and only if the range is exactly
++    // made of them.
++    let ok = unsafe { VirtualFree(base as *mut c_void, len, MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS) } != 0;
++    census::add(census::COALESCE_N, 1);
++    census::add(census::COALESCE_US, started.elapsed().as_micros() as u64);
++    if ok {
++        physical.exact.retain(|&(at, size)| at + size <= base || at >= base + len);
++        physical.exact.insert((base, len));
++    }
++    ok
++}
++
+ /// Maps `slice` and the slices after it over `[base, base + len)`, which
+ /// must lie in one placeholder.
+ fn map(physical: &mut Physical, base: usize, len: usize, slice: Slice) -> bool {
      // SAFETY: splits the placeholder around the range (failing harmlessly
      // when the range is the whole placeholder), then maps the section
      // there; both act only on placeholders.
@@ -12569,16 +12790,29 @@ index e898459..dbe4691 100644
          MapViewOfFile3(
              slice.section.0,
              GetCurrentProcess(),
-@@ -793,6 +904,26 @@ fn map(physical: &mut Physical, base: usize, len: usize, slice: Slice) -> bool {
+@@ -793,6 +1078,39 @@ fn map(physical: &mut Physical, base: usize, len: usize, slice: Slice) -> bool {
              0,
          )
      };
-+    let split = || unsafe {
-+        VirtualFree(
-+            base as *mut c_void,
-+            len,
-+            MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER,
-+        );
++    let map_view = || {
++        let t = std::time::Instant::now();
++        let v = map_view();
++        census::add(census::VIEW_N, 1);
++        census::add(census::VIEW_US, t.elapsed().as_micros() as u64);
++        v
++    };
++    let split = || {
++        let t = std::time::Instant::now();
++        // SAFETY: as above.
++        unsafe {
++            VirtualFree(
++                base as *mut c_void,
++                len,
++                MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER,
++            );
++        }
++        census::add(census::SPLIT_N, 1);
++        census::add(census::SPLIT_US, t.elapsed().as_micros() as u64);
 +    };
 +    // HybridGt: a placeholder our own unmap left exactly here needs no split.
 +    let view = if physical.exact.remove(&(base, len)) {
@@ -12596,14 +12830,20 @@ index e898459..dbe4691 100644
      if view.Value as usize != base {
          tracing::warn!(
              address = format_args!("{base:#x}"),
-@@ -802,17 +933,24 @@ fn map(physical: &mut Physical, base: usize, len: usize, slice: Slice) -> bool {
+@@ -802,17 +1120,30 @@ fn map(physical: &mut Physical, base: usize, len: usize, slice: Slice) -> bool {
          );
          return false;
      }
 -    if !commit(base, len) {
 +    let pages = len.div_ceil(PAGE);
 +    let all_committed = (0..pages).all(|k| physical.committed.contains(&slice.key(k)));
-+    if !all_committed && !commit(base, len) {
++    let committing = std::time::Instant::now();
++    let committed = all_committed || commit(base, len);
++    if !all_committed {
++        census::add(census::COMMIT_N, 1);
++        census::add(census::COMMIT_US, committing.elapsed().as_micros() as u64);
++    }
++    if !committed {
          // SAFETY: the view just mapped, back to a placeholder.
          unsafe { UnmapViewOfFile2(GetCurrentProcess(), view, MEM_PRESERVE_PLACEHOLDER) };
          return false;
@@ -12623,7 +12863,7 @@ index e898459..dbe4691 100644
      }
      physical.views.insert(base, (len, slice));
      true
-@@ -901,7 +1039,9 @@ fn unmap(physical: &mut Physical, base: usize, len: usize) {
+@@ -901,7 +1232,9 @@ fn unmap(physical: &mut Physical, base: usize, len: usize) {
                  }
              }
          }
@@ -12633,15 +12873,180 @@ index e898459..dbe4691 100644
          // SAFETY: a view we mapped; it becomes a placeholder again.
          unsafe {
              UnmapViewOfFile2(
-@@ -912,6 +1052,8 @@ fn unmap(physical: &mut Physical, base: usize, len: usize) {
+@@ -912,6 +1245,10 @@ fn unmap(physical: &mut Physical, base: usize, len: usize) {
                  MEM_PRESERVE_PLACEHOLDER,
              )
          };
 +        physical.exact.insert((at, size));
++        census::add(census::UNMAP_N, 1);
++        census::add(census::UNMAP_US, system.elapsed().as_micros() as u64);
 +        victory_gpu::title_memory_remap_time(system.elapsed().as_micros() as u64, (system - told).as_micros() as u64);
          if at < base {
              map(physical, at, base - at, slice.clone());
          }
+@@ -1226,6 +1563,162 @@ mod tests {
+         assert_eq!(XMemIsToolsMemAvailable(), 0);
+     }
+ 
++    /// HybridGt: the GPU's page-mapping copy with runs joined
++    /// (`VICTORY_REMAP_RUNS=1`) shows what the page-by-page copy shows: the
++    /// same bytes at every page, writes through either address seen at the
++    /// other, consecutive section pages as one view, out-of-order ones as
++    /// views of their own, and a later page-by-page copy over it still works.
++    #[test]
++    fn alias_runs_show_the_same_pages_as_page_by_page() {
++        let mut pages = [0usize; 6];
++        let mut n = 6;
++        assert_eq!(XMemAllocatePhysicalPages(0, &mut n, pages.as_mut_ptr()), 1);
++        let reserve = || XMemVirtualAlloc(std::ptr::null_mut(), 6 * PAGE, MEM_RESERVE | PAGES_64K, 0, PAGE_READWRITE);
++        let (a, b) = (reserve(), reserve());
++        assert!(!a.is_null() && !b.is_null());
++        let at = |p: *mut c_void, page: usize| p.wrapping_byte_add(page * PAGE);
++        // `a` shows pages 0 1 2 5 3 4: runs [0 1 2] [5] [3 4].
++        let order = [pages[0], pages[1], pages[2], pages[5], pages[3], pages[4]];
++        assert_eq!(XMemMapPhysicalPages(a, 6, order.as_ptr()), a);
++        for k in 0..6 {
++            // SAFETY: mapped read-write.
++            unsafe { at(a, k).cast::<u8>().add(100).write(10 + k as u8) };
++        }
++        // First page by page (as the title's copies leave the range), then
++        // joined over it.
++        {
++            let mut physical = physical();
++            for k in 0..6 {
++                assert!(map_alias_locked(&mut physical, at(b, k) as usize, at(a, k) as usize, PAGE, false));
++            }
++            // Pages 0-2 and 3-4 follow each other: change the copy so the
++            // range is not unchanged, then map all six joined.
++            assert!(map_alias_locked(&mut physical, b as usize, 0, 6 * PAGE, false));
++            assert!(map_alias_locked(&mut physical, b as usize, a as usize, 6 * PAGE, true));
++            let views: Vec<usize> = physical.views.range(b as usize..at(b, 6) as usize).map(|(_, (size, _))| size / PAGE).collect();
++            assert_eq!(views, [3, 1, 2]);
++        }
++        for k in 0..6 {
++            // SAFETY: mapped read-write.
++            unsafe {
++                assert_eq!(at(b, k).cast::<u8>().add(100).read(), 10 + k as u8);
++                at(b, k).cast::<u8>().add(200).write(50 + k as u8);
++                assert_eq!(at(a, k).cast::<u8>().add(200).read(), 50 + k as u8);
++            }
++        }
++        // Page by page over the joined views, and unmapping, still work.
++        {
++            let mut physical = physical();
++            assert!(map_alias_locked(&mut physical, at(b, 1) as usize, at(a, 4) as usize, PAGE, false));
++        }
++        // SAFETY: mapped read-write.
++        unsafe {
++            assert_eq!(at(b, 1).cast::<u8>().add(100).read(), 14);
++            assert_eq!(at(b, 0).cast::<u8>().add(100).read(), 10);
++            assert_eq!(at(b, 2).cast::<u8>().add(100).read(), 12);
++        }
++        assert!(map_alias(b as u64, 0, 6 * PAGE as u64));
++        assert_eq!(query(at(b, 2)).host.State, MEM_RESERVE);
++        assert_eq!(XMemFreePhysicalPages(6, pages.as_ptr()), 1);
++    }
++
++    /// HybridGt component benchmark (`cargo test -p victory-hle --release --lib
++    /// remap_bench -- --ignored --nocapture`): the GPU's page-mapping copy of
++    /// 512 consecutive pages, alternating between two sources as streaming
++    /// does, page by page against joined runs.
++    #[test]
++    #[ignore]
++    fn remap_bench() {
++        const N: usize = 512;
++        let mut pages = vec![0usize; 2 * N];
++        let mut n = 2 * N;
++        assert_eq!(XMemAllocatePhysicalPages(0, &mut n, pages.as_mut_ptr()), 1);
++        let reserve = |k: usize| XMemVirtualAlloc(std::ptr::null_mut(), k * PAGE, MEM_RESERVE | PAGES_64K, 0, PAGE_READWRITE);
++        let (a, b, c) = (reserve(N), reserve(N), reserve(N));
++        assert_eq!(XMemMapPhysicalPages(a, N, pages[..N].as_ptr()), a);
++        assert_eq!(XMemMapPhysicalPages(b, N, pages[N..].as_ptr()), b);
++        // Every byte resident, as the title's streamed pages are.
++        for p in [a, b] {
++            // SAFETY: both mapped read-write, N pages.
++            unsafe { std::ptr::write_bytes(p.cast::<u8>(), 1, N * PAGE) };
++        }
++        let touch = std::env::var_os("REMAP_BENCH_TOUCH").is_some();
++        // `REMAP_BENCH_GUARDS=<threads>`: threads that open and close write
++        // guards (`VirtualProtect` on 64 KiB blocks of their own region) the
++        // whole time, as the GPU side's guards do while the title runs.
++        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
++        let guards: usize = std::env::var("REMAP_BENCH_GUARDS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
++        let protects = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
++        let workers: Vec<_> = (0..guards)
++            .map(|_| {
++                let (stop, protects) = (stop.clone(), protects.clone());
++                std::thread::spawn(move || {
++                    use windows_sys::Win32::System::Memory::{PAGE_READONLY, VirtualProtect};
++                    const BLOCKS: usize = 256;
++                    // SAFETY: a committed region of our own.
++                    let region = unsafe { VirtualAlloc(std::ptr::null(), BLOCKS * PAGE, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE) } as usize;
++                    let mut old = 0;
++                    let mut k = 0;
++                    while !stop.load(std::sync::atomic::Ordering::Relaxed) {
++                        let at = (region + (k % BLOCKS) * PAGE) as *const c_void;
++                        // SAFETY: inside our region.
++                        unsafe {
++                            VirtualProtect(at, PAGE, PAGE_READONLY, &mut old);
++                            VirtualProtect(at, PAGE, PAGE_READWRITE, &mut old);
++                        }
++                        k += 1;
++                        protects.fetch_add(2, std::sync::atomic::Ordering::Relaxed);
++                    }
++                })
++            })
++            .collect();
++        let bench_started = std::time::Instant::now();
++        for runs in [false, true, false, true] {
++            let started = std::time::Instant::now();
++            const ROUNDS: usize = 8;
++            for r in 0..ROUNDS {
++                let from = if r % 2 == 0 { a } else { b };
++                let mut physical = physical();
++                // Page by page, as the title's copies come (one call a page),
++                // or the whole range in one call joined.
++                if touch {
++                    // The card reads what the copy shows (the title's
++                    // texture refreshes read it in place): every page touched.
++                    // SAFETY: mapped after the first round.
++                    if r > 0 {
++                        let mut sum = 0u8;
++                        for k in 0..N {
++                            sum = sum.wrapping_add(unsafe { c.cast::<u8>().add(k * PAGE).read_volatile() });
++                        }
++                        std::hint::black_box(sum);
++                    }
++                }
++                if runs {
++                    assert!(map_alias_locked(&mut physical, c as usize, from as usize, N * PAGE, true));
++                } else {
++                    for k in 0..N {
++                        let at = |p: *mut c_void| p.wrapping_byte_add(k * PAGE) as usize;
++                        assert!(map_alias_locked(&mut physical, at(c), at(from), PAGE, false));
++                    }
++                }
++            }
++            let us = started.elapsed().as_micros() as f64 / (ROUNDS * N) as f64;
++            println!("remap bench: runs={runs}: {us:.1} us per page");
++        }
++        stop.store(true, std::sync::atomic::Ordering::Relaxed);
++        for w in workers {
++            let _ = w.join();
++        }
++        if guards > 0 {
++            println!(
++                "remap bench: {guards} guard threads made {:.0} VirtualProtect calls a second",
++                protects.load(std::sync::atomic::Ordering::Relaxed) as f64 / bench_started.elapsed().as_secs_f64()
++            );
++        }
++        assert!(map_alias(c as u64, 0, (N * PAGE) as u64));
++        assert_eq!(XMemFreePhysicalPages(2 * N, pages.as_ptr()), 1);
++    }
++
+     /// A thread that reads a mapped page in place, as the GPU side reads a
+     /// texture, never meets the moment in which the runtime has taken the
+     /// page's view away to map it again: mapping the same pages at the same
 diff --git a/crates/victory-loader/src/console_insn.rs b/crates/victory-loader/src/console_insn.rs
 index ca1eb8c..d39f265 100644
 --- a/crates/victory-loader/src/console_insn.rs

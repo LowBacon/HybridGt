@@ -409,3 +409,28 @@ bound by the title).
 
 The face shaders (`ped_standard_head_cs`, the `compute_graph_ops` network ops) are created and bound
 in the world without errors; why the mouths do not move is not found yet.
+
+### Session 2026-11-25 (night): audit against the repair brief (no game runs: not authorized)
+
+**Shader inventory, reconciled** (`translate-list-21`, `shaders.rpf`): 26,084 programs, 15 do not
+emit: 5 `shadowmask:CS_TraceShadowRays_*` ("a descriptor read only as data") and 10
+`PS_PedTexturedCutOutTint_Zero_*` ("a hardware SGPR input": the POPS collision input; they translate
+with `VICTORY_POPS=1`, which made eyes glow). The cascade-shadow program counted before now emits.
+The 29 FidelityFX shaders are DXBC in other files. 213 programs emit but fail Microsoft's validator
+(71 mesh output > 32 KiB, 72 signature-part mismatches, 70 interpolation modes mixed in one row).
+
+**Where a world frame goes** (run next40, 39 busiest world frames, means): copies to the card 48 ms
+(103 MB), textures 32 ms (60 MB), copy-back 65 ms, GPU 4.3 ms; descriptor slot loop 60 ms, 41 ms of
+it making host views. The card is nearly idle: every large cost is CPU-side runtime work.
+
+**Page remaps** (runs next39-42, busy frames): 1,386-1,488 pages a frame, the remap lock held
+151-226 ms a frame, 94 % in system calls, 102-163 us a page; the render side waits < 0.3 ms for the
+lock, so the cost lands on the title's streaming threads (late assets), not directly on the frame.
+Component benchmark on this PC (`remap_bench`, 512 pages): 6.7-7.9 us a page idle, 10-15 us with
+2-6 threads toggling guards; one view per run of consecutive pages: 4.5-6.3 / 7.6-11.4 us. Neither
+reproduces the in-game 100-160 us, so the next run's remap census (by system call, slowest
+operations) decides what to change; joined runs are ready behind `VICTORY_REMAP_RUNS=1` (off).
+
+**Trace ready, not run**: `play-trace.cmd` = `play-fast.cmd` + `VICTORY_TRACE_SHADER` for the water
+height lookups (92b4790eb4c29f6d), the face blendshape mapping (61e54e90adccaf6a) and the HSS graph
+output extract (970c4fbb3b017c0e) + `VICTORY_SYNC_TIMING=1`; log `logs\play-trace.log`.
