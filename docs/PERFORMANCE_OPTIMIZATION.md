@@ -274,3 +274,20 @@ frame log (diagnostics build, next29) to see where those milliseconds and the sp
   state and metadata records (`docs/SERIES_S_AND_FSR.md`).
 - The lazy copy-back fix (other host copies told of a deferred piece) is in the tree (fork
   `5c..`), not yet measured past the cutscene.
+
+### Device methods 0x1c8/0x218: the code is the containers'; DexNom/VIctory
+
+- next32 (200 s, diagnostic): the descriptions name standalone code in GPU memory (no container
+  around it). 0x1c8: w1/w2 registers (0x184), w3/w4 a 0xbc block starting with a hash, w5/w6 vertex
+  code, w7/w8 its metadata, w9/w10 pixel code, w11/w12 its metadata. 0x218: entries of 12 words,
+  w1/w2 registers (0x1c, thread group), w3/w4 hash and 3, w5/w6 code, w7/w8 metadata (0x403).
+- **All 16 code headers seen (the two hash-carrying `v_nop`s) match exactly one container's native
+  code in `shaders.rpf`.** Plan: an index from code header to archive record (built offline by our
+  tool), then real pipelines from the containers the translator already handles: compute (0x218)
+  first, then graphics (0x1c8), whose blend/depth/target state must be read from the register block.
+- DexNom/VIctory (upstream VIctory + 10 commits): same stub for 0x1c8/0x218; experimental ray
+  tracing on an RX 7900 XTX ("frame times can still reach several seconds"); five shadow-ray
+  compute shaders and the voxel-visibility shader recovered. Ported: `76749ce` (voxel visibility
+  now translates and validates here). Its shadow, ray-structure and shader-variant commits
+  (`5f4c3df`, `bc3cd4b`, `921d8d3`, `ddb7332`) conflict with this tree's translator and need a
+  merge by hand.
