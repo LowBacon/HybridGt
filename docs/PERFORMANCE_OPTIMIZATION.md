@@ -480,3 +480,22 @@ from a clean target, all shaders translated again. The warm-up now names each fa
 | 5 | 5 | ray-traced shadows | need the BVH builder |
 
 242 -> 47 containers that do not translate; 15 of them matter.
+
+### Correction: method 0x1c8 is the title's renderer path, not only overlays
+
+The 43 descriptions decoded above (immediate-mode vertices, alpha blending, no depth) are the
+first calls only. Run next31 showed that when 0x1c8 hands out pipelines (placeholders then), the
+title moves its rendering onto them: the screen went black with ~9 draws a frame. So 0x1c8 is how
+the title makes its graphics pipelines when it can (16,384 calls by the prologue), and the stream
+path is its fallback. A placeholder for 0x1c8 alone would swap the prologue crash for a black
+screen; the fix is real pipelines:
+
+1. VS and PS containers from the code the description names (words 5 and 9, first 12 bytes ->
+   `native-index.txt`, as 0x218 does);
+2. blend (CB_BLEND0-7_CONTROL at +0xd0, CB_TARGET_MASK at +0xcc), depth/stencil (DB_DEPTH_CONTROL
+   +0xb8, DB_STENCILREFMASK +0xc0/+0xc4) and cull (PA_SU_SC_MODE_CNTL +0xa0) from the 0x184 block;
+3. the vertex layout from the 0xbc block;
+4. render-target and depth formats from what is bound at the pipeline's first draw.
+
+Needed first: descriptions from the prologue (calls past the first 43), saved with
+`VICTORY_SAVE_PIPELINES=<dir>` in a short new-game run up to the crash.
