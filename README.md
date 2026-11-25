@@ -50,6 +50,7 @@ See [docs/ZTRX_IMPLEMENTATION_AUDIT.md](docs/ZTRX_IMPLEMENTATION_AUDIT.md).
 | 0007–0008 | Guarded textures re-checked every frame after a change (intro video jumping back and forth) | ZTRX PR #32 | GPU tests; game test pending |
 | 0009–0010 | `ds_bpermute_b32` / `ds_permute_b32` across two host waves (shadow-mask trace programs) | ZTRX PR #43 | card tests, RTX 4070 Ti |
 | 0011 | Test fix-up | HybridGt | — |
+| 0013 | Diagnostic: `VICTORY_SAVE_PIPELINES` saves the descriptions of the unimplemented pipeline methods 0x1c8 / 0x218 | HybridGt | — |
 | 0012 | Descriptor sync keyed by the 12 bytes `mirror` reads, one lock a page: change check 15.1 ms → 0.83 ms per frame (234,000 slots) | HybridGt | unit test + benchmark |
 
 `cargo test --release -p victory-shader -p victory-gpu -p victory-hle` on the RTX 4070 Ti: **467 passed, 0 failed, 6 ignored** (2026-11-25).
