@@ -1,7 +1,7 @@
-From 76388ebdc5f05e46afe9f8d346b3e0a0287d6010 Mon Sep 17 00:00:00 2001
+From 537bd5fc2a5bcf787f0eb2ea732f8528eb20b9d8 Mon Sep 17 00:00:00 2001
 From: pgm1207 <104554896+pgm1207@users.noreply.github.com>
 Date: Tue, 24 Nov 2026 12:13:53 +0100
-Subject: [PATCH 05/11] GPU: no blending on integer render targets in host
+Subject: [PATCH 05/22] GPU: no blending on integer render targets in host
  pipelines
 
 The console ignores blending on integer render targets and the title
@@ -12,6 +12,7 @@ blending off on integer targets; with one description for all targets,
 each target gets its own copy so the others keep theirs.
 
 (cherry picked from commit 6615c720c41da5855aa2744c063e56df2617a4d7)
+(cherry picked from commit 76388ebdc5f05e46afe9f8d346b3e0a0287d6010)
 ---
  crates/victory-gpu/src/pipeline/host.rs | 121 +++++++++++++++++++++++-
  1 file changed, 118 insertions(+), 3 deletions(-)

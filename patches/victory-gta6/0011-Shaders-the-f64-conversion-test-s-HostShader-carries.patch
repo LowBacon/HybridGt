@@ -1,10 +1,11 @@
-From 42b9c3ca7b5534ddea080da3a8e239160bbd3de2 Mon Sep 17 00:00:00 2001
+From 3b1664d78b0ac0b8b785908c9625759e1b63ce2b Mon Sep 17 00:00:00 2001
 From: LowBacon <lenni.a.jokitalo@gmail.com>
 Date: Wed, 25 Nov 2026 09:29:06 +0200
-Subject: [PATCH 11/11] Shaders: the f64 conversion test's HostShader carries
+Subject: [PATCH 11/22] Shaders: the f64 conversion test's HostShader carries
  heap_samplers (HybridGt)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+(cherry picked from commit 42b9c3ca7b5534ddea080da3a8e239160bbd3de2)
 ---
  crates/victory-shader/src/emit/valu_tests.rs | 1 +
  1 file changed, 1 insertion(+)

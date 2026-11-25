@@ -97,3 +97,37 @@ Next: split the held time between system calls and GPU-side notifications (timer
 - The GPU is 64% busy.
 
 Next: title buffer copies on the card instead of waiting (`VICTORY_GPU_BUFFER_COPIES=1`, next11).
+
+## Runs next11–next12: copy-back waits removed from the submitting thread
+
+| Run | Change | Steady world fps | ms/frame | Submitting thread's settles |
+|---|---|---|---|---|
+| next9 | (reference) | 3.5–3.6 | 276–284 | 2 a frame, 154 ms ("title memory read": a buffer copy, an upload fill) |
+| next11 | `VICTORY_GPU_BUFFER_COPIES=1` (patch 0020) | 3.7–3.8 | 261–273 | 1 a frame, 97 ms (the upload fill) |
+| next12 | + `VICTORY_GPU_FILLS=1` (patch 0021) | **3.7–4.0** | **252–270** | 1–1.5 a frame, 83 ms, now "title memory changed under shader writes" |
+
+next12 moved 15 buffer copies and 5,600–6,100 scratch fills a frame onto the GPU. CPU copies fell
+from about 185 MB to about 160 MB a frame.
+
+### What is left in a steady frame (next12, about 260 ms)
+
+| Part | Time | Cause |
+|---|---|---|
+| Copy-back thread | 160–188 ms | 100 ms waiting for 7–8 fetches; 66 ms with nothing to land |
+| CPU preparation | 101–117 ms | copies 53–62 ms for about 160 MB; textures 2–4 ms |
+| GPU | 78–115 ms | the card is 66% busy |
+| Settle "title memory changed under shader writes" | 77 ms | the title's CPU writes 85,000–102,000 runs a frame (0.21–0.26 MB, 2–3 bytes each) into pages that flights' shaders write. The merge path (`merge_under_writes`) allows 512 runs a submission, then the submission waits for every flight |
+
+### Measured and rejected or deferred
+
+- `VICTORY_CARD_FETCH_INFLIGHT=1`: GPU time ×3 (next10).
+- Kernel reads are not the copy cost. `read_cost` benchmark: 155 MB in 64 KiB reads takes 20 ms
+  through the kernel, 14 ms as a plain copy. Refreshes already read whole runs of 64 KiB pages.
+  The rest of the 53–62 ms needs the diagnostics build's copy counters.
+- **Masked merge on the GPU, designed but not built.** For the 85,000–102,000 tiny runs: one
+  compute dispatch would write only the title's bytes into the card copy. It needs two things:
+  - an indexed log of the merged runs with their send number (the copy-back skips bytes sent
+    after its fetch);
+  - hashing of the merged pages after the merge.
+
+  This is the next target. It would remove the remaining 77 ms settle.

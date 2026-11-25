@@ -1,10 +1,11 @@
-From 979b82c1040a166f535195814a2f6fb4a5be05dd Mon Sep 17 00:00:00 2001
+From f34dab2a031d07101935358fff5d82ba342103ed Mon Sep 17 00:00:00 2001
 From: LowBacon <lenni.a.jokitalo@gmail.com>
 Date: Wed, 25 Nov 2026 10:30:32 +0200
-Subject: [PATCH] Device methods 0x1c8/0x218: VICTORY_SAVE_PIPELINES saves what
- their descriptions point at (HybridGt diagnostic)
+Subject: [PATCH 12/22] Device methods 0x1c8/0x218: VICTORY_SAVE_PIPELINES
+ saves what their descriptions point at (HybridGt diagnostic)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+(cherry picked from commit 979b82c1040a166f535195814a2f6fb4a5be05dd)
 ---
  crates/victory-gpu/src/device.rs | 45 ++++++++++++++++++++++++++++++++
  1 file changed, 45 insertions(+)

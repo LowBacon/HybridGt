@@ -1,7 +1,7 @@
-From 186f3ac7769d332d16e4b7dd8c9cc4dee4725aec Mon Sep 17 00:00:00 2001
+From ec3434bbc93fd54d69e39e43c0327fcf144d1821 Mon Sep 17 00:00:00 2001
 From: Z User <z@container>
 Date: Wed, 25 Nov 2026 05:25:41 +0000
-Subject: [PATCH 09/11] Shaders: ds_bpermute_b32 across two host waves through
+Subject: [PATCH 09/22] Shaders: ds_bpermute_b32 across two host waves through
  a table past the LDS
 
 A console wave64 program run as two host waves of 32 stopped at the
@@ -19,6 +19,7 @@ now; verified through the tests (lowering on every host, values on a
 32-lane card when one runs the suite).
 
 (cherry picked from commit 2a40b4803fd5b558cf523166ae47a43981e859b8)
+(cherry picked from commit 186f3ac7769d332d16e4b7dd8c9cc4dee4725aec)
 ---
  crates/victory-shader/src/emit/lower.rs       |  89 ++++++++++-
  crates/victory-shader/src/emit/mod.rs         | 109 +++++++++++++

@@ -1,11 +1,12 @@
-From 35a04bc3c5c2c74a5b360a434417f190ae3a183a Mon Sep 17 00:00:00 2001
+From 3999ee63d39853813111a5aa830eb0a25da9cd89 Mon Sep 17 00:00:00 2001
 From: LowBacon <lenni.a.jokitalo@gmail.com>
 Date: Wed, 25 Nov 2026 00:10:07 +0200
-Subject: [PATCH 03/11] FidelityFX stage 2: the title's FSR calls run AMD's PC
+Subject: [PATCH 03/22] FidelityFX stage 2: the title's FSR calls run AMD's PC
  upscaler on the host device and the host list (VICTORY_FFX_DIR); list hooks
  for external host work (HybridGt)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+(cherry picked from commit 35a04bc3c5c2c74a5b360a434417f190ae3a183a)
 ---
  crates/victory-gpu/src/draw.rs        |  10 +
  crates/victory-gpu/src/list.rs        |  46 ++++
@@ -13,10 +14,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  3 files changed, 382 insertions(+), 36 deletions(-)
 
 diff --git a/crates/victory-gpu/src/draw.rs b/crates/victory-gpu/src/draw.rs
-index d9768e1..5aa2d94 100644
+index 9ba0c2f..6fed040 100644
 --- a/crates/victory-gpu/src/draw.rs
 +++ b/crates/victory-gpu/src/draw.rs
-@@ -698,6 +698,16 @@ impl State {
+@@ -702,6 +702,16 @@ impl State {
      /// shortcut: the render target views are made again from the handles'
      /// descriptors as they are now, not as they were when the title set
      /// the targets (a descriptor rewritten in between names another view).

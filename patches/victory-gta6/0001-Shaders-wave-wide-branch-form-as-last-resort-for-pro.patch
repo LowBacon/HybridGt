@@ -1,11 +1,12 @@
-From 71e30febea66fa902f0fe6baa7910d80026856cd Mon Sep 17 00:00:00 2001
+From 396407e55850502f00e6b405dc43211b13142d1a Mon Sep 17 00:00:00 2001
 From: LowBacon <lenni.a.jokitalo@gmail.com>
 Date: Tue, 24 Nov 2026 23:05:32 +0200
-Subject: [PATCH 01/11] Shaders: wave-wide branch form as last resort for
+Subject: [PATCH 01/22] Shaders: wave-wide branch form as last resort for
  programs otherwise refused on 32-lane hosts; translate VICTORY_SAVE_HASHES
  (HybridGt)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+(cherry picked from commit 71e30febea66fa902f0fe6baa7910d80026856cd)
 ---
  apps/victory/src/translate.rs         |  9 +++++++++
  crates/victory-shader/src/emit/mod.rs | 15 +++++++++++++++

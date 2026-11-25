@@ -1,7 +1,7 @@
-From 0fbba71569e2e6cbe46a39434296e399e75a10ae Mon Sep 17 00:00:00 2001
+From 537abf98c2cc34b32cc50dbd685af4fbf0327328 Mon Sep 17 00:00:00 2001
 From: Z User <z@container>
 Date: Wed, 25 Nov 2026 06:16:44 +0000
-Subject: [PATCH 10/11] Shaders: ds_permute_b32 across two host waves, through
+Subject: [PATCH 10/22] Shaders: ds_permute_b32 across two host waves, through
  the same table
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -34,6 +34,7 @@ Verified through the tests (lowering on every host, values on a 32-lane
 card when one runs the suite).
 
 (cherry picked from commit 657d80c7df4ad5e90451b6766167b53f843d6579)
+(cherry picked from commit 0fbba71569e2e6cbe46a39434296e399e75a10ae)
 ---
  crates/victory-shader/src/emit/lower.rs       |  96 ++++++++++-
  crates/victory-shader/src/emit/mod.rs         | 126 ++++++++++++++

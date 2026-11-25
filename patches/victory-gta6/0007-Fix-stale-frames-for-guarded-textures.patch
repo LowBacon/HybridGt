@@ -1,10 +1,11 @@
-From 3f71ca70ebbee6285a66d6adf67ddd6ab32bebd8 Mon Sep 17 00:00:00 2001
+From a033d6f64b6a1136d86c000e639cce561403ed8c Mon Sep 17 00:00:00 2001
 From: S1M40 <simasvasconcelos@gmail.com>
 Date: Wed, 25 Nov 2026 03:52:05 +0000
-Subject: [PATCH 07/11] Fix stale frames for guarded textures
+Subject: [PATCH 07/22] Fix stale frames for guarded textures
 
 Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
 (cherry picked from commit afa33722b4b2d99a74512e45364e7fb30ecb47e6)
+(cherry picked from commit 3f71ca70ebbee6285a66d6adf67ddd6ab32bebd8)
 ---
  crates/victory-gpu/src/texture.rs | 85 ++++++++++++++++++++++++++-----
  1 file changed, 72 insertions(+), 13 deletions(-)

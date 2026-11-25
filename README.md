@@ -30,31 +30,36 @@ at **3.5–3.8 fps** (about 270 ms per frame) on an RTX 4070 Ti. Shadowed areas 
 | Shader translation: 14,160 of 14,259 vertex/pixel, 2,718 of 2,734 compute, 8,762 of 8,765 mesh programs | offline `translate` over the title's shaders |
 | No GPU hang or device removal in the last runs | run logs `fork6`, `fork8` |
 
-### Runtime base and patches (`patches/victory-gta6/`, on fork commit `a26859f`)
+### Runtime base and patches (`patches/victory-gta6/`, on fork commit `9376fd6`)
 
-Since 2026-11-25 the patches apply to fxceless/victory-gta6 `a26859f`. That commit already
-contains all of [ZTRX](https://github.com/Zettrox/ztrx) `main`. It also adds:
-- depth bounds;
-- textures picked by index re-checked after upload;
-- byte-copied descriptor mirroring;
-- faster defaults.
+The patches apply to fxceless/victory-gta6 `9376fd6`. That commit contains all of
+[ZTRX](https://github.com/Zettrox/ztrx) `main`, plus the fork's own work since then: depth bounds,
+texture re-checks, descriptor mirroring, and the CPU-side frame work. See
+[docs/ZTRX_IMPLEMENTATION_AUDIT.md](docs/ZTRX_IMPLEMENTATION_AUDIT.md).
 
-See [docs/ZTRX_IMPLEMENTATION_AUDIT.md](docs/ZTRX_IMPLEMENTATION_AUDIT.md).
+| Patches | What | Source |
+|---|---|---|
+| 0001 | Wave-wide branch form as last resort on 32-lane GPUs | HybridGt |
+| 0002–0003 | FidelityFX: the title's FSR calls run AMD's PC upscaler (`VICTORY_FFX_DIR`) | HybridGt |
+| 0004 | Constant samplers in reserved host sampler slots | HybridGt |
+| 0005–0006 | No blending on integer targets; LDS-flag regions as two waves | ZTRX PR #36 |
+| 0007–0008 | Guarded textures re-checked after a change (intro flicker) | ZTRX PR #32 |
+| 0009–0010 | `ds_bpermute_b32` / `ds_permute_b32` across two host waves | ZTRX PR #43 |
+| 0013–0015 | `fma_mix`, `mul_hi` without INT64, 23 more VALU instructions | ZTRX PRs #56, #51, #10 |
+| 0012, 0016, 0022 | Diagnostics: pipeline-method samples, descriptor timers, read benchmark | HybridGt |
+| 0017–0019 | Memory remapping: locks once per call; no-op remaps skipped; remap counters; `VICTORY_KEYS` in release builds | HybridGt |
+| 0020–0021 | Buffer copies and scratch fills that would wait for in-flight GPU work run on the GPU (`VICTORY_GPU_BUFFER_COPIES=1`, `VICTORY_GPU_FILLS=1`) | HybridGt |
+| 0011 | Test fix-up | HybridGt |
 
-| Patch | What it does | Source | Test |
-|---|---|---|---|
-| 0001 | Wave-wide branch form as a last resort for wave64 programs a 32-lane GPU would refuse | HybridGt | shader tests |
-| 0002–0003 | FidelityFX (FSR): the title's FSR DLL loads; its calls run AMD's PC upscaler on the host list (`VICTORY_FFX_DIR`) | HybridGt | builds, HLE tests; game test pending |
-| 0004 | Samplers built as constants at a join get reserved slots 2032–2047 of the host sampler heap | HybridGt | shader + GPU tests |
-| 0005–0006 | No blending on integer render targets (a refused world mesh pipeline: missing walls); LDS-flag regions run as two host waves (`CS_Tiling_Generate_Opaque`) | ZTRX PR #36 | GPU tests, RTX 4070 Ti |
-| 0007–0008 | Guarded textures re-checked every frame after a change (intro video jumping back and forth) | ZTRX PR #32 | GPU tests; game test pending |
-| 0009–0010 | `ds_bpermute_b32` / `ds_permute_b32` across two host waves (shadow-mask trace programs) | ZTRX PR #43 | card tests, RTX 4070 Ti |
-| 0011 | Test fix-up | HybridGt | — |
-| 0013 | Diagnostic: `VICTORY_SAVE_PIPELINES` saves the descriptions of the unimplemented pipeline methods 0x1c8 / 0x218 | HybridGt | — |
-| 0012 | Descriptor sync keyed by the 12 bytes `mirror` reads, one lock a page: change check 15.1 ms → 0.83 ms per frame (234,000 slots) | HybridGt | unit test + benchmark |
+Performance (RTX 4070 Ti, Series X profile, 1080p, steady world frames, no input):
 
-`cargo test --release -p victory-shader -p victory-gpu -p victory-hle` on the RTX 4070 Ti: **467 passed, 0 failed, 6 ignored** (2026-11-25).
-None of these changes has been run in the game yet.
+| Run | Steady world | Frame |
+|---|---|---|
+| next1 | about 3.0 fps | 309–337 ms |
+| next9 (remap locking) | 3.5–3.6 fps | 276–284 ms |
+| next12 (with both GPU-copy switches) | **3.7–4.0 fps** | **252–270 ms** |
+
+Every run is in [docs/PERFORMANCE_OPTIMIZATION.md](docs/PERFORMANCE_OPTIMIZATION.md).
 
 Also in `crates/hgt-gfxdiag`: GPU checks proving the RTX 4070 Ti runs 32-lane waves and that
 two-half wave64 emulation gives the console's answer in compute and mesh shaders, including
@@ -97,7 +102,7 @@ Xbox Series files in a folder outside every repository.
 ```powershell
 git clone https://github.com/fxceless/victory-gta6
 cd victory-gta6
-git checkout a26859f
+git checkout 9376fd6
 git switch -c hybridgt
 git am <path to HybridGt>\patches\victory-gta6\*.patch
 cargo build --release -p victory
@@ -127,6 +132,8 @@ has not measured them on its RTX 4070 Ti yet.
 
 ```powershell
 $env:VICTORY_DISPLAY_MODE = '1920x1080'
+$env:VICTORY_LEVELS_ON_DEMAND = '1'; $env:VICTORY_WIDE_REFRESH = '1'; $env:VICTORY_WIDE_MERGE = '1'
+$env:VICTORY_GPU_BUFFER_COPIES = '1'; $env:VICTORY_GPU_FILLS = '1'
 $env:VICTORY_FFX_DIR = '<folder with amd_fidelityfx_loader_dx12.dll and amd_fidelityfx_upscaler_dx12.dll>'
 .\target\release\victory.exe run "$env:VICTORY_GAME_DIR\<the game's exe>" --execute
 ```
