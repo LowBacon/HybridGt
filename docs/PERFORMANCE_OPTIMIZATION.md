@@ -291,3 +291,15 @@ frame log (diagnostics build, next29) to see where those milliseconds and the sp
   now translates and validates here). Its shadow, ray-structure and shader-variant commits
   (`5f4c3df`, `bc3cd4b`, `921d8d3`, `ddb7332`) conflict with this tree's translator and need a
   merge by hand.
+
+### Runs next33-next34: method 0x218 implemented
+
+- `victory shader-index <archive> <file>` indexes 26,698 native programs by their first 12 bytes
+  (984 headers shared by more than one container). With `VICTORY_NATIVE_INDEX=<file>` and
+  `VICTORY_NATIVE_PIPELINES=1`, method 0x218 makes compute pipelines from those containers.
+- **next33**: 1,024+ compute pipelines made, 0 missed; reached the world, 5.1-5.3 fps (188-197 ms:
+  copies 50-64 ms, copy-back 82-91 ms, heap pass 53-80 ms); no crash.
+- **next34** (same + lazy copy-back): crashed at the prologue cutscene, same title offset
+  (`+0x23cf683`), nothing deferred. next33 passed it by timing. The remaining suspect is method
+  0x1c8 (graphics), still failing there. Next: 0x1c8 from containers, with its graphics state read
+  from the register block (w1/w2, 0x184 bytes, starting `4005d808`).
