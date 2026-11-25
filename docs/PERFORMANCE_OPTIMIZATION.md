@@ -236,3 +236,21 @@ The eyes may come from the POPS ped shaders first drawn in this run: that path i
 - Built from that (fork `70cf037`): copy-back on first touch (`VICTORY_LAZY_BACK=1`) and the
   heap pass keeping slots whose records are unchanged (on by default; `VICTORY_SLOT_PRINTS=0`).
   Measured in next24.
+
+### Runs next24-next28: two large savings that crashed, one kept
+
+| Run | Switches | Result |
+|---|---|---|
+| next24 | lazy copy-back + slot prints (first form) | crash (title writes through null) ~6 min in; copy-back 80-100 -> ~7 ms before it; texture pass 2-7 -> 105-181 ms (`ensure` took a lock per read) |
+| next25 | + all-or-nothing closing, guard re-closing | crash, same kind |
+| next26 | + every kernel read hooked, block filter | crash while loading **with 0 pieces deferred**: slot prints |
+| next27 | lazy copy-back alone | crash (same title offset as next25): lazy copy-back on its own too |
+| next28 | slot prints that also require the same copy (`VICTORY_SLOT_PRINTS=1`) | no crash; median 196 ms (5.1 fps), p90 918 ms; only 4,000-5,500 slots kept a frame (most slots show a different copy each frame) |
+
+Both are off by default. Lazy copy-back needs every path by which the title or this runtime sees
+title memory found first; the likely kind is a reader that neither faults nor goes through
+`crate::host`'s reads. Frame-time spread: next23 median 235 ms, p90 663 ms, worst 3.9 s; the
+spikes (one frame in ten over 0.6 s) are what play feels like.
+
+Copies move 185 MB in 81 ms (2.3 GB/s): overhead, not bandwidth. Next: the sampling profiler and
+frame log (diagnostics build, next29) to see where those milliseconds and the spikes go.
