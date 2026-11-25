@@ -20,12 +20,18 @@ Updated with each run. Measured numbers only.
 
 | Area | Progress | Detail |
 |---|---|---|
-| Shader programs translated | `███████████████████░` 99.1 % | 25,751 of 25,985 (offline `translate`, 2026-11-25); 196 geometry shaders, 29 unused FidelityFX DXBC, 5 shadow-ray, 2 lane-mask left |
-| Geometry shaders (voxel lighting) | `░░░░░░░░░░░░░░░░░░░░` 0.0 % | the translator has no geometry-shader stage yet |
-| Frame rate in the world vs 30 fps goal | `███░░░░░░░░░░░░░░░░░` 14.0 % | best steady world 4.2 fps (run next14); prologue cutscene 2-4 fps (next17) |
+| Shader programs translated | `███████████████████░` 99.8 % | 26,102 of 26,148 (offline `translate`, 2026-11-25 evening). Left: 29 FidelityFX DXBC the game never runs, 10 POPS ped shaders (switch `VICTORY_POPS=1`, off: glowing eyes), 5 shadow-ray (need the BVH builder), 2 lane-mask |
+| Shaders passing Microsoft's DXIL validator | `███████████████████░` 99.1 % | the rest: signature packing (flat and interpolated values in one row) and 71 mesh shaders over 32 KiB of outputs; NVIDIA's driver takes them |
+| Geometry shaders (voxel lighting) | `████████████████████` 100.0 % | all 195 translate and validate; host pipelines with them behind `VICTORY_TITLE_GS=1` (stable in next20; not yet seen drawing in the cell) |
+| Frame rate vs 30 fps goal | `███░░░░░░░░░░░░░░░░░` 17.0 % | median 5.1 fps (196 ms, run next28); spikes: one frame in ten over 0.6 s |
 | Ray tracing | `░░░░░░░░░░░░░░░░░░░░` 0.0 % | BVH builder corrupts title memory: off |
-| FSR 1 upscale on present | `██████████░░░░░░░░░░` 50.0 % | built and tested on the GPU (`VICTORY_FSR=1`); not yet measured in game |
+| FSR 1 upscale on present | `██████████░░░░░░░░░░` 50.0 % | built and tested on the GPU (`VICTORY_FSR=1`); not measured in game |
 | Series S boot | `░░░░░░░░░░░░░░░░░░░░` 0.0 % | blocked on device method 0x218 |
+
+Where a frame goes now (run next22-next28, ~200 ms): copy-back of what shaders wrote 70-100 ms (the
+title reads only 6.5 % of it: copy-back on first touch built, `VICTORY_LAZY_BACK=1`, crashes, off);
+copies of title memory to the card 45-80 ms (185 MB at 2.3 GB/s: overhead, not bandwidth); the pass
+over bindless buffer views 45-75 ms; GPU 3-130 ms.
 
 ## Status (2026-11-25)
 
