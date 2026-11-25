@@ -254,3 +254,23 @@ spikes (one frame in ten over 0.6 s) are what play feels like.
 
 Copies move 185 MB in 81 ms (2.3 GB/s): overhead, not bandwidth. Next: the sampling profiler and
 frame log (diagnostics build, next29) to see where those milliseconds and the spikes go.
+
+### Runs next29-next31: the crashes are not the speed changes
+
+- Every crash of runs next19-next30 (seven reports) came at **the same moment**: the prologue's
+  intro cutscene ("cine@leadout@int_prolo@int@leadout") in its *Prestream* state, 1 min 23 s to
+  1 min 57 s into a new game (5 min 26 s once), the title writing through null. next26 and next30
+  crashed there with **nothing deferred** by the lazy copy-back. Runs before the saves were moved
+  (next1-next18) loaded a save past this cutscene.
+- At that moment the title makes thousands of pipelines through the two device methods the runtime
+  does not implement: **16,384 calls of 0x1c8 (graphics) and 2,048 of 0x218 (compute)** in next30.
+- next31: answering them with a placeholder pipeline (no shaders) instead of a failure made the
+  title draw its frame through them: ~9 draws a frame, black screen with sound. Off again
+  (`VICTORY_PLACEHOLDER_PIPELINES=1` to try).
+- Consequence: **methods 0x1c8 and 0x218 are part of how the Series X build renders** (not only
+  Series S). Their pipelines are where draws are missing (the user sees windows and other assets
+  wrong). Implementing them is now the first task for stability and picture both. The descriptions
+  carry native GFX10 code with the same hash header as the shader containers' code, the register
+  state and metadata records (`docs/SERIES_S_AND_FSR.md`).
+- The lazy copy-back fix (other host copies told of a deferred piece) is in the tree (fork
+  `5c..`), not yet measured past the cutscene.
