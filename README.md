@@ -20,11 +20,14 @@ Updated with each run. Measured numbers only.
 
 | Area | Progress | Detail |
 |---|---|---|
-| Shader programs translated | `███████████████████░` 99.8 % | 45 left: 29 FidelityFX DXBC the game never runs, 10 POPS ped shaders (off: glowing eyes), 5 shadow-ray (BVH), 1 cascade shadow (wave64 in multi-wave groups) |
+| Shader programs translated | `███████████████████░` 99.8 % | 43 left: 29 FidelityFX DXBC the game never runs, 10 POPS ped shaders (off: glowing eyes), 5 shadow-ray (BVH), 1 cascade shadow (wave64 in multi-wave groups); 2 more fixed this round |
 | Shaders passing Microsoft's DXIL validator | `███████████████████░` 99.1 % | the rest: signature rows mixing flat and interpolated values, 71 mesh shaders over 32 KiB of outputs (NVIDIA takes them) |
 | Geometry shaders (voxel lighting) | `████████████████████` 100.0 % | translate and validate; host pipelines behind `VICTORY_TITLE_GS=1` |
-| Console pipeline methods 0x218 / 0x1c8 | `██████████░░░░░░░░░░` 50.0 % | 0x218 (compute) builds pipelines from the containers of its code (`VICTORY_NATIVE_PIPELINES=1`, 1,024+ made, 0 missed); 0x1c8 (graphics: water, glass, prologue crash) not yet |
-| Frame rate vs 30 fps goal | `████░░░░░░░░░░░░░░░░` 23.3 % | 5.2-7.0 fps in the world (run next36, fxceless d510ee4 merged); streaming frames stall on per-page remaps (246 ms) |
+| Console pipeline methods 0x218 / 0x1c8 | `██████████░░░░░░░░░░` 50.0 % | 0x218 (compute) builds pipelines from the containers of its code (`VICTORY_NATIVE_PIPELINES=1`, 2,048 made, 0 missed); 0x1c8 decoded as 2D/overlay pipelines (immediate-mode vertices, alpha blend, no depth), not built yet |
+| Frame rate vs 30 fps goal | `████░░░░░░░░░░░░░░░░` 19.3 % | median 5.8 fps, best 6.9, slowest frame 345 ms in the world (run next40, lock-free descriptor mirror; was 4.8 fps median, 647 ms worst) |
+| Compute pipelines the RTX 4070 Ti accepts | `███████████████████░` 99.9 % | 1 of 3 wave64-only programs fixed (`CS_AlphTransmissionPrefilterMip`, the refraction mips water and glass sample); GPU heap defrag and a VFX triangle pass still refused |
+| Boat mission ("Cal fell off the boat") | `░░░░░░░░░░░░░░░░░░░░` 0.0 % | not fixed: boat sinks / engine dies at mission start; four runtime switches ruled out by A/B runs; the GPU water-height lookups the physics reads are being traced |
+| Mouth animation | `░░░░░░░░░░░░░░░░░░░░` 0.0 % | not fixed: the face compute shaders and network ops run without errors; cause not found |
 | Ray tracing | `░░░░░░░░░░░░░░░░░░░░` 0.0 % | BVH builder off; DexNom's builder work needs a merge by hand |
 | FSR 1 upscale on present | `████████████████████` 100.0 % | runs in game (`VICTORY_FSR=1`, 720p -> 1080p); no frame-rate gain measured: the frame is CPU-bound |
 | FSR 3.1 (temporal) | `░░░░░░░░░░░░░░░░░░░░` 0.0 % | needs the game's motion vectors and depth: the game calls FSR only on its Series S path (blocked by 0x1c8/0x218) |
@@ -32,10 +35,11 @@ Updated with each run. Measured numbers only.
 
 Details of every run: `docs/PERFORMANCE_OPTIMIZATION.md`.
 
-## Status (2026-11-25)
+## Status (2026-11-25, evening)
 
-**Not playable.** The first gameplay scene (the prison prologue) renders and the player can move,
-at **3.5–3.8 fps** (about 270 ms per frame) on an RTX 4070 Ti. Shadowed areas are black.
+**Not playable.** From the user's save the world renders and the boat mission starts at
+**5–7 fps** (median 5.8 fps in run next40) on an RTX 4070 Ti, but the mission fails at its start
+("Cal fell off the boat": the boat sinks), and mouths do not move when characters talk.
 
 ### Works (seen on screen or measured)
 

@@ -349,3 +349,63 @@ next36's switches plus `VICTORY_COPY_PLAIN=1`, the user's own save, no crash: co
 frame on average (-15 %), best frame 132 -> 125 ms, median unchanged at 202 ms (~5 fps). Kept in the
 standard set. The median moves only when the other CPU parts move too (heap pass, copy-back, page
 remaps); next: the per-page remap stalls (plan above), then method 0x1c8.
+
+### Runs next39-next40: lock-free descriptor mirror — kept
+
+`HostHeap::mirror` took one lock over the whole heap's made-table for every call: 58,000-90,000
+calls a frame in the world, 80-130 ms a frame of lock and lookup summed over the threads (next38,
+next39). A per-slot atomic copy of the key, published only after the host descriptor is written and
+kept, answers calls whose slot is already made from the same record without the lock (28,000 a
+frame in next40); `VICTORY_MIRROR_LOCKED=1` restores the old path. Same scene, same switches:
+
+| Run | Median | p10 | p90 frame | Worst frame |
+|---|---|---|---|---|
+| next38 | 5.0 fps | 2.0 fps | 509 ms | 547 ms |
+| next39 (timer only) | 4.8 fps | 2.4 fps | 415 ms | 647 ms |
+| next40 (lock-free) | **5.8 fps** | **3.4 fps** | **291 ms** | **345 ms** |
+
+One run each: a trend until it repeats.
+
+### Device method 0x1c8 is not water or glass
+
+The 43 saved 0x1c8 descriptions all have the same vertex layout (POSITION, COLOR, TEXCOORD),
+alpha blending (CB_BLEND_CONTROL `e5040504`: src alpha / inverse src alpha) and no depth test
+(DB_DEPTH_CONTROL `007007f0`): immediate-mode 2D/overlay pipelines. Decoded so far in the 0x184
+register block: +0xd0..+0xec CB_BLEND0-7_CONTROL, +0xc0/+0xc4 DB_STENCILREFMASK(_BF), +0xb8
+DB_DEPTH_CONTROL, +0x38/+0x4c SPI_SHADER_PGM_RSRC1 of VS/PS. The earlier note that 0x1c8 is
+"likely water and glass" was wrong.
+
+### Compute pipelines NVIDIA refuses (64-lane waves)
+
+Three compute programs translate and validate but D3D12 refuses their pipelines on the RTX 4070 Ti
+("Shader wants wave lane count of 64 but maximum wave lane count for device is 32", debug layer):
+
+| Shader | Why it kept 64 lanes | Now |
+|---|---|---|
+| `CS_AlphTransmissionPrefilterMip` (refraction mip chain sampled by water and glass) | barrier inside the program's early-out region; with the early-out left out, a sampler built inside a skip could not be tracked | **translates to 32-lane waves** (exact form, validated, pipeline created): a join where one edge holds a built/loaded descriptor and the others none takes that edge's |
+| `CS_DefragHeap_ComputeRelocations` | 64-lane prefix scan carried across loop iterations (`v_readlane ..., 63`) | still refused: an approximate form would compute wrong relocations |
+| `vfx_triangleClip:CS_CollectTriangles_Meshlets` | allocation idiom over 64 lanes | still refused |
+
+### The boat mission ("Cal fell off the boat") — not fixed yet
+
+Mission start on the boat: the boat sinks or ends on the bank, the engine dies, the mission fails
+("CAL FELL OFF THE BOAT", "THE BOAT COULDN'T BE DRIVEN"). After a retry the boat sometimes floats
+and drives. A/B runs, same save:
+
+| Run | Switches | Result |
+|---|---|---|
+| next39 | standard set | water line above the boat's floor |
+| next41b | without `BACK_OWN_VIEW` and `NATIVE_PIPELINES` | fails the same way |
+| next42 | without `TEXTURE_NO_WAIT` and `LEVELS_ON_DEMAND` | fails the same way |
+
+So none of those four switches is the cause. The boat's buoyancy reads water heights the GPU
+resolves (`ShallowWaterSim:CS_ResolveHeightLookUps`, 92b4790eb4c29f6d: per query, three height
+textures read with 16-bit packed coordinates, which the translator unpacks correctly; 1 KiB of
+results per dispatch, run next43). Whether those results reach title memory correctly is the open
+question; `VICTORY_TRACE_SHADER=92b4790eb4c29f6d` logs what title memory holds there. The game's
+water tessellation compute chain (`water_tessellation:*`) and the shallow-water integration
+(`CS_IntegrateHeight`, `CS_IntegrateVelocity`, `CS_AdvectionStep`) never ran in any run (never
+bound by the title).
+
+The face shaders (`ped_standard_head_cs`, the `compute_graph_ops` network ops) are created and bound
+in the world without errors; why the mouths do not move is not found yet.
