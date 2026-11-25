@@ -21,12 +21,13 @@ Updated with each run. Measured numbers only.
 | Area | Progress | Detail |
 |---|---|---|
 | Shader programs translated | `███████████████████░` 99.9 % | `shaders.rpf`: 26,069 of 26,084 programs emit; 15 do not: 5 ray-traced shadow (`CS_TraceShadowRays_*`, descriptor read as data), 10 POPS ped pixel shaders (`PS_PedTexturedCutOutTint_Zero`, off: glowing eyes). The 29 FidelityFX DXBC shaders live in other files and are not counted here (inventory reconciled 2026-11-25: earlier "45/43" mixed sources) |
+| Shader containers the runtime translates (whole game folder) | `███████████████████░` 99.8 % | 25,938 of 25,985; 242 -> 47 failing after the runtime learned geometry-only containers (195 voxel-lighting GS). Left: 29 Xbox FidelityFX (replaced by PC FidelityFX), 10 POPS, 5 ray-traced shadow, 3 stubs with no GPU code |
 | Shaders passing Microsoft's DXIL validator | `███████████████████░` 99.1 % | the rest: signature rows mixing flat and interpolated values, 71 mesh shaders over 32 KiB of outputs (NVIDIA takes them) |
 | Geometry shaders (voxel lighting) | `████████████████████` 100.0 % | translate and validate; host pipelines behind `VICTORY_TITLE_GS=1` |
 | Console pipeline methods 0x218 / 0x1c8 | `██████████░░░░░░░░░░` 50.0 % | 0x218 (compute) builds pipelines from the containers of its code (`VICTORY_NATIVE_PIPELINES=1`, 2,048 made, 0 missed); 0x1c8 decoded as 2D/overlay pipelines (immediate-mode vertices, alpha blend, no depth), not built yet |
 | Frame rate vs 30 fps goal | `████░░░░░░░░░░░░░░░░` 19.3 % | median 5.8 fps, best 6.9, slowest frame 345 ms in the world (run next40, lock-free descriptor mirror; was 4.8 fps median, 647 ms worst) |
 | Compute pipelines the RTX 4070 Ti accepts | `███████████████████░` 99.9 % | 1 of 3 wave64-only programs fixed (`CS_AlphTransmissionPrefilterMip`, the refraction mips water and glass sample); GPU heap defrag and a VFX triangle pass still refused |
-| Boat mission ("Cal fell off the boat") | `░░░░░░░░░░░░░░░░░░░░` 0.0 % | not fixed: boat sinks / engine dies at mission start; four runtime switches ruled out by A/B runs; the GPU water-height lookups the physics reads are being traced |
+| Boat mission ("Cal fell off the boat") | `░░░░░░░░░░░░░░░░░░░░` 0.0 % | not fixed. Traced: the water heights the physics reads are flat (only 0.0 m or 0.3 m); the shallow-water integration programs are never created by the game. Next: trace the GPU time step the game reads back |
 | Mouth animation | `░░░░░░░░░░░░░░░░░░░░` 0.0 % | not fixed: the face compute shaders and network ops run without errors; cause not found |
 | Ray tracing | `░░░░░░░░░░░░░░░░░░░░` 0.0 % | BVH builder off; DexNom's builder work needs a merge by hand |
 | FSR 1 upscale on present | `████████████████████` 100.0 % | runs in game (`VICTORY_FSR=1`, 720p -> 1080p); no frame-rate gain measured: the frame is CPU-bound |

@@ -434,3 +434,49 @@ operations) decides what to change; joined runs are ready behind `VICTORY_REMAP_
 **Trace ready, not run**: `play-trace.cmd` = `play-fast.cmd` + `VICTORY_TRACE_SHADER` for the water
 height lookups (92b4790eb4c29f6d), the face blendshape mapping (61e54e90adccaf6a) and the HSS graph
 output extract (970c4fbb3b017c0e) + `VICTORY_SYNC_TIMING=1`; log `logs\play-trace.log`.
+
+### Trace run (play-trace.cmd, authorized "RUN THE TRACE"), 2026-11-25 22:49
+
+Same configuration as `play-fast.cmd` plus `VICTORY_TRACE_SHADER` (water height lookups, face
+blendshape mapping, HSS graph extract) and `VICTORY_SYNC_TIMING=1`; the user's save; frames
+2073-4745 traced. Findings:
+
+- **Water heights the boat physics reads** (`CS_ResolveHeightLookUps` results in title memory, 1,926
+  readings): only 0.300 m (941x) or 0.000 m (713x), millimetre noise in the third value; unused
+  slots hold -10000.0 (the title's "no water" sentinel), replaced after the GPU runs. Copy-back
+  reaches title memory, before the title's fences in all three copy-back paths (checked in
+  source). The heights are flat: no waves, no current.
+- **Why flat (not proven yet)**: the shallow-water simulation's integration programs
+  (`CS_IntegrateHeight`, `CS_IntegrateVelocity`, `CS_AdvectionStep`, `CS_SweepX/Y`) are never even
+  created by the title, while the time-step chain (`CS_ComputeTimestep` -> `CS_MinTimestepReduce`
+  -> `CS_CopyTimestepResult`) runs from frame 2073. Next: trace the time step the GPU hands back.
+- **Face buffers in title memory**: the blendshape-mapping output reads NaN and the HSS extract
+  output 0.0 in title memory; both are GPU-to-GPU buffers, so title memory may simply never be
+  refreshed: not evidence of wrong GPU values by itself.
+- **Remap census** (per second, busy samples): map view 140-230 us a call and unmap 90-115 us in
+  the game, against 5-8 us in isolation; of 1,012 pages in one sample 932 were separate runs of
+  consecutive section pages, so joined runs (`VICTORY_REMAP_RUNS`) would save < 10 %: left off.
+
+### hgt-gfxdiag on the RTX 4070 Ti (driver 621.24)
+
+`HYBRIDGT_ADAPTER=hw`: a 256 MiB buffer read by the card from system memory (where
+`VICTORY_INPLACE` places title memory) 31.2 ms, **8.6 GB/s**; from video memory 0.97 ms, 277.6 GB/s;
+from a **GPU_UPLOAD heap** (video memory the CPU writes directly, Resizable BAR) 0.98 ms,
+**275.0 GB/s** - supported on this PC. That is why in place was slower (next21: GPU time 60-130 ms).
+The runtime never creates a GPU_UPLOAD heap; the CPU-side copies (48 ms a frame, two steps through
+staging) are the candidate for it. Hang reproductions stay skipped on hardware.
+
+### Clean reset and the "242 shaders that do not translate"
+
+At the user's request: the save moved to `save-backup/data-moved-out-2026-11-25-reset` (not deleted;
+identical to `save-backup/data-2026-11-25-brief`), every shader cache deleted, the runtime rebuilt
+from a clean target, all shaders translated again. The warm-up now names each failing container:
+
+| Before | After | Containers | Why |
+|---|---|---|---|
+| 198 | 3 | geometry-only containers (195 `GS_VoxelizeGeneric`) | the runtime converter looked only for VS/PS/CS/MS programs; now falls back to the geometry program (as the offline translator did). The 3 left are stubs in the executable with no GPU program in them |
+| 29 | 29 | `amd_fidelityfx_upscaler_xbox.dll` | AMD's precompiled code in an `ACCC` part; the runtime runs the PC FidelityFX instead, so never needed |
+| 10 | 10 | POPS ped pixel shaders | need ordered pixel shading (ROV); the shortcut made eyes glow |
+| 5 | 5 | ray-traced shadows | need the BVH builder |
+
+242 -> 47 containers that do not translate; 15 of them matter.
