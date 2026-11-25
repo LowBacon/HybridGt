@@ -335,3 +335,10 @@ view is made only when its CPU touches the address (exception handler), and ever
 that reads title memory there asks the table first. Same shape as the copy-back on first touch,
 whose missed paths crashed: build with a probe first (how often the title's CPU touches tiled-heap
 pages at all), then the table.
+
+### Run next37: 1280x720 + FSR 1 to 1920x1080 — no gain
+
+Same switches as next36, the user's own save: FSR 1 ran on present; world frames median 224 ms
+(4.5 fps), best 147 ms (6.8), against 143-191 ms at full 1080p in next36. Rendering fewer pixels
+does not shorten the frame: it is bound by the CPU side (copies, copy-back, heap pass, page
+remaps). FSR stays available (`VICTORY_FSR=1`) for when the card becomes the limit.
