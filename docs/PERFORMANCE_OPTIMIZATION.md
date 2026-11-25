@@ -499,3 +499,19 @@ screen; the fix is real pipelines:
 
 Needed first: descriptions from the prologue (calls past the first 43), saved with
 `VICTORY_SAVE_PIPELINES=<dir>` in a short new-game run up to the crash.
+
+### Device method 0x1c8 built (component-verified, not yet game-verified)
+
+New-game capture (`play-capture.cmd`, authorized): the opening credits drew on black (the title's
+0x1c8 pipelines missing), no crash this time, 1,746 0x1c8 descriptions saved. Layout found with
+the D3D12 debug layer (`victory console-pipelines`, diagnostics build): word 1 register block, 3
+vertex layout, **5 pixel code, 9 vertex code** (the earlier note had them the other way round),
+13 mesh code; 101 pipelines have no pixel stage, 97 a mesh stage instead of a vertex one. States
+(`tools/decode_1c8.py`): mostly no depth test, no culling, alpha blending variants, stencil masks.
+
+Pipelines are made per render-target and depth formats bound at the draw (the description holds
+none). Offline on the RTX 4070 Ti: **1,746 of 1,746** descriptions give a host pipeline, no
+debug-layer error (first attempt: 0 of 1,746 - stages swapped; then 2 refused for dual-source
+blending on targets above 0, fixed). On in `play-fast.cmd` (`VICTORY_NATIVE_GRAPHICS=1`).
+Open: stencil operations are not decoded (KEEP); whether the intro and prologue now render, and
+whether the title's own state (vertex buffers, root data) matches, needs a game run.

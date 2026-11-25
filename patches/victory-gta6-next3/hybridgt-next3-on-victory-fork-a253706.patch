@@ -183,7 +183,7 @@ index 5fddd5b..7ce38e2 100644
  blake3.workspace = true
  memchr.workspace = true
 diff --git a/apps/victory/src/main.rs b/apps/victory/src/main.rs
-index ead9f7c..4165e02 100644
+index ead9f7c..402d047 100644
 --- a/apps/victory/src/main.rs
 +++ b/apps/victory/src/main.rs
 @@ -7,6 +7,7 @@ mod census;
@@ -194,7 +194,7 @@ index ead9f7c..4165e02 100644
  mod translate;
  
  use std::path::PathBuf;
-@@ -58,6 +59,12 @@ enum Command {
+@@ -58,6 +59,18 @@ enum Command {
      },
      /// Find shader containers in files or directories (also inside engine
      /// archives, if uncompressed) and report their layout.
@@ -204,18 +204,25 @@ index ead9f7c..4165e02 100644
 +        archive: PathBuf,
 +        out: PathBuf,
 +    },
++    /// HybridGt: make host pipelines for saved device-method 0x1c8
++    /// descriptions (`VICTORY_SAVE_PIPELINES`), as the runtime does.
++    ConsolePipelines {
++        dump: PathBuf,
++        index: PathBuf,
++    },
      ShaderInfo {
          paths: Vec<PathBuf>,
          /// Print one line per container found.
-@@ -148,6 +155,7 @@ fn main() -> Result<()> {
+@@ -148,6 +161,8 @@ fn main() -> Result<()> {
              missing,
          } => census::run(paths, strict, missing),
          Command::LibExports { lib, list } => inspect::lib_exports(&lib, list),
 +        Command::ShaderIndex { archive, out } => native_index::build(&archive, &out),
++        Command::ConsolePipelines { dump, index } => native_index::check_console(&dump, &index),
          Command::ShaderInfo {
              paths,
              verbose,
-@@ -174,6 +182,7 @@ fn main() -> Result<()> {
+@@ -174,6 +189,7 @@ fn main() -> Result<()> {
              }
              translate::run(paths, validate, pipelines, list, jobs)
          }
@@ -225,10 +232,10 @@ index ead9f7c..4165e02 100644
              unimplemented,
 diff --git a/apps/victory/src/native_index.rs b/apps/victory/src/native_index.rs
 new file mode 100644
-index 0000000..04e6723
+index 0000000..0424684
 --- /dev/null
 +++ b/apps/victory/src/native_index.rs
-@@ -0,0 +1,118 @@
+@@ -0,0 +1,165 @@
 +//! HybridGt: from a native program's code header to its shader container.
 +//!
 +//! Device methods 0x1c8 and 0x218 hand the runtime standalone GFX10 code in
@@ -291,6 +298,53 @@ index 0000000..04e6723
 +    }
 +    std::fs::write(out, lines.join("\n"))?;
 +    println!("{programs_seen} native programs indexed into {}", out.display());
++    Ok(())
++}
++
++/// HybridGt: every saved 0x1c8 description in `dump` through the runtime's
++/// pipeline path (`victory_gpu::pipeline::check_console_graphics`), with
++/// the index at `index`; prints how many made a host pipeline and why the
++/// others did not.
++pub fn check_console(dump: &Path, index: &Path) -> Result<()> {
++    register(index);
++    let mut results: HashMap<&'static str, usize> = HashMap::new();
++    let mut made = 0usize;
++    let mut descs: Vec<PathBuf> = std::fs::read_dir(dump)?
++        .filter_map(|e| e.ok().map(|e| e.path()))
++        .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("1c8-") && n.ends_with("-desc.bin")))
++        .collect();
++    descs.sort();
++    for d in &descs {
++        let name = d.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_owned();
++        let call = name.split('-').nth(1).unwrap_or_default().to_owned();
++        let block = |k: u32| -> Option<Vec<u8>> {
++            let prefix = format!("1c8-{call}-w{k:02}-");
++            let file = std::fs::read_dir(dump).ok()?.filter_map(|e| e.ok()).find(|e| e.file_name().to_str().is_some_and(|n| n.starts_with(&prefix)))?;
++            std::fs::read(file.path()).ok()
++        };
++        let header = |b: Option<Vec<u8>>| -> Option<[u8; 12]> { b?.get(..12)?.try_into().ok() };
++        // Word 5 is the pixel code, word 9 the vertex code.
++        let first = match (header(block(9)), header(block(13))) {
++            (Some(h), _) => Some(("vertex", h)),
++            (None, Some(h)) => Some(("mesh", h)),
++            _ => None,
++        };
++        let (Some(regs), Some((stage, vs))) = (block(1), first) else {
++            *results.entry("description incomplete").or_default() += 1;
++            continue;
++        };
++        // No word-5 block: a pipeline without a pixel stage.
++        let ps = header(block(5));
++        let layout = block(3).unwrap_or_default();
++        match victory_gpu::pipeline::check_console_graphics(stage, &vs, ps.as_ref(), &regs, &layout) {
++            Ok(()) => made += 1,
++            Err(why) => *results.entry(why).or_default() += 1,
++        }
++    }
++    println!("{} descriptions: {made} host pipelines made", descs.len());
++    for (why, n) in results {
++        println!("  {n:5}  {why}");
++    }
 +    Ok(())
 +}
 +
@@ -985,10 +1039,10 @@ index 7970fc5..1c09f6d 100644
 +    }
 +}
 diff --git a/crates/victory-gpu/src/device.rs b/crates/victory-gpu/src/device.rs
-index dfbf2b2..9a2001e 100644
+index dfbf2b2..08a68d7 100644
 --- a/crates/victory-gpu/src/device.rs
 +++ b/crates/victory-gpu/src/device.rs
-@@ -369,6 +369,52 @@ extern "system" fn unknown_pipeline<const SLOT: usize>(
+@@ -369,6 +369,95 @@ extern "system" fn unknown_pipeline<const SLOT: usize>(
          // SAFETY: the title's out pointer (a local of its own).
          unsafe { *out = std::ptr::null() };
      }
@@ -1021,6 +1075,49 @@ index dfbf2b2..9a2001e 100644
 +        }
 +        NATIVE_MISSED.fetch_add(1, Ordering::Relaxed);
 +    }
++    // HybridGt: a graphics pipeline (0x1c8) from the containers of the vertex
++    // and pixel code its description names (`VICTORY_NATIVE_GRAPHICS=1`, with
++    // `VICTORY_NATIVE_INDEX`): word 1 the register block (word 2 its size),
++    // word 3 the vertex layout (word 4), word 5 the pixel code, word 9 the
++    // vertex code (the debug layer said so: the other way round, each was
++    // refused as the other stage).
++    #[cfg(windows)]
++    if SLOT == 0x1c8 && native_graphics() && !out.is_null() {
++        let mut words = [0u8; 12 * 8];
++        if crate::host::read_into(desc, &mut words) {
++            let w = |k: usize| u64::from_le_bytes(words[8 * k..8 * k + 8].try_into().unwrap_or([0; 8])) as usize;
++            let read = |at: usize, len: usize| -> Option<Vec<u8>> {
++                let mut b = vec![0u8; len];
++                (at != 0 && crate::host::read_into(at as *const u8, &mut b)).then_some(b)
++            };
++            let container = |at: usize| read(at, 12).and_then(|h| crate::container_for(&h.try_into().ok()?));
++            // A pipeline with no pixel stage (word 5 zero: depth and stencil
++            // passes, 101 of 1,746 in the prologue) has none.
++            let ps = if w(5) == 0 { Some(None) } else { container(w(5)).map(Some) };
++            // Word 9 the vertex code, or word 13 the mesh code (97 of the
++            // prologue's 1,746: words 9-12 zero then).
++            let first = if w(9) != 0 {
++                container(w(9)).map(|c| ("vertex", c))
++            } else if w(13) != 0 {
++                container(w(13)).map(|c| ("mesh", c))
++            } else {
++                None
++            };
++            if let (Some(regs), Some(layout), Some(ps), Some((stage, vs))) = (
++                read(w(1), w(2).clamp(0xf0, 0x400)),
++                read(w(3), w(4).min(0x1000)).or(Some(Vec::new())),
++                ps,
++                first,
++            ) {
++                let n = NATIVE_GRAPHICS_MADE.fetch_add(1, Ordering::Relaxed) + 1;
++                if n.is_power_of_two() {
++                    tracing::info!(made = n, missed = NATIVE_GRAPHICS_MISSED.load(Ordering::Relaxed), "device method 0x1c8: graphics pipelines made from the containers of their code (VICTORY_NATIVE_GRAPHICS=1)");
++                }
++                return crate::pipeline::graphics_from_console(stage, &vs, ps.as_deref(), regs, layout, _iid, out);
++            }
++        }
++        NATIVE_GRAPHICS_MISSED.fetch_add(1, Ordering::Relaxed);
++    }
 +    // HybridGt: a placeholder pipeline instead of a failure
 +    // (`VICTORY_PLACEHOLDER_PIPELINES=0`: the failure, as before). Every
 +    // crash of runs next19-next30 came at the same moment, the prologue's
@@ -1041,7 +1138,7 @@ index dfbf2b2..9a2001e 100644
      if calls <= 4 || calls.is_power_of_two() {
          // Sixteen 64-bit words at `at`, read through the kernel: neither
          // pointer is known to be mapped.
-@@ -399,6 +445,132 @@ extern "system" fn unknown_pipeline<const SLOT: usize>(
+@@ -399,6 +488,162 @@ extern "system" fn unknown_pipeline<const SLOT: usize>(
      E_NOTIMPL
  }
  
@@ -1049,6 +1146,18 @@ index dfbf2b2..9a2001e 100644
 +/// code no container was found for.
 +static NATIVE_MADE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 +static NATIVE_MISSED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++
++/// HybridGt: graphics pipelines method 0x1c8 made from containers, and calls
++/// whose vertex or pixel code no container was found for.
++static NATIVE_GRAPHICS_MADE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++static NATIVE_GRAPHICS_MISSED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++
++/// HybridGt: whether method 0x1c8 makes graphics pipelines from containers
++/// (`VICTORY_NATIVE_GRAPHICS=1`; off by default until a run holds).
++fn native_graphics() -> bool {
++    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *ON.get_or_init(|| std::env::var_os("VICTORY_NATIVE_GRAPHICS").is_some_and(|v| v == "1"))
++}
 +
 +/// HybridGt: whether method 0x218 makes compute pipelines from containers
 +/// (`VICTORY_NATIVE_PIPELINES=1`; off by default until a run holds).
@@ -1140,15 +1249,33 @@ index dfbf2b2..9a2001e 100644
 +    let Some(dir) = DIR.get_or_init(|| std::env::var_os("VICTORY_SAVE_PIPELINES").map(std::path::PathBuf::from)) else {
 +        return;
 +    };
-+    if call > 48 || desc == 0 {
++    if desc == 0 {
 +        return;
 +    }
 +    let read = |at: usize, len: usize| -> Option<Vec<u8>> {
 +        let mut bytes = vec![0u8; len];
 +        (at != 0 && crate::host::read_into(at as *const u8, &mut bytes)).then_some(bytes)
 +    };
++    // HybridGt: past the first 48 (the title's first 0x1c8 pipelines are all
++    // overlays), every call whose description shows a register block not seen
++    // yet (word 1 points at it; up to 1,500 kept), and every 128th call.
++    if call > 48 && call % 128 != 0 {
++        static SEEN: std::sync::Mutex<Option<std::collections::HashSet<[u8; 32]>>> = std::sync::Mutex::new(None);
++        if slot != 0x1c8 {
++            return;
++        }
++        let Some(word) = read(desc + 8, 8) else { return };
++        let block = u64::from_le_bytes(word.try_into().unwrap_or([0; 8])) as usize;
++        let Some(regs) = read(block, 0x184) else { return };
++        let key = *blake3::hash(&regs).as_bytes();
++        let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
++        let seen = seen.get_or_insert_with(Default::default);
++        if seen.len() >= 1500 || !seen.insert(key) {
++            return;
++        }
++    }
 +    let _ = std::fs::create_dir_all(dir);
-+    let name = |what: &str| dir.join(format!("{slot:03x}-{call:02}-{what}.bin"));
++    let name = |what: &str| dir.join(format!("{slot:03x}-{call:05}-{what}.bin"));
 +    let Some(head) = read(desc, 512) else { return };
 +    let _ = std::fs::write(name("desc"), &head);
 +    let words: Vec<u64> = head
@@ -1175,7 +1302,7 @@ index dfbf2b2..9a2001e 100644
  /// methods `ID3D12Device1` to `ID3D12Device8` add, in order: 3, 1, 3, 6, 9,
  /// 1, 2, 9 (0x298-0x3a0, the console's own among them), then those of
 diff --git a/crates/victory-gpu/src/draw.rs b/crates/victory-gpu/src/draw.rs
-index c5e7655..eaf67ef 100644
+index c5e7655..3dc0db2 100644
 --- a/crates/victory-gpu/src/draw.rs
 +++ b/crates/victory-gpu/src/draw.rs
 @@ -190,6 +190,152 @@ fn windows() -> bool {
@@ -1331,7 +1458,18 @@ index c5e7655..eaf67ef 100644
  /// What one title list has set, and what its host list was last given.
  #[derive(Default)]
  pub(crate) struct State {
-@@ -223,6 +369,18 @@ pub(crate) struct State {
+@@ -203,6 +349,10 @@ pub(crate) struct State {
+     /// Bound render target and depth resources, for their host states.
+     targets: Vec<usize>,
+     depth: usize,
++    /// HybridGt: the formats of the bound host views (render targets in
++    /// order, depth), for pipelines made per formats (device method 0x1c8).
++    target_formats: Vec<windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT>,
++    depth_format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT,
+     /// The host state the bound depth view needs ([`depth_state`]).
+     depth_state: u32,
+     /// The title's primitive topology (the host's may differ).
+@@ -223,6 +373,18 @@ pub(crate) struct State {
      /// The indirect records clamped last, if later draws may still read
      /// them ([`windows`]).
      window: Option<Window>,
@@ -1350,7 +1488,7 @@ index c5e7655..eaf67ef 100644
      /// What the host list has: pipeline, root signature, heaps.
      host_pipeline: usize,
      /// Graphics, compute.
-@@ -372,7 +530,18 @@ pub(crate) static HEAP_BUFFER_MICROS: AtomicU64 = AtomicU64::new(0);
+@@ -372,7 +534,18 @@ pub(crate) static HEAP_BUFFER_MICROS: AtomicU64 = AtomicU64::new(0);
  /// Of [`HEAP_BUFFER_MICROS`], the microseconds of the pass over textures
  /// picked by index that runs inside it (`heap_textures`), and the buffer
  /// slots the pass over buffer views looked at; since the last frame line.
@@ -1370,7 +1508,53 @@ index c5e7655..eaf67ef 100644
  /// Textures brought up to date for shaders that pick them by index
  /// ([`State::heap_textures`]), the bytes of their memory, and the slots
  /// still waiting.
-@@ -708,6 +877,16 @@ impl State {
+@@ -592,6 +765,12 @@ impl State {
+     }
+ 
+     /// Render targets and depth, set on the host list at once.
++    /// HybridGt: the host pipeline of the bound pipeline for the bound
++    /// targets' formats ([`crate::pipeline::host_pipeline_for`]).
++    fn host_pipe<'a>(&self) -> Option<&'a crate::pipeline::host::HostPipeline> {
++        crate::pipeline::host_pipeline_for(self.pipeline as This, &self.target_formats, self.depth_format)
++    }
++
+     pub(crate) fn set_targets(&mut self, list: &HostList, handles: &[u64], depth: u64) {
+         let Some(host) = crate::host::host() else {
+             return;
+@@ -601,6 +780,8 @@ impl State {
+         self.depth_handle = depth;
+         self.targets_set = true;
+         self.targets.clear();
++        self.target_formats.clear();
++        self.depth_format = Default::default();
+         let mut rtvs = Vec::new();
+         for &h in handles {
+             let Some(record) = crate::descriptor::rtv_record(h) else {
+@@ -621,11 +802,14 @@ impl State {
+                     .desc()
+                     .filter(|d| d.Format.0 != 0 && d.ViewDimension.0 != 0);
+                 if let Some(desc) = null {
++                    self.target_formats.push(desc.Format);
+                     rtvs.push(host.rtv(None, Some(&desc)));
+                 }
+                 continue;
+             };
+             self.targets.push(record.resource as usize);
++            // SAFETY: a live resource.
++            self.target_formats.push(record.desc().map_or_else(|| unsafe { texture.GetDesc() }.Format, |d| d.Format));
+             #[cfg(feature = "diagnostics")]
+             crate::capture::note_target(record.resource);
+             rtvs.push(host.rtv(Some(texture), record.desc().as_ref()));
+@@ -635,6 +819,8 @@ impl State {
+         let dsv = crate::descriptor::dsv_record(depth).and_then(|record| {
+             let texture = crate::resource::host_resource(record.resource)?;
+             self.depth = record.resource as usize;
++            // SAFETY: a live resource.
++            self.depth_format = record.depth_desc().map_or_else(|| unsafe { texture.GetDesc() }.Format, |d| d.Format);
+             self.depth_state = depth_state(texture, record.depth_desc().as_ref());
+             if crate::resource::depth_and_unordered(record.resource) {
+                 crate::resource::DEPTH_UNORDERED[1].fetch_add(1, Ordering::Relaxed);
+@@ -708,6 +894,16 @@ impl State {
      /// shortcut: the render target views are made again from the handles'
      /// descriptors as they are now, not as they were when the title set
      /// the targets (a descriptor rewritten in between names another view).
@@ -1387,7 +1571,16 @@ index c5e7655..eaf67ef 100644
      pub(crate) fn replay(&mut self, list: &HostList) {
          self.host_pipeline = 0;
          self.host_roots = [0; 2];
-@@ -1426,12 +1605,74 @@ impl State {
+@@ -855,7 +1051,7 @@ impl State {
+         if crate::pipeline::is_skipped(self.pipeline as This) {
+             return false;
+         }
+-        let Some(p) = crate::pipeline::host_pipeline(self.pipeline as This) else {
++        let Some(p) = self.host_pipe() else {
+             return false;
+         };
+         if p.compute || p.mesh != mesh {
+@@ -1426,12 +1622,74 @@ impl State {
          static GONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
          let mut alive = !GONE.load(Ordering::Relaxed) && crate::descriptor::host::device_removed().is_none();
          HEAP_PASS_PARTS[1].fetch_add(slots.len() as u64, Ordering::Relaxed);
@@ -1463,7 +1656,7 @@ index c5e7655..eaf67ef 100644
                  continue;
              };
              // Every 64 views while the device lives (a cheap query).
-@@ -1460,6 +1701,7 @@ impl State {
+@@ -1460,6 +1718,7 @@ impl State {
              }
              ranges.insert(index, (shadow, address, address + len));
          }
@@ -1471,7 +1664,7 @@ index c5e7655..eaf67ef 100644
          let views = ranges.len() as u32;
          // Per host copy, the span its picked views cover.
          let mut spans: std::collections::HashMap<usize, (std::sync::Arc<crate::shadow::Shadow>, u64, u64)> =
-@@ -1482,6 +1724,8 @@ impl State {
+@@ -1482,6 +1741,8 @@ impl State {
          static WHOLE: std::sync::Mutex<Option<std::collections::HashMap<usize, u64>>> = std::sync::Mutex::new(None);
          let mut whole = WHOLE.lock().unwrap_or_else(|e| e.into_inner());
          let whole = whole.get_or_insert_with(Default::default);
@@ -1480,7 +1673,7 @@ index c5e7655..eaf67ef 100644
          for (shadow, from, to) in spans.values() {
              if shadow.unwatched() {
                  // By the copy's number: a copy made where one let go was
-@@ -1504,6 +1748,7 @@ impl State {
+@@ -1504,6 +1765,7 @@ impl State {
              }
              shadow.refresh(list, *from, to - from);
          }
@@ -1488,7 +1681,7 @@ index c5e7655..eaf67ef 100644
          let textures_began = std::time::Instant::now();
          self.heap_textures(list, heap, host);
          HEAP_PASS_PARTS[0].fetch_add(textures_began.elapsed().as_micros() as u64, Ordering::Relaxed);
-@@ -1796,6 +2041,16 @@ impl State {
+@@ -1796,6 +2058,16 @@ impl State {
              if SPENT.load(Ordering::Relaxed) >= bytes_at_most || began.elapsed() > span {
                  break;
              }
@@ -1505,7 +1698,7 @@ index c5e7655..eaf67ef 100644
              // A placed texture whose memory is not mapped (not streamed in
              // yet, or streamed out again: the heap keeps tens of thousands
              // of such views) gets no host texture; looked at again soon (a
-@@ -2034,10 +2289,20 @@ impl State {
+@@ -2034,10 +2306,20 @@ impl State {
          });
      }
  
@@ -1515,7 +1708,7 @@ index c5e7655..eaf67ef 100644
 +    /// (`crate::indirect::gather`). The same test keeps such a draw out of
 +    /// a window ([`windows`]).
 +    fn may_store(&self) -> bool {
-+        crate::pipeline::host_pipeline(self.pipeline as This).is_none_or(|p| p.stages.iter().any(|stage| stage.translated().stores))
++        self.host_pipe().is_none_or(|p| p.stages.iter().any(|stage| stage.translated().stores))
 +    }
 +
      /// Runs a dispatch on the host.
@@ -1526,7 +1719,16 @@ index c5e7655..eaf67ef 100644
          #[cfg(feature = "diagnostics")]
          if crate::pipeline::is_skipped(self.pipeline as This) {
              DROPPED.fetch_add(1, Ordering::Relaxed);
-@@ -2077,6 +2342,8 @@ impl State {
+@@ -2060,7 +2342,7 @@ impl State {
+             }
+             return;
+         }
+-        let Some(p) = crate::pipeline::host_pipeline(self.pipeline as This) else {
++        let Some(p) = self.host_pipe() else {
+             once!(
+                 pipeline = format_args!("{:#x}", self.pipeline),
+                 "a dispatch without a host pipeline dropped"
+@@ -2077,6 +2359,8 @@ impl State {
              once!("a dispatch with a graphics pipeline");
              return;
          }
@@ -1535,7 +1737,7 @@ index c5e7655..eaf67ef 100644
          if !self.bind(list, p, true) {
              DROPPED.fetch_add(1, Ordering::Relaxed);
              // A stage of the structure builder that cannot be bound is a
-@@ -2091,6 +2358,14 @@ impl State {
+@@ -2091,6 +2375,14 @@ impl State {
          // SAFETY: an open list with everything set.
          unsafe { list.list.Dispatch(x, y, z) };
          DISPATCHED.fetch_add(1, Ordering::Relaxed);
@@ -1550,7 +1752,25 @@ index c5e7655..eaf67ef 100644
      }
  
      /// What a draw or dispatch runs, for the device-removed report
-@@ -2348,6 +2623,9 @@ impl State {
+@@ -2100,7 +2392,7 @@ impl State {
+     #[cfg(feature = "diagnostics")]
+     fn op_text(&self, kind: String, compute: bool) -> String {
+         use std::fmt::Write;
+-        let Some(p) = crate::pipeline::host_pipeline(self.pipeline as This) else {
++        let Some(p) = self.host_pipe() else {
+             return kind;
+         };
+         let mut text = format!("{kind} {}", p.name);
+@@ -2184,7 +2476,7 @@ impl State {
+         const GLOBAL: u32 = 688;
+         const DRAW_CONSTANTS: u32 = 56;
+         let wanted = list_slots();
+-        let Some(p) = crate::pipeline::host_pipeline(self.pipeline as This) else {
++        let Some(p) = self.host_pipe() else {
+             return String::new();
+         };
+         let Some(stage) = p.stages.iter().find(|s| wanted.iter().any(|w| s.shader.hash.starts_with(w.as_str())))
+@@ -2348,6 +2640,9 @@ impl State {
      /// programs are one-dimensional).
      pub(crate) fn dispatch_mesh(&mut self, list: &HostList, x: u32) {
          self.window = None;
@@ -1560,7 +1780,16 @@ index c5e7655..eaf67ef 100644
          #[cfg(feature = "diagnostics")]
          self.trace("mesh", x, 0);
          let ran = mesh_test() != 1
-@@ -2739,6 +3017,9 @@ impl State {
+@@ -2707,7 +3002,7 @@ impl State {
+     /// builds).
+     #[cfg(feature = "diagnostics")]
+     fn reads(&self, compute: bool) -> Vec<String> {
+-        let Some(p) = crate::pipeline::host_pipeline(self.pipeline as This) else {
++        let Some(p) = self.host_pipe() else {
+             return vec!["no host pipeline".into()];
+         };
+         let mut out = Vec::new();
+@@ -2739,6 +3034,9 @@ impl State {
          first_instance: u32,
      ) {
          self.window = None;
@@ -1570,7 +1799,23 @@ index c5e7655..eaf67ef 100644
          #[cfg(feature = "diagnostics")]
          self.trace("draw", vertices, first);
          let ready = self.prepare(list, false);
-@@ -2844,6 +3125,9 @@ impl State {
+@@ -2772,13 +3070,13 @@ impl State {
+     /// Whether the bound pipeline completes rectangles itself, in the
+     /// geometry stage rectangle pipelines get (`HostPipeline::rects`).
+     fn completes_rects(&self) -> bool {
+-        crate::pipeline::host_pipeline(self.pipeline as This).is_some_and(|p| p.rects)
++        self.host_pipe().is_some_and(|p| p.rects)
+     }
+ 
+     /// Binds vertex buffers holding the rectangles of vertices `first..first
+     /// + count` as triangles, made when the list is submitted.
+     fn rectangles(&self, list: &HostList, count: u32, first: u32) -> bool {
+-        let Some(p) = crate::pipeline::host_pipeline(self.pipeline as This) else {
++        let Some(p) = self.host_pipe() else {
+             return false;
+         };
+         let rects = u64::from(count / 3);
+@@ -2844,6 +3142,9 @@ impl State {
          first_instance: u32,
      ) {
          self.window = None;
@@ -1580,7 +1825,16 @@ index c5e7655..eaf67ef 100644
          #[cfg(feature = "diagnostics")]
          self.trace("indexed", indices, first);
          // Indexed rectangles are drawn by the rectangle geometry stage
-@@ -2983,9 +3267,37 @@ impl State {
+@@ -2909,7 +3210,7 @@ impl State {
+         let why = |what: &str| crate::pipeline::note_why(format!("indirect kind {kind}: {what}"));
+         #[cfg(not(feature = "diagnostics"))]
+         let why = |_: &str| {};
+-        let Some(p) = crate::pipeline::host_pipeline(self.pipeline as This) else {
++        let Some(p) = self.host_pipe() else {
+             #[cfg(feature = "diagnostics")]
+             crate::pipeline::note_drop(self.pipeline as This);
+             return false;
+@@ -2983,9 +3284,37 @@ impl State {
              && !p.stages.iter().any(|stage| stage.translated().stores);
          // Another host list (a new one after a cut, or this one after its
          // reset) has another scratch buffer, or this one's with old bytes.
@@ -1619,7 +1873,7 @@ index c5e7655..eaf67ef 100644
          let same = |w: &Window| w.copy == args.id() && w.kind == kind && w.stride == stride;
          let hit = self
              .window
-@@ -2993,8 +3305,18 @@ impl State {
+@@ -2993,8 +3322,18 @@ impl State {
              .filter(|w| same(w) && offset >= w.base)
              .filter(|w| (offset - w.base) % u64::from(w.step) == 0 && (offset - w.base) / u64::from(w.step) < u64::from(w.records))
              .map(|w| (w.scratch.clone(), offset - w.base, w.step));
@@ -1640,7 +1894,7 @@ index c5e7655..eaf67ef 100644
                  // Diagnostics of windows: the record clamped again and
                  // compared (`crate::indirect::window_check`).
                  if crate::indirect::window_check()
-@@ -3009,9 +3331,37 @@ impl State {
+@@ -3009,9 +3348,37 @@ impl State {
                      self.host_pipeline = 0;
                      self.host_roots[1] = 0;
                  }
@@ -1679,7 +1933,7 @@ index c5e7655..eaf67ef 100644
                  // A record a short step after the last window's last one
                  // (the same step as that window's, if it had one): the
                  // title walks the buffer, so the ones that step apart
-@@ -3033,6 +3383,22 @@ impl State {
+@@ -3033,6 +3400,22 @@ impl State {
                      }
                      _ => (stride, max),
                  };
@@ -1702,7 +1956,7 @@ index c5e7655..eaf67ef 100644
                  args.refresh(list, arguments, len.max(u64::from(step) * u64::from(records)));
                  if let Some((s, at)) = &counter {
                      s.refresh(list, *at, 4);
-@@ -3053,6 +3419,31 @@ impl State {
+@@ -3053,6 +3436,31 @@ impl State {
                      why("not bounded (no clamp, or arguments not 4-byte aligned)");
                      return false;
                  };
@@ -1734,7 +1988,7 @@ index c5e7655..eaf67ef 100644
                  self.host_pipeline = 0;
                  self.host_roots[1] = 0;
                  self.window = windowed.then(|| Window {
-@@ -3067,6 +3458,10 @@ impl State {
+@@ -3067,6 +3475,10 @@ impl State {
                  (bounded, 0)
              }
          };
@@ -1745,7 +1999,7 @@ index c5e7655..eaf67ef 100644
          let ran = match kind {
              DRAW | INDEXED => self.prepare(list, kind == INDEXED),
              MESH => self.prepare_for(list, false, true),
-@@ -3449,3 +3844,25 @@ pub(crate) fn depth_bounds(list: &HostList, min: f32, max: f32) {
+@@ -3449,3 +3861,25 @@ pub(crate) fn depth_bounds(list: &HostList, min: f32, max: f32) {
          unsafe { l1.OMSetDepthBounds(min, max) };
      }
  }
@@ -5382,13 +5636,136 @@ index 3bf89f3..cd4c5ea 100644
  #[cfg(windows)]
  pub(crate) fn ensure_state(list: &crate::host::HostList, resource: This, state: u32) {
 diff --git a/crates/victory-gpu/src/pipeline.rs b/crates/victory-gpu/src/pipeline.rs
-index 327f07a..0b4b607 100644
+index 327f07a..b3b5c78 100644
 --- a/crates/victory-gpu/src/pipeline.rs
 +++ b/crates/victory-gpu/src/pipeline.rs
-@@ -614,6 +614,32 @@ fn hand_out(
+@@ -443,6 +443,21 @@ struct Pipeline {
+     /// One of the ray-tracing structure builder's ([`Builder`]).
+     #[cfg(windows)]
+     builder: bool,
++    /// HybridGt: a device-method 0x1c8 pipeline, whose host pipelines are
++    /// made per bound render-target formats ([`host_pipeline_for`]).
++    #[cfg(windows)]
++    console: Option<Box<Console>>,
++}
++
++/// HybridGt: what a 0x1c8 pipeline is made from, and its host pipelines by
++/// (render-target formats, depth format).
++#[cfg(windows)]
++struct Console {
++    shaders: Vec<Arc<Shader>>,
++    regs: Vec<u8>,
++    layout: Vec<u8>,
++    #[allow(clippy::type_complexity)]
++    made: Mutex<Vec<(Vec<i32>, i32, Box<Arc<make::Pending>>)>>,
+ }
+ const _: () = assert!(offset_of!(Pipeline, packet) == 0x10);
+ 
+@@ -610,10 +625,133 @@ fn hand_out(
+         builder,
+         shaders,
+         bound: std::sync::atomic::AtomicBool::new(false),
++        #[cfg(windows)]
++        console: None,
++    });
++    object::hand_out(PIPELINE, pipeline, iid, &PIPELINE_IIDS, out)
++}
++
++/// HybridGt: a graphics pipeline from device method 0x1c8: the vertex and
++/// pixel shader containers of the code its description names, its
++/// register block and vertex layout; host pipelines are made at draws, for
++/// the formats bound there ([`host_pipeline_for`]).
++#[cfg(windows)]
++pub(crate) fn graphics_from_console(
++    first: &'static str,
++    code: &[u8],
++    ps: Option<&[u8]>,
++    regs: Vec<u8>,
++    layout: Vec<u8>,
++    iid: *const Iid,
++    out: *mut This,
++) -> HRESULT {
++    let mut shaders = vec![shader(first, code)];
++    shaders.extend(ps.map(|ps| shader("pixel", ps)));
++    let pipeline = Box::new(Pipeline {
++        object: Object::new(&FUNCTIONS),
++        packet: [0; 8],
++        // Never made itself: a pipeline with no shaders.
++        host: Arc::new(make::Pending::new(Vec::new(), None)),
++        builder: false,
++        shaders: shaders.clone(),
++        bound: std::sync::atomic::AtomicBool::new(false),
++        console: Some(Box::new(Console {
++            shaders,
++            regs,
++            layout,
++            made: Mutex::new(Vec::new()),
++        })),
+     });
      object::hand_out(PIPELINE, pipeline, iid, &PIPELINE_IIDS, out)
  }
  
++/// HybridGt component check (`victory console-pipelines`): whether a host
++/// pipeline is made for a saved 0x1c8 description, by the runtime's own
++/// path, into an 8-bit colour target and a depth-stencil target: the
++/// containers found from the code headers, then made. `Err` says what
++/// failed.
++#[cfg(windows)]
++pub fn check_console_graphics(
++    first: &'static str,
++    header: &[u8; 12],
++    ps_header: Option<&[u8; 12]>,
++    regs: &[u8],
++    layout: &[u8],
++) -> Result<(), &'static str> {
++    use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_D24_UNORM_S8_UINT, DXGI_FORMAT_R8G8B8A8_UNORM};
++    let code = crate::container_for(header).ok_or("vertex or mesh code not in the index")?;
++    let mut shaders = vec![shader(first, &code)];
++    if let Some(h) = ps_header {
++        let ps = crate::container_for(h).ok_or("pixel code not in the index")?;
++        shaders.push(shader("pixel", &ps));
++    }
++    if shaders.iter().any(|s| s.translated().is_none()) {
++        return Err("a shader does not translate");
++    }
++    let state = host::GraphicsState::console(regs, layout, &[DXGI_FORMAT_R8G8B8A8_UNORM], DXGI_FORMAT_D24_UNORM_S8_UINT);
++    host::HostPipeline::new(&shaders, Some(&state)).map(|_| ()).ok_or("the host refused the pipeline")
++}
++
++/// The host pipeline of `this` for a draw into `targets` (formats as the
++/// host views them) and `depth`: a 0x1c8 pipeline's for those formats
++/// (made on first use), any other pipeline's own ([`host_pipeline`]).
++#[cfg(windows)]
++pub(crate) fn host_pipeline_for<'a>(
++    this: This,
++    targets: &[windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT],
++    depth: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT,
++) -> Option<&'a host::HostPipeline> {
++    if this.is_null() {
++        return None;
++    }
++    let p = pipeline(this);
++    let Some(console) = &p.console else {
++        return make::ready(&p.host);
++    };
++    let key: Vec<i32> = targets.iter().map(|f| f.0).collect();
++    let pending: *const Arc<make::Pending> = {
++        let mut made = console.made.lock().unwrap_or_else(|e| e.into_inner());
++        match made.iter().find(|m| m.0 == key && m.1 == depth.0) {
++            Some(m) => &*m.2,
++            None => {
++                let state = host::GraphicsState::console(&console.regs, &console.layout, targets, depth);
++                let pending = Box::new(Arc::new(make::Pending::new(console.shaders.clone(), Some(Box::new(state)))));
++                let at: *const Arc<make::Pending> = &*pending;
++                made.push((key, depth.0, pending));
++                at
++            }
++        }
++    };
++    // SAFETY: boxed, and kept while the pipeline lives (never removed).
++    make::ready(unsafe { &*pending })
++}
++
 +/// HybridGt: a pipeline object with no shaders, for the device methods the
 +/// runtime does not implement yet (0x1c8, 0x218): the title holds a real
 +/// object (reference counts, queries), and its draws and dispatches with it
@@ -5419,10 +5796,10 @@ index 327f07a..0b4b607 100644
  pub(crate) extern "system" fn create_graphics(
      _: This,
 diff --git a/crates/victory-gpu/src/pipeline/host.rs b/crates/victory-gpu/src/pipeline/host.rs
-index 9aef7b8..55bbcda 100644
+index 9aef7b8..cddb718 100644
 --- a/crates/victory-gpu/src/pipeline/host.rs
 +++ b/crates/victory-gpu/src/pipeline/host.rs
-@@ -91,6 +91,65 @@ impl Default for GraphicsState {
+@@ -91,12 +91,224 @@ impl Default for GraphicsState {
      }
  }
  
@@ -5488,7 +5865,166 @@ index 9aef7b8..55bbcda 100644
  impl GraphicsState {
      /// Takes in one subobject of a stream: its type, then its data at +4
      /// (+8 for those holding pointers).
-@@ -335,6 +394,15 @@ fn refuse(reason: &'static str, shaders: &[Arc<Shader>]) -> Option<HostPipeline>
+     ///
+     /// # Safety
+     /// `at` points at a whole subobject of type `kind`.
++    /// HybridGt: the state of a device-method 0x1c8 pipeline, from the
++    /// console description's register block (`regs`, 0x184 bytes: word 1)
++    /// and vertex layout (`layout`, word 3), with the render-target and
++    /// depth formats bound where it is drawn (the description has none).
++    ///
++    /// Register block, decoded from 1,746 descriptions of a new game's
++    /// prologue (tools/decode_1c8.py): +0xa0 PA_SU_SC_MODE_CNTL (cull and
++    /// front face), +0xb8 DB_DEPTH_CONTROL, +0xc0 DB_STENCILREFMASK, +0xcc
++    /// CB_TARGET_MASK, +0xd0..+0xec CB_BLEND0-7_CONTROL. Vertex layout: a
++    /// count at +0x4c, then per element its name's length, the name, and
++    /// the six words of an input element (index, format, slot, offset,
++    /// class, step rate).
++    /// shortcut: stencil operations are not decoded yet (KEEP), and the
++    /// topology type is triangles.
++    pub(crate) fn console(regs: &[u8], layout: &[u8], targets: &[DXGI_FORMAT], depth: DXGI_FORMAT) -> GraphicsState {
++        let mut g = GraphicsState::default();
++        let r = |off: usize| regs.get(off..off + 4).map_or(0, |b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
++        // AMD blend factors (CB_BLEND*_CONTROL) to D3D12's; as an alpha
++        // factor a colour one becomes its alpha form.
++        let factor = |v: u32, alpha: bool| -> D3D12_BLEND {
++            let f = match v {
++                0 => D3D12_BLEND_ZERO,
++                1 => D3D12_BLEND_ONE,
++                2 => D3D12_BLEND_SRC_COLOR,
++                3 => D3D12_BLEND_INV_SRC_COLOR,
++                4 => D3D12_BLEND_SRC_ALPHA,
++                5 => D3D12_BLEND_INV_SRC_ALPHA,
++                6 => D3D12_BLEND_DEST_ALPHA,
++                7 => D3D12_BLEND_INV_DEST_ALPHA,
++                8 => D3D12_BLEND_DEST_COLOR,
++                9 => D3D12_BLEND_INV_DEST_COLOR,
++                10 => D3D12_BLEND_SRC_ALPHA_SAT,
++                13 | 19 => D3D12_BLEND_BLEND_FACTOR,
++                14 | 20 => D3D12_BLEND_INV_BLEND_FACTOR,
++                15 => D3D12_BLEND_SRC1_COLOR,
++                16 => D3D12_BLEND_INV_SRC1_COLOR,
++                17 => D3D12_BLEND_SRC1_ALPHA,
++                18 => D3D12_BLEND_INV_SRC1_ALPHA,
++                _ => D3D12_BLEND_ONE,
++            };
++            if !alpha {
++                return f;
++            }
++            match f {
++                D3D12_BLEND_SRC_COLOR => D3D12_BLEND_SRC_ALPHA,
++                D3D12_BLEND_INV_SRC_COLOR => D3D12_BLEND_INV_SRC_ALPHA,
++                D3D12_BLEND_DEST_COLOR => D3D12_BLEND_DEST_ALPHA,
++                D3D12_BLEND_INV_DEST_COLOR => D3D12_BLEND_INV_DEST_ALPHA,
++                D3D12_BLEND_SRC1_COLOR => D3D12_BLEND_SRC1_ALPHA,
++                D3D12_BLEND_INV_SRC1_COLOR => D3D12_BLEND_INV_SRC1_ALPHA,
++                other => other,
++            }
++        };
++        let op = |v: u32| match v {
++            1 => D3D12_BLEND_OP_SUBTRACT,
++            2 => D3D12_BLEND_OP_MIN,
++            3 => D3D12_BLEND_OP_MAX,
++            4 => D3D12_BLEND_OP_REV_SUBTRACT,
++            _ => D3D12_BLEND_OP_ADD,
++        };
++        let mask = r(0xcc);
++        g.blend.IndependentBlendEnable = true.into();
++        for (i, rt) in g.blend.RenderTarget.iter_mut().enumerate() {
++            let v = r(0xd0 + 4 * i);
++            rt.RenderTargetWriteMask = ((mask >> (4 * i)) & 0xf) as u8;
++            if v & (1 << 30) != 0 {
++                rt.BlendEnable = true.into();
++                rt.SrcBlend = factor(v & 31, false);
++                rt.BlendOp = op((v >> 5) & 7);
++                rt.DestBlend = factor((v >> 8) & 31, false);
++                let (src, comb, dst) = if v & (1 << 29) != 0 { ((v >> 16) & 31, (v >> 21) & 7, (v >> 24) & 31) } else { (v & 31, (v >> 5) & 7, (v >> 8) & 31) };
++                rt.SrcBlendAlpha = factor(src, true);
++                rt.BlendOpAlpha = op(comb);
++                rt.DestBlendAlpha = factor(dst, true);
++            }
++        }
++        // Dual-source blending (SRC1 factors) is allowed on target 0 only, with
++        // no other target blending; the console repeats target 0's control in
++        // all eight registers (2 of 1,746 prologue pipelines were refused so).
++        let dual = |rt: &D3D12_RENDER_TARGET_BLEND_DESC| {
++            [rt.SrcBlend, rt.DestBlend, rt.SrcBlendAlpha, rt.DestBlendAlpha].iter().any(|f| {
++                matches!(*f, D3D12_BLEND_SRC1_COLOR | D3D12_BLEND_INV_SRC1_COLOR | D3D12_BLEND_SRC1_ALPHA | D3D12_BLEND_INV_SRC1_ALPHA)
++            })
++        };
++        if g.blend.RenderTarget.iter().any(|rt| rt.BlendEnable.as_bool() && dual(rt)) {
++            for rt in g.blend.RenderTarget.iter_mut().skip(1) {
++                rt.BlendEnable = false.into();
++                rt.SrcBlend = D3D12_BLEND_ONE;
++                rt.DestBlend = D3D12_BLEND_ZERO;
++                rt.SrcBlendAlpha = D3D12_BLEND_ONE;
++                rt.DestBlendAlpha = D3D12_BLEND_ZERO;
++            }
++        }
++        let func = |v: u32| D3D12_COMPARISON_FUNC((v & 7) as i32 + 1);
++        let dc = r(0xb8);
++        let refmask = r(0xc0);
++        let has_depth = depth != DXGI_FORMAT_UNKNOWN;
++        g.depth.DepthEnable = (has_depth && dc & 2 != 0).into();
++        g.depth.DepthWriteMask = if dc & 4 != 0 { D3D12_DEPTH_WRITE_MASK_ALL } else { D3D12_DEPTH_WRITE_MASK_ZERO };
++        g.depth.DepthFunc = func(dc >> 4);
++        g.depth.StencilEnable = (has_depth && dc & 1 != 0).into();
++        g.depth.StencilReadMask = ((refmask >> 8) & 0xff) as u8;
++        g.depth.StencilWriteMask = ((refmask >> 16) & 0xff) as u8;
++        g.depth.FrontFace.StencilFunc = func(dc >> 8);
++        g.depth.BackFace.StencilFunc = if dc & (1 << 7) != 0 { func(dc >> 20) } else { func(dc >> 8) };
++        let sc = r(0xa0);
++        g.rasterizer.CullMode = match sc & 3 {
++            1 => D3D12_CULL_MODE_FRONT,
++            2 => D3D12_CULL_MODE_BACK,
++            _ => D3D12_CULL_MODE_NONE,
++        };
++        g.rasterizer.FrontCounterClockwise = (sc & 4 == 0).into();
++        g.topology = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
++        // The vertex layout.
++        let word = |at: usize| layout.get(at..at + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
++        let count = word(0x4c).unwrap_or(0).min(32) as usize;
++        let mut at = 0x50;
++        let mut elements = Vec::new();
++        for _ in 0..count {
++            let Some(len) = word(at).map(|l| l as usize).filter(|l| (1..=64).contains(l)) else { break };
++            let Some(name) = layout.get(at + 4..at + 4 + len) else { break };
++            let name = CString::new(name.split(|&b| b == 0).next().unwrap_or_default()).unwrap_or_default();
++            let f = at + 4 + len;
++            let (Some(index), Some(format), Some(slot), Some(offset), Some(class), Some(step)) =
++                (word(f), word(f + 4), word(f + 8), word(f + 12), word(f + 16), word(f + 20))
++            else {
++                break;
++            };
++            elements.push((name, index, format, slot, offset, class, step));
++            at = f + 24;
++        }
++        g.names = elements.iter().map(|e| e.0.clone()).collect();
++        g.inputs = elements
++            .iter()
++            .zip(&g.names)
++            .map(|(e, name)| D3D12_INPUT_ELEMENT_DESC {
++                SemanticName: PCSTR(name.as_ptr().cast()),
++                SemanticIndex: e.1,
++                Format: DXGI_FORMAT(crate::resource::pc_format(e.2) as i32),
++                InputSlot: e.3,
++                AlignedByteOffset: e.4,
++                InputSlotClass: D3D12_INPUT_CLASSIFICATION(e.5 as i32),
++                InstanceDataStepRate: e.6,
++            })
++            .collect();
++        g.targets.NumRenderTargets = targets.len().min(8) as u32;
++        for (slot, f) in g.targets.RTFormats.iter_mut().zip(targets) {
++            *slot = *f;
++        }
++        g.depth_format = depth;
++        g
++    }
++
+     pub(crate) unsafe fn read(&mut self, kind: u32, at: *const u8) {
+         // SAFETY: the caller passes a whole subobject.
+         unsafe {
+@@ -335,6 +547,15 @@ fn refuse(reason: &'static str, shaders: &[Arc<Shader>]) -> Option<HostPipeline>
      None
  }
  
@@ -5504,7 +6040,7 @@ index 9aef7b8..55bbcda 100644
  impl HostPipeline {
      /// A host pipeline for vertex and pixel shaders with the graphics
      /// state `g`, or for one compute shader.
-@@ -350,10 +418,10 @@ impl HostPipeline {
+@@ -350,10 +571,10 @@ impl HostPipeline {
          if compute.is_none()
              && shaders
                  .iter()
@@ -5517,7 +6053,7 @@ index 9aef7b8..55bbcda 100644
                  shaders,
              );
          }
-@@ -368,6 +436,11 @@ impl HostPipeline {
+@@ -368,6 +589,11 @@ impl HostPipeline {
              };
              let mut stages = vec![first];
              stages.extend(find("pixel").map(|ps| (ps, D3D12_SHADER_VISIBILITY_PIXEL)));
@@ -5529,7 +6065,7 @@ index 9aef7b8..55bbcda 100644
              stages
          };
          if mesh.is_some() && !host()?.mesh_shaders() {
-@@ -623,18 +696,20 @@ impl HostPipeline {
+@@ -623,18 +849,20 @@ impl HostPipeline {
                  Err(e) => tracing::warn!(error = %e, ?shaders, "no rectangle geometry stage"),
              }
          }
@@ -5554,7 +6090,7 @@ index 9aef7b8..55bbcda 100644
              SampleMask: g.sample_mask,
              RasterizerState: g.rasterizer,
              DepthStencilState: g.depth,
-@@ -881,7 +956,7 @@ fn mesh_pipeline(
+@@ -881,7 +1109,7 @@ fn mesh_pipeline(
              root: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE, root.as_raw()),
              ms: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_MS, ms),
              ps: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PS, ps),
@@ -5563,7 +6099,7 @@ index 9aef7b8..55bbcda 100644
              mask: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_MASK, g.sample_mask),
              raster: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RASTERIZER, g.rasterizer),
              depth,
-@@ -900,7 +975,7 @@ fn mesh_pipeline(
+@@ -900,7 +1128,7 @@ fn mesh_pipeline(
              root: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE, root.as_raw()),
              ms: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_MS, ms),
              ps: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PS, ps),
@@ -5572,7 +6108,7 @@ index 9aef7b8..55bbcda 100644
              mask: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_MASK, g.sample_mask),
              raster: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RASTERIZER, g.rasterizer),
              depth: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL1, g.depth1()),
-@@ -1316,4 +1391,60 @@ mod tests {
+@@ -1316,4 +1544,60 @@ mod tests {
          assert_eq!(run_draw(0.6, 1.0), 0, "depth 0.5 outside [0.6, 1.0] must be rejected");
          assert_eq!(run_draw(0.4, 0.6), 255, "depth 0.5 inside [0.4, 0.6] must pass");
      }
