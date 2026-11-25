@@ -308,3 +308,14 @@ frame log (diagnostics build, next29) to see where those milliseconds and the sp
   touch cost ~60 ms a frame and copies rose to 150 ms: as built it loses most of its gain and still
   lets a stale read through. Keep it off; the dependable route to more frames is method 0x1c8 (so
   runs survive the prologue) and then cheaper copies.
+
+### Run next36: fxceless d510ee4 merged + 0x218 native pipelines — 5.2-7.0 fps
+
+Switches: `VICTORY_ASYNC_SUBMIT=1 VICTORY_QUEUE2=1 VICTORY_INDIRECT_WINDOW=1 VICTORY_TEXTURE_NO_WAIT=1
+VICTORY_JOIN_PARTS=1 VICTORY_BACK_OWN_VIEW=1 VICTORY_INDIRECT_GATHER=1 VICTORY_CARD_REHASH_RUNS=1
+VICTORY_NATIVE_INDEX=... VICTORY_NATIVE_PIPELINES=1`, old save from `data-bench`.
+Frames 143-191 ms (best 7.0 fps, user saw ~7): copy-back 39-56 ms (was ~85), copies 34-67 ms,
+heap pass 33-132 ms (now the largest and most variable part), dropped draws 87-121 a frame (was
+~350: the 0x218 pipelines draw). No crash in the world. User: water looks rough compared with the
+console build. Next: the heap pass, method 0x1c8 (graphics pipelines, likely materials such as water
+and glass), then copies.
