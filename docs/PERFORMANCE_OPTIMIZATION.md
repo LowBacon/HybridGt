@@ -43,3 +43,22 @@ next1 translate). The run used `VICTORY_BVH_BUILDER=1`, `VICTORY_LEVELS_ON_DEMAN
   every lane of the console wave. At least one builder program reads a value that differs per
   lane. The fix is an exact cross-wave first-lane read (the console wave's first active lane can
   be in the other host wave). Until then the builder stays off.
+
+## Run next3 (2026-11-25): levels on demand + wide refresh + patch 0012, builder off
+
+Same as next2 without the builder; cache `cache-next`. The user reports textures and assets now
+load, at about 3 fps. Steady world frames 08:18:57–08:19:27 against next1:
+
+| | next1 | next3 |
+|---|---|---|
+| fps | 1.9–3.2 (3.0 steady) | 3.0–3.4 |
+| ms/frame | 309–337 | 296–332 |
+| CPU preparing | 118–140 ms | 124–144 ms |
+| buffer copies | 73–88 ms, 190–194 MB | 73–80 ms, 171–177 MB |
+| GPU | 110–130 ms | 99–124 ms |
+| copy-back thread | 154–182 ms | 148–174 ms |
+| descriptor sync | 49.5 ms (234k slots, 50k mirrored) | 37.4 ms (195k slots, 41k mirrored) |
+| textures waiting for memory | 6,258 (card full) | 9,537 waiting, 2,875 MB not allocated for absent levels |
+
+FidelityFX: the title made no FidelityFX call in the Series X profile (no "FidelityFX" log line in
+next1 or next3). It asked for the upscaler only in Series S mode (`--console series-s`, run fork13).
