@@ -1,754 +1,192 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index 29bab8c..1c8e0a1 100644
+index 29bab8c..b0b1c77 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
-@@ -169,6 +169,20 @@ dependencies = [
-  "libc",
- ]
- 
-+[[package]]
-+name = "embed-resource"
-+version = "3.0.12"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "6168487b5e7eb2673e6efe1200b1848016e436a6ca0b8031bf04bd9d493a249f"
-+dependencies = [
-+ "cc",
-+ "memchr",
-+ "rustc_version",
-+ "toml",
-+ "vswhom",
-+ "winreg",
-+]
-+
- [[package]]
- name = "equivalent"
- version = "1.0.3"
-@@ -358,6 +372,15 @@ version = "0.8.12"
- source = "registry+https://github.com/rust-lang/crates.io-index"
- checksum = "d902046e6a28a1e4c3cab97258a0ce11e994903f01c2d97a9447a0b3df85f4f6"
- 
-+[[package]]
-+name = "rustc_version"
-+version = "0.4.1"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
-+dependencies = [
-+ "semver",
-+]
-+
- [[package]]
- name = "rustix"
- version = "1.1.6"
-@@ -380,6 +403,12 @@ dependencies = [
-  "winapi-util",
- ]
- 
-+[[package]]
-+name = "semver"
-+version = "1.0.28"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
-+
- [[package]]
- name = "serde"
- version = "1.0.229"
-@@ -635,6 +664,7 @@ dependencies = [
-  "anyhow",
-  "blake3",
-  "clap",
-+ "embed-resource",
+@@ -638,6 +638,7 @@ dependencies = [
   "memchr",
   "victory-core",
   "victory-game",
-@@ -745,6 +775,26 @@ dependencies = [
-  "zlib-rs",
- ]
- 
-+[[package]]
-+name = "vswhom"
-+version = "0.1.0"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "be979b7f07507105799e854203b470ff7c78a1639e330a58f183b5fea574608b"
-+dependencies = [
-+ "libc",
-+ "vswhom-sys",
-+]
-+
-+[[package]]
-+name = "vswhom-sys"
-+version = "0.1.3"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "fb067e4cbd1ff067d1df46c9194b5de0e98efd2810bbc95c5d5e5f25a3231150"
-+dependencies = [
-+ "cc",
-+ "libc",
-+]
-+
- [[package]]
- name = "walkdir"
- version = "2.5.1"
-@@ -889,6 +939,16 @@ version = "1.0.5"
- source = "registry+https://github.com/rust-lang/crates.io-index"
- checksum = "8c3b93199df0ab874cdf0c6a94f0a0dc3423fe41f1cafb62b8bd7b1deb277aef"
- 
-+[[package]]
-+name = "winreg"
-+version = "0.56.0"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "7d6f32a0ff4a9f6f01231eb2059cc85479330739333e0e58cadf03b6af2cca10"
-+dependencies = [
-+ "cfg-if",
-+ "windows-sys",
-+]
-+
- [[package]]
- name = "xtask"
- version = "0.1.0"
++ "victory-gpu",
+  "victory-hle",
+  "victory-loader",
+  "victory-pe",
 diff --git a/apps/victory/Cargo.toml b/apps/victory/Cargo.toml
-index 5fddd5b..ded0161 100644
+index 5fddd5b..7ce38e2 100644
 --- a/apps/victory/Cargo.toml
 +++ b/apps/victory/Cargo.toml
-@@ -20,6 +20,9 @@ memchr.workspace = true
- clap.workspace = true
- walkdir.workspace = true
+@@ -14,6 +14,7 @@ victory-loader.workspace = true
+ victory-hle.workspace = true
+ victory-shader = { workspace = true, features = ["host"] }
+ victory-game.workspace = true
++victory-gpu.workspace = true
+ anyhow.workspace = true
+ blake3.workspace = true
+ memchr.workspace = true
+diff --git a/apps/victory/src/main.rs b/apps/victory/src/main.rs
+index ead9f7c..4165e02 100644
+--- a/apps/victory/src/main.rs
++++ b/apps/victory/src/main.rs
+@@ -7,6 +7,7 @@ mod census;
+ mod inspect;
+ mod run;
+ mod shader;
++mod native_index;
+ mod translate;
  
-+[build-dependencies]
-+embed-resource = "3"
+ use std::path::PathBuf;
+@@ -58,6 +59,12 @@ enum Command {
+     },
+     /// Find shader containers in files or directories (also inside engine
+     /// archives, if uncompressed) and report their layout.
++    /// HybridGt: index every native program of a shader archive by its first
++    /// 12 bytes, for the device methods that name code, not containers.
++    ShaderIndex {
++        archive: PathBuf,
++        out: PathBuf,
++    },
+     ShaderInfo {
+         paths: Vec<PathBuf>,
+         /// Print one line per container found.
+@@ -148,6 +155,7 @@ fn main() -> Result<()> {
+             missing,
+         } => census::run(paths, strict, missing),
+         Command::LibExports { lib, list } => inspect::lib_exports(&lib, list),
++        Command::ShaderIndex { archive, out } => native_index::build(&archive, &out),
+         Command::ShaderInfo {
+             paths,
+             verbose,
+@@ -174,6 +182,7 @@ fn main() -> Result<()> {
+             }
+             translate::run(paths, validate, pipelines, list, jobs)
+         }
++        Command::Run { .. } if std::env::var_os("VICTORY_NATIVE_INDEX").is_some() && { native_index::register(std::path::Path::new(&std::env::var_os("VICTORY_NATIVE_INDEX").unwrap_or_default())); false } => unreachable!(),
+         Command::Run {
+             exe,
+             unimplemented,
+diff --git a/apps/victory/src/native_index.rs b/apps/victory/src/native_index.rs
+new file mode 100644
+index 0000000..04e6723
+--- /dev/null
++++ b/apps/victory/src/native_index.rs
+@@ -0,0 +1,118 @@
++//! HybridGt: from a native program's code header to its shader container.
++//!
++//! Device methods 0x1c8 and 0x218 hand the runtime standalone GFX10 code in
++//! GPU memory, not a container; the code starts with the two hash-carrying
++//! `v_nop`s that the same program's code in its container starts with (run
++//! next32: 16 headers seen, each matching exactly one container in
++//! `shaders.rpf`). `victory shader-index <archive> <out>` writes, for every
++//! native program in the archive, its first 12 bytes and where its
++//! container is; `VICTORY_NATIVE_INDEX=<out>` makes `run` read it and give
++//! the GPU side a lookup (`victory_gpu::set_container_lookup`) that reads
++//! one record of the archive when asked.
 +
- [features]
- # Debug-level logs and the debugging switches (frame capture, stack dumps,
- # the host debug layer, scripted keys). Off in a plain release build.
-diff --git a/apps/victory/build.rs b/apps/victory/build.rs
-new file mode 100644
-index 0000000..a4f2ea6
---- /dev/null
-+++ b/apps/victory/build.rs
-@@ -0,0 +1,10 @@
-+//! HybridGt: the executable's icon (`res/victory.ico`, an original design).
-+fn main() {
-+    println!("cargo:rerun-if-changed=res/victory.rc");
-+    println!("cargo:rerun-if-changed=res/victory.ico");
-+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
-+        embed_resource::compile("res/victory.rc", embed_resource::NONE)
-+            .manifest_optional()
-+            .ok();
-+    }
++use std::collections::HashMap;
++use std::io::{Read, Seek, SeekFrom};
++use std::path::{Path, PathBuf};
++
++use anyhow::Result;
++use victory_shader::{Container, FourCC, native_programs};
++
++use crate::shader::{Source, sources};
++
++fn hex(bytes: &[u8]) -> String {
++    bytes.iter().map(|b| format!("{b:02x}")).collect()
 +}
-diff --git a/apps/victory/res/victory.ico b/apps/victory/res/victory.ico
-new file mode 100644
-index 0000000000000000000000000000000000000000..5bffdfc5beae82cf0bd9bc8279635515626cd6c2
-GIT binary patch
-literal 31287
-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
-
-literal 0
-HcmV?d00001
-
-diff --git a/apps/victory/res/victory.rc b/apps/victory/res/victory.rc
-new file mode 100644
-index 0000000..ed1719b
---- /dev/null
-+++ b/apps/victory/res/victory.rc
-@@ -0,0 +1 @@
-+1 ICON "victory.ico"
++
++fn unhex(s: &str) -> Option<[u8; 12]> {
++    let mut out = [0u8; 12];
++    if s.len() != 24 {
++        return None;
++    }
++    for (i, o) in out.iter_mut().enumerate() {
++        *o = u8::from_str_radix(&s[2 * i..2 * i + 2], 16).ok()?;
++    }
++    Some(out)
++}
++
++/// Writes the index of `archive`'s native programs to `out`.
++pub fn build(archive: &Path, out: &Path) -> Result<()> {
++    let data = std::fs::read(archive)?;
++    let mut lines = vec![format!("archive {}", archive.display())];
++    let mut programs_seen = 0usize;
++    for source in sources(&data) {
++        let Some(bytes) = source.bytes() else { continue };
++        let Ok(container) = Container::parse(&bytes) else { continue };
++        let Some(dxil) = container.part(FourCC::DXIL) else { continue };
++        let Ok(programs) = native_programs(dxil.data) else { continue };
++        let (offset, kind, len) = match &source {
++            Source::Raw { offset, .. } => {
++                let total = bytes.get(24..28).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap_or([0; 4])) as usize);
++                (*offset, 'r', total)
++            }
++            Source::Packed(r) => (r.offset, 'p', 0),
++        };
++        for p in &programs {
++            if p.code.len() >= 12 {
++                lines.push(format!("{} {:?} {offset:x} {kind} {len:x}", hex(&p.code[..12]), p.stage));
++                programs_seen += 1;
++            }
++        }
++    }
++    std::fs::write(out, lines.join("\n"))?;
++    println!("{programs_seen} native programs indexed into {}", out.display());
++    Ok(())
++}
++
++/// Reads the index at `path` and gives the GPU side its lookup.
++pub fn register(path: &Path) {
++    let Ok(text) = std::fs::read_to_string(path) else {
++        eprintln!("VIctory: no native program index at {}", path.display());
++        return;
++    };
++    let mut lines = text.lines();
++    let Some(archive) = lines.next().and_then(|l| l.strip_prefix("archive ")) else {
++        return;
++    };
++    let archive = PathBuf::from(archive);
++    let mut map: HashMap<[u8; 12], (u64, bool, u64)> = HashMap::new();
++    for line in lines {
++        let f: Vec<&str> = line.split(' ').collect();
++        if f.len() < 5 {
++            continue;
++        }
++        let (Some(header), Ok(offset), Ok(len)) = (unhex(f[0]), u64::from_str_radix(f[2], 16), u64::from_str_radix(f[4], 16)) else {
++            continue;
++        };
++        map.entry(header).or_insert((offset, f[3] == "p", len));
++    }
++    let entries = map.len();
++    victory_gpu::set_container_lookup(Box::new(move |header: &[u8; 12]| -> Option<Vec<u8>> {
++        let &(offset, packed, len) = map.get(header)?;
++        let mut file = std::fs::File::open(&archive).ok()?;
++        if packed {
++            // The record's size sits 4 bytes before its marker; the window
++            // starts 8 before it (its kind and name end there).
++            let start = offset.checked_sub(8)?;
++            file.seek(SeekFrom::Start(start)).ok()?;
++            let mut head = [0u8; 8];
++            file.read_exact(&mut head).ok()?;
++            let n = u64::from(u32::from_le_bytes(head[4..8].try_into().ok()?));
++            if !(12..=64 << 20).contains(&n) {
++                return None;
++            }
++            let mut window = vec![0u8; (8 + n) as usize];
++            file.seek(SeekFrom::Start(start)).ok()?;
++            file.read_exact(&mut window).ok()?;
++            victory_game::sgd5::unpack_at(&window, 8)
++        } else {
++            if !(28..=64 << 20).contains(&len) {
++                return None;
++            }
++            let mut bytes = vec![0u8; len as usize];
++            file.seek(SeekFrom::Start(offset)).ok()?;
++            file.read_exact(&mut bytes).ok()?;
++            Some(bytes)
++        }
++    }));
++    eprintln!("VIctory: native program index: {entries} code headers ({})", path.display());
++}
 diff --git a/apps/victory/src/translate.rs b/apps/victory/src/translate.rs
 index 640d210..2c89f23 100644
 --- a/apps/victory/src/translate.rs
@@ -835,6 +273,24 @@ index 640d210..2c89f23 100644
              _ => host::stub_vs(&shader).and_then(|vs| h.pipeline(&vs, &shader).map(drop)),
          };
          match made {
+diff --git a/crates/victory-game/src/sgd5.rs b/crates/victory-game/src/sgd5.rs
+index 5605b51..20357c5 100644
+--- a/crates/victory-game/src/sgd5.rs
++++ b/crates/victory-game/src/sgd5.rs
+@@ -90,6 +90,13 @@ pub fn records(file: &[u8]) -> impl Iterator<Item = Record<'_>> {
+     memchr::memmem::find_iter(file, &MARKER).filter_map(|at| record(file, at))
+ }
+ 
++/// HybridGt: the container of the record whose marker is at `at` in
++/// `window`, a part of the file that holds the record whole (and the 6
++/// bytes before its marker); `None` if there is none or it is corrupt.
++pub fn unpack_at(window: &[u8], at: usize) -> Option<Vec<u8>> {
++    record(window, at)?.unpack()
++}
++
+ fn record(file: &[u8], at: usize) -> Option<Record<'_>> {
+     let u32_at = |o: usize| {
+         file.get(o..o + 4)
 diff --git a/crates/victory-gpu/src/descriptor.rs b/crates/victory-gpu/src/descriptor.rs
 index c96ff17..9b1c9fd 100644
 --- a/crates/victory-gpu/src/descriptor.rs
@@ -858,7 +314,7 @@ index c96ff17..9b1c9fd 100644
  
  /// Whether [`sync_heaps`] hands a changed page's records to the host heap
 diff --git a/crates/victory-gpu/src/descriptor/host.rs b/crates/victory-gpu/src/descriptor/host.rs
-index 7970fc5..851ca68 100644
+index 7970fc5..998a66b 100644
 --- a/crates/victory-gpu/src/descriptor/host.rs
 +++ b/crates/victory-gpu/src/descriptor/host.rs
 @@ -856,6 +856,38 @@ pub(crate) fn probe_view_limit() {
@@ -976,6 +432,15 @@ index 7970fc5..851ca68 100644
          }
          Some(view)
      }
+@@ -2241,7 +2294,7 @@ pub(crate) static COPIED_TABLED: std::sync::atomic::AtomicU64 = std::sync::atomi
+ /// equal records give equal prints, and two different records the same
+ /// print about once in 2^64. Not a hash anyone can attack: the records
+ /// are our own.
+-fn record_print(record: &[u8]) -> u64 {
++pub(crate) fn record_print(record: &[u8]) -> u64 {
+     const K: u64 = 0x9e37_79b9_7f4a_7c15;
+     let mut h = K ^ record.len() as u64;
+     let mut words = record.chunks_exact(8);
 @@ -3642,3 +3695,68 @@ mod own_copy_tests {
          assert_eq!(own_bytes_if(false, 8, base, 2, 4, 32, 32, true), None);
      }
@@ -1046,22 +511,149 @@ index 7970fc5..851ca68 100644
 +    }
 +}
 diff --git a/crates/victory-gpu/src/device.rs b/crates/victory-gpu/src/device.rs
-index dfbf2b2..543c389 100644
+index dfbf2b2..9a2001e 100644
 --- a/crates/victory-gpu/src/device.rs
 +++ b/crates/victory-gpu/src/device.rs
-@@ -369,6 +369,8 @@ extern "system" fn unknown_pipeline<const SLOT: usize>(
+@@ -369,6 +369,52 @@ extern "system" fn unknown_pipeline<const SLOT: usize>(
          // SAFETY: the title's out pointer (a local of its own).
          unsafe { *out = std::ptr::null() };
      }
 +    #[cfg(windows)]
 +    save_pipeline_description(SLOT, calls, desc as usize);
++    #[cfg(windows)]
++    if calls <= 6 {
++        find_containers(SLOT, calls, desc as usize);
++    }
++    // HybridGt: a compute pipeline (0x218) from the container whose native
++    // code the description names (`VICTORY_NATIVE_PIPELINES=1`, with
++    // `VICTORY_NATIVE_INDEX`): word 5 is the code's address, word 6 its size.
++    #[cfg(windows)]
++    if SLOT == 0x218 && native_pipelines() && !out.is_null() {
++        let mut words = [0u8; 7 * 8];
++        if crate::host::read_into(desc, &mut words) {
++            let code = u64::from_le_bytes(words[40..48].try_into().unwrap_or([0; 8])) as usize;
++            let mut header = [0u8; 12];
++            if code != 0
++                && crate::host::read_into(code as *const u8, &mut header)
++                && let Some(container) = crate::container_for(&header)
++            {
++                NATIVE_MADE.fetch_add(1, Ordering::Relaxed);
++                let made = crate::pipeline::compute_from_container(&container, _iid, out);
++                if NATIVE_MADE.load(Ordering::Relaxed).is_power_of_two() {
++                    tracing::info!(made = NATIVE_MADE.load(Ordering::Relaxed), missed = NATIVE_MISSED.load(Ordering::Relaxed), "device method 0x218: compute pipelines made from the containers of their code (VICTORY_NATIVE_PIPELINES=1)");
++                }
++                return made;
++            }
++        }
++        NATIVE_MISSED.fetch_add(1, Ordering::Relaxed);
++    }
++    // HybridGt: a placeholder pipeline instead of a failure
++    // (`VICTORY_PLACEHOLDER_PIPELINES=0`: the failure, as before). Every
++    // crash of runs next19-next30 came at the same moment, the prologue's
++    // intro cutscene prestreaming ("cine@leadout@int_prolo"), the title
++    // writing through null, while it made thousands of pipelines through
++    // these two methods (16,384 calls of 0x1c8, 2,048 of 0x218 in next30).
++    if placeholder_pipelines() && !out.is_null() {
++        let made = crate::pipeline::placeholder(_iid, out);
++        if calls <= 4 || calls.is_power_of_two() {
++            tracing::warn!(
++                slot = format_args!("{:#x}", SLOT),
++                calls,
++                "a pipeline creation method that is not implemented: the title gets a placeholder pipeline (its draws are dropped)"
++            );
++        }
++        return made;
++    }
      if calls <= 4 || calls.is_power_of_two() {
          // Sixteen 64-bit words at `at`, read through the kernel: neither
          // pointer is known to be mapped.
-@@ -399,6 +401,49 @@ extern "system" fn unknown_pipeline<const SLOT: usize>(
+@@ -399,6 +445,132 @@ extern "system" fn unknown_pipeline<const SLOT: usize>(
      E_NOTIMPL
  }
  
++/// HybridGt: pipelines made by method 0x218 from containers, and calls whose
++/// code no container was found for.
++static NATIVE_MADE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++static NATIVE_MISSED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++
++/// HybridGt: whether method 0x218 makes compute pipelines from containers
++/// (`VICTORY_NATIVE_PIPELINES=1`; off by default until a run holds).
++fn native_pipelines() -> bool {
++    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *ON.get_or_init(|| std::env::var_os("VICTORY_NATIVE_PIPELINES").is_some_and(|v| v == "1"))
++}
++
++/// HybridGt: whether methods 0x1c8 and 0x218 hand out a placeholder pipeline
++/// (`VICTORY_PLACEHOLDER_PIPELINES=1`; off: with it the title moved its
++/// rendering onto these pipelines and the screen went black, next31).
++fn placeholder_pipelines() -> bool {
++    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *ON.get_or_init(|| std::env::var_os("VICTORY_PLACEHOLDER_PIPELINES").is_some_and(|v| v == "1"))
++}
++
++/// HybridGt diagnostic: for the first calls of methods 0x1c8 and 0x218, each
++/// (address, size) pair among the description's first 24 words: its first
++/// words, and whether it lies inside a shader container (`DXBC`, found by
++/// looking back up to 4 MiB for a header whose size reaches past it). If the
++/// code those methods name is a container's, the pipelines can be made from
++/// the containers the translator handles.
++#[cfg(windows)]
++fn find_containers(slot: usize, call: u32, desc: usize) {
++    let read = |at: usize, n: usize| -> Option<Vec<u8>> {
++        let mut b = vec![0u8; n];
++        (at != 0 && crate::host::read_into(at as *const u8, &mut b)).then_some(b)
++    };
++    let Some(head) = read(desc, 24 * 8) else {
++        return;
++    };
++    let words: Vec<u64> = head.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap_or([0; 8]))).collect();
++    let mut found = Vec::new();
++    for i in 0..words.len() - 1 {
++        let (at, size) = (words[i] as usize, words[i + 1] as usize);
++        if !(0x10..=0x10_0000).contains(&size) || at < 0x10000 {
++            continue;
++        }
++        let Some(first) = read(at, 16) else {
++            continue;
++        };
++        let first: Vec<String> = first.chunks_exact(4).map(|c| format!("{:08x}", u32::from_le_bytes(c.try_into().unwrap_or([0; 4])))).collect();
++        // Back from `at`, 64 KiB at a time, for "DXBC" whose size covers it.
++        let mut container = None;
++        let mut chunk_end = at + 4;
++        'back: for _ in 0..64 {
++            let start = chunk_end.saturating_sub(64 << 10);
++            let Some(bytes) = read(start, chunk_end - start) else {
++                break;
++            };
++            let mut k = bytes.len().saturating_sub(4);
++            loop {
++                if &bytes[k..k + 4] == b"DXBC" && k + 28 <= bytes.len() {
++                    let total = u32::from_le_bytes(bytes[k + 24..k + 28].try_into().unwrap_or([0; 4])) as usize;
++                    let base = start + k;
++                    if base + total >= at + size {
++                        container = Some((base, total, at - base));
++                        break 'back;
++                    }
++                }
++                if k == 0 {
++                    break;
++                }
++                k -= 1;
++            }
++            chunk_end = start + 4;
++            if start == 0 {
++                break;
++            }
++        }
++        found.push(format!(
++            "w{i}: {at:#x}+{size:#x} [{}] container {:x?}",
++            first.join(" "),
++            container
++        ));
++    }
++    tracing::warn!(slot = format_args!("{slot:#x}"), call, "pipeline method description, pairs: {}", found.join(" | "));
++}
++
 +/// HybridGt diagnostic, `VICTORY_SAVE_PIPELINES=<dir>`: the first 48 calls of
 +/// each of the two unknown pipeline methods write what their description
 +/// points at into `dir`, to learn its layout: the description's first 512
@@ -1109,10 +701,30 @@ index dfbf2b2..543c389 100644
  /// methods `ID3D12Device1` to `ID3D12Device8` add, in order: 3, 1, 3, 6, 9,
  /// 1, 2, 9 (0x298-0x3a0, the console's own among them), then those of
 diff --git a/crates/victory-gpu/src/draw.rs b/crates/victory-gpu/src/draw.rs
-index c5e7655..d29f412 100644
+index 59108b9..b0c4892 100644
 --- a/crates/victory-gpu/src/draw.rs
 +++ b/crates/victory-gpu/src/draw.rs
-@@ -708,6 +708,16 @@ impl State {
+@@ -530,7 +530,18 @@ pub(crate) static HEAP_BUFFER_MICROS: AtomicU64 = AtomicU64::new(0);
+ /// Of [`HEAP_BUFFER_MICROS`], the microseconds of the pass over textures
+ /// picked by index that runs inside it (`heap_textures`), and the buffer
+ /// slots the pass over buffer views looked at; since the last frame line.
+-pub(crate) static HEAP_PASS_PARTS: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
++pub(crate) static HEAP_PASS_PARTS: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
++
++/// HybridGt: heap slots the buffer pass found as they were (since the last frame line).
++pub(crate) static SLOTS_SKIPPED: AtomicU64 = AtomicU64::new(0);
++
++/// HybridGt: whether the buffer pass skips slots whose records are unchanged
++/// and whose copy is still the one found (`VICTORY_SLOT_PRINTS=1`; off by
++/// default until a run with it holds).
++fn slot_prints() -> bool {
++    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *ON.get_or_init(|| std::env::var_os("VICTORY_SLOT_PRINTS").is_some_and(|v| v == "1"))
++}
+ /// Textures brought up to date for shaders that pick them by index
+ /// ([`State::heap_textures`]), the bytes of their memory, and the slots
+ /// still waiting.
+@@ -866,6 +877,16 @@ impl State {
      /// shortcut: the render target views are made again from the handles'
      /// descriptors as they are now, not as they were when the title set
      /// the targets (a descriptor rewritten in between names another view).
@@ -1129,7 +741,99 @@ index c5e7655..d29f412 100644
      pub(crate) fn replay(&mut self, list: &HostList) {
          self.host_pipeline = 0;
          self.host_roots = [0; 2];
-@@ -1796,6 +1806,16 @@ impl State {
+@@ -1584,7 +1605,66 @@ impl State {
+         static GONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+         let mut alive = !GONE.load(Ordering::Relaxed) && crate::descriptor::host::device_removed().is_none();
+         HEAP_PASS_PARTS[1].fetch_add(slots.len() as u64, Ordering::Relaxed);
++        // HybridGt: the pass's parts timed (slots, spans, refreshes; bytes refreshed).
++        let slots_began = std::time::Instant::now();
++        // HybridGt: a slot whose record is as it was when this pass last made
++        // its view keeps what it found then (`VICTORY_SLOT_PRINTS=0`: every
++        // written slot is made again, as before). The title writes some
++        // 14,000 slots a frame, most with the record they held (run next23:
++        // 45-53 ms a frame in this loop). Every 16th pass makes all again.
++        static PRINTS: std::sync::Mutex<Option<std::collections::HashMap<usize, std::collections::HashMap<u32, u64>>>> =
++            std::sync::Mutex::new(None);
++        let unchanged: std::collections::HashSet<u32> = if slot_prints() && !slots.is_empty() {
++            let mut prints = PRINTS.lock().unwrap_or_else(|e| e.into_inner());
++            let prints = prints.get_or_insert_with(Default::default).entry(std::ptr::from_ref(host) as usize).or_default();
++            if ranges.is_empty() {
++                prints.clear();
++            }
++            let step = heap.handle(1).zip(heap.handle(0)).map_or(0, |(b, a)| (b - a) as usize);
++            let mut same = std::collections::HashSet::new();
++            if step > 0 {
++                let mut sorted = slots.clone();
++                sorted.sort_unstable();
++                sorted.dedup();
++                let mut i = 0;
++                let mut bytes: Vec<u8> = Vec::new();
++                while i < sorted.len() {
++                    let mut j = i + 1;
++                    while j < sorted.len() && sorted[j] == sorted[j - 1] + 1 && j - i < 4096 {
++                        j += 1;
++                    }
++                    if let Some(first) = heap.handle(sorted[i]) {
++                        bytes.clear();
++                        bytes.resize((j - i) * step, 0);
++                        if crate::host::read_into(first as *const u8, &mut bytes) {
++                            for (k, record) in bytes.chunks_exact(step).enumerate() {
++                                let index = sorted[i + k];
++                                let print = crate::descriptor::host::record_print(record) | 1;
++                                // As it was, and the copy found then is still
++                                // the one at its bytes (the title streams
++                                // buffers in and out under the same record:
++                                // next26 crashed keeping a released one).
++                                if prints.insert(index, print) == Some(print)
++                                    && let Some((shadow, from, to)) = ranges.get(&index)
++                                    && crate::shadow::find(*from, to - from).is_some_and(|now| std::sync::Arc::ptr_eq(&now, shadow))
++                                {
++                                    same.insert(index);
++                                }
++                            }
++                        }
++                    }
++                    i = j;
++                }
++            }
++            SLOTS_SKIPPED.fetch_add(same.len() as u64, Ordering::Relaxed);
++            same
++        } else {
++            std::collections::HashSet::new()
++        };
+         for (n, &index) in slots.iter().enumerate() {
++            if unchanged.contains(&index) {
++                continue;
++            }
+             ranges.remove(&index);
+             let Some(handle) = heap.handle(index) else {
+                 continue;
+@@ -1618,6 +1698,7 @@ impl State {
+             }
+             ranges.insert(index, (shadow, address, address + len));
+         }
++        HEAP_PASS_PARTS[2].fetch_add(slots_began.elapsed().as_micros() as u64, Ordering::Relaxed);
+         let views = ranges.len() as u32;
+         // Per host copy, the span its picked views cover.
+         let mut spans: std::collections::HashMap<usize, (std::sync::Arc<crate::shadow::Shadow>, u64, u64)> =
+@@ -1640,6 +1721,8 @@ impl State {
+         static WHOLE: std::sync::Mutex<Option<std::collections::HashMap<usize, u64>>> = std::sync::Mutex::new(None);
+         let mut whole = WHOLE.lock().unwrap_or_else(|e| e.into_inner());
+         let whole = whole.get_or_insert_with(Default::default);
++        let refresh_began = std::time::Instant::now();
++        HEAP_PASS_PARTS[5].fetch_add(bytes, Ordering::Relaxed);
+         for (shadow, from, to) in spans.values() {
+             if shadow.unwatched() {
+                 // By the copy's number: a copy made where one let go was
+@@ -1662,6 +1745,7 @@ impl State {
+             }
+             shadow.refresh(list, *from, to - from);
+         }
++        HEAP_PASS_PARTS[3].fetch_add(refresh_began.elapsed().as_micros() as u64, Ordering::Relaxed);
+         let textures_began = std::time::Instant::now();
+         self.heap_textures(list, heap, host);
+         HEAP_PASS_PARTS[0].fetch_add(textures_began.elapsed().as_micros() as u64, Ordering::Relaxed);
+@@ -1954,6 +2038,16 @@ impl State {
              if SPENT.load(Ordering::Relaxed) >= bytes_at_most || began.elapsed() > span {
                  break;
              }
@@ -1687,10 +1391,10 @@ index 0000000..c53860d
 +    }
 +}
 diff --git a/crates/victory-gpu/src/host.rs b/crates/victory-gpu/src/host.rs
-index b559f64..1fdd19a 100644
+index 8494aea..1c4e510 100644
 --- a/crates/victory-gpu/src/host.rs
 +++ b/crates/victory-gpu/src/host.rs
-@@ -1476,7 +1476,9 @@ fn take_chunk(host: &Host, size: u64) -> Option<Chunk> {
+@@ -1501,7 +1501,9 @@ fn take_chunk(host: &Host, size: u64) -> Option<Chunk> {
          ALIVE[5].fetch_add(1, Ordering::Relaxed);
          return Some(chunk);
      }
@@ -1701,7 +1405,7 @@ index b559f64..1fdd19a 100644
      name(&buffer, || "list scratch".into());
      // SAFETY: a live buffer.
      let gpu = unsafe { buffer.GetGPUVirtualAddress() };
-@@ -1550,6 +1552,11 @@ struct CardWork {
+@@ -1575,6 +1577,11 @@ struct CardWork {
      /// The fetch inside flights ([`inflight_fetch`]), if it is on and was
      /// made.
      inflight: Option<CardInflight>,
@@ -1713,7 +1417,7 @@ index b559f64..1fdd19a 100644
  }
  
  /// What the fetch inside flights needs ([`inflight_fetch`], [`CARD_FETCH`]).
-@@ -1589,6 +1596,41 @@ static CARD_WORK: Mutex<Option<CardWork>> = Mutex::new(None);
+@@ -1614,6 +1621,41 @@ static CARD_WORK: Mutex<Option<CardWork>> = Mutex::new(None);
  /// gets a dword per piece, 1 where a byte differs. The offsets are widened
  /// to 16 bytes; buffers are multiples of 64 KiB, and a piece flagged for a
  /// byte just outside the range costs a fetch that finds nothing.
@@ -1755,7 +1459,7 @@ index b559f64..1fdd19a 100644
  pub(crate) const CARD_COMPARE: &str = r#"
  #define RS "RootConstants(num32BitConstants=6, b0), SRV(t0), UAV(u0), UAV(u1)"
  cbuffer Span : register(b0) {
-@@ -1864,6 +1906,9 @@ struct CardPlan {
+@@ -1889,6 +1931,9 @@ struct CardPlan {
      /// The `CardInflight::landed` its [`CARD_FETCH`] was told: which of its
      /// tickets got a slot ([`inflight_gets_slot`]).
      inflight_landed: u32,
@@ -1765,7 +1469,7 @@ index b559f64..1fdd19a 100644
  }
  
  /// One piece of submission-time work, in recorded order.
-@@ -1886,6 +1931,14 @@ enum Step {
+@@ -1911,6 +1956,14 @@ enum Step {
      /// Brings a texture's staging buffer up to date: once per submission,
      /// whichever lists sample it, until a `Copy` or `Run` intervenes.
      Texture(std::sync::Arc<crate::texture::Staging>),
@@ -1780,7 +1484,7 @@ index b559f64..1fdd19a 100644
  }
  
  /// What a list does on the CPU when it is submitted: copies between host
-@@ -2492,6 +2545,93 @@ static LATE_STATS: [std::sync::atomic::AtomicU64; 18] = [const { std::sync::atom
+@@ -2517,6 +2570,96 @@ static LATE_STATS: [std::sync::atomic::AtomicU64; 18] = [const { std::sync::atom
  static LATE_WAITED: [std::sync::atomic::AtomicU64; 11] = [const { std::sync::atomic::AtomicU64::new(0) }; 11];
  
  /// Whether `[from, to)` touches one of `ranges` (in order, joined).
@@ -1799,6 +1503,9 @@ index b559f64..1fdd19a 100644
 +    static ON: OnceLock<bool> = OnceLock::new();
 +    *ON.get_or_init(|| gpu_buffer_copies_on() && std::env::var_os("VICTORY_GPU_FILLS").is_some_and(|v| v == "1"))
 +}
++
++/// HybridGt: microseconds spent in fetches on first touch since the last frame line.
++pub(crate) static LAZY_FETCH_US: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 +
 +/// HybridGt: relay fetches done on the copy queue since the last frame line.
 +pub(crate) static COPY_QUEUE_FETCHES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -1874,7 +1581,7 @@ index b559f64..1fdd19a 100644
  fn touches(ranges: &[(usize, usize)], from: usize, to: usize) -> bool {
      if from >= to {
          return false;
-@@ -2601,7 +2741,7 @@ fn blocked_by(written: &[(usize, usize)], runs: &[&HostList], count: bool) -> Op
+@@ -2626,7 +2769,7 @@ fn blocked_by(written: &[(usize, usize)], runs: &[&HostList], count: bool) -> Op
                      }
                  }
                  Step::Run(_) => return Some(WHY_RUN),
@@ -1883,7 +1590,7 @@ index b559f64..1fdd19a 100644
              }
          }
      }
-@@ -3220,6 +3360,31 @@ struct RelayFetch {
+@@ -3269,6 +3412,31 @@ struct RelayFetch {
      sent: u64,
      /// Buffer, mapping, bytes.
      buffer: Option<(ID3D12Resource, usize, u64)>,
@@ -1915,7 +1622,7 @@ index b559f64..1fdd19a 100644
  }
  
  /// The thread that lands flights ([`relay`]): as soon as the card has run
-@@ -3904,7 +4069,11 @@ impl Host {
+@@ -3956,7 +4124,11 @@ impl Host {
                  },
                  ..Default::default()
              })?;
@@ -1927,7 +1634,7 @@ index b559f64..1fdd19a 100644
                  sync: vec![list()?],
                  check: vec![list()?],
                  fetch: list()?,
-@@ -3919,6 +4088,53 @@ impl Host {
+@@ -3971,6 +4143,53 @@ impl Host {
          }
      }
  
@@ -1981,7 +1688,7 @@ index b559f64..1fdd19a 100644
      /// [`CardInflight`] for `results` bytes of the compare's results; `None`
      /// (and the old fetch) if the shader or the memory cannot be had.
      fn make_card_inflight(&self, results: u64) -> Option<CardInflight> {
-@@ -4049,6 +4265,14 @@ impl Host {
+@@ -4101,6 +4320,14 @@ impl Host {
              None => 0,
          };
          let mut dirty = crate::shadow::card_dirty(sent_as);
@@ -1996,7 +1703,7 @@ index b559f64..1fdd19a 100644
          // With fetches on a copy queue (`crate::queue2`, bit 1 of
          // `VICTORY_QUEUE2`): the send's number is signalled on the direct
          // queue behind the send, so that a fetch knows which sends the card
-@@ -4066,6 +4290,39 @@ impl Host {
+@@ -4118,6 +4345,39 @@ impl Host {
          }
          let mut work = CARD_WORK.lock().unwrap_or_else(|e| e.into_inner());
          let work = work.as_mut()?;
@@ -2036,7 +1743,7 @@ index b559f64..1fdd19a 100644
          // A copy whose shader writes are declared for the first time gets
          // its bytes from before, whole.
          let mut whole: Vec<Arc<crate::shadow::Shadow>> = Vec::new();
-@@ -4148,6 +4405,52 @@ impl Host {
+@@ -4200,6 +4460,52 @@ impl Host {
                          let Some((staging, before, size)) = shadow.card_sides() else {
                              continue;
                          };
@@ -2089,7 +1796,7 @@ index b559f64..1fdd19a 100644
                          for &(a, b) in ranges {
                              match &landed {
                                  Some(landing) => list.CopyBufferRegion(&shadow.buffer, a as u64, landing, at, (b - a) as u64),
-@@ -4181,7 +4484,10 @@ impl Host {
+@@ -4233,7 +4539,10 @@ impl Host {
                          let runs: Vec<crate::shadow::CardSpan> = if whole.iter().any(|s| Arc::ptr_eq(s, shadow)) {
                              vec![shadow.card_run(0, usize::MAX)]
                          } else {
@@ -2101,7 +1808,7 @@ index b559f64..1fdd19a 100644
                          };
                          // The same pieces in fewer passes (`rehash_runs`).
                          let runs = if rehash_runs() { crate::shadow::joined_piece_runs(runs) } else { runs };
-@@ -4214,6 +4520,7 @@ impl Host {
+@@ -4266,6 +4575,7 @@ impl Host {
              sent_as,
              inflight: false,
              inflight_landed: 0,
@@ -2109,7 +1816,7 @@ index b559f64..1fdd19a 100644
          };
          // Each byte once, as the copy-back joins the declared ranges. The
          // results go behind those of plans still in the air.
-@@ -4356,6 +4663,9 @@ impl Host {
+@@ -4408,6 +4718,9 @@ impl Host {
          for (check, list) in plan.lists {
              if check { work.check.push(list) } else { work.sync.push(list) }
          }
@@ -2119,7 +1826,7 @@ index b559f64..1fdd19a 100644
          work.out = work.out.saturating_sub(1);
          // With the relay other plans may be on the card, their results
          // not read yet: the area starts again only when none is out.
-@@ -4371,12 +4681,34 @@ impl Host {
+@@ -4423,12 +4736,34 @@ impl Host {
          unsafe {
              let fence: ID3D12Fence = self.device.CreateFence(0, D3D12_FENCE_FLAG_NONE).ok()?;
              let event = CreateEventW(None, false, false, None).ok()?;
@@ -2154,7 +1861,107 @@ index b559f64..1fdd19a 100644
              })
          }
      }
-@@ -4521,6 +4853,53 @@ impl Host {
+@@ -4460,6 +4795,82 @@ impl Host {
+     /// of the last flight being landed: a piece an earlier fetch on the
+     /// copy queue brought down beside one of these flights is fetched
+     /// whatever the compare says ([`BESIDE`]).
++    /// HybridGt: brings pending pieces (`crate::lazyback`) down through the
++    /// direct queue, behind every list sent so far (so behind the flights
++    /// that wrote them), and merges them as the relay does.
++    pub(crate) fn lazy_fetch(&self, pieces: &[(std::sync::Arc<crate::shadow::Shadow>, usize, usize)]) {
++        struct Own(Option<RelayFetch>);
++        // SAFETY: the fetch objects are used under this lock only.
++        unsafe impl Send for Own {}
++        static FETCH: Mutex<Own> = Mutex::new(Own(None));
++        let mut own = FETCH.lock().unwrap_or_else(|e| e.into_inner());
++        if own.0.is_none() {
++            own.0 = self.make_relay_fetch();
++        }
++        let Some(f) = own.0.as_mut() else {
++            return;
++        };
++        let total: u64 = pieces.iter().map(|p| (p.2 - p.1) as u64).sum();
++        if f.buffer.as_ref().is_none_or(|b| b.2 < total) {
++            let size = total.next_multiple_of(4 << 20);
++            f.buffer = self.shared_buffer(size).map(|(buffer, data)| (buffer, data as usize, size));
++        }
++        let Some((buffer, data, _)) = f.buffer.clone() else {
++            return;
++        };
++        f.sent += 1;
++        let ((allocator, list), fence, event, sent) = (f.list.clone(), f.fence.clone(), f.event, f.sent);
++        let started = std::time::Instant::now();
++        // SAFETY: this lock's own list, last run waited for; live buffers
++        // (the pending pieces hold their copies).
++        let ran = unsafe {
++            (|| -> windows::core::Result<u64> {
++                allocator.Reset()?;
++                list.Reset(&allocator, None)?;
++                let mut at = 0u64;
++                for (shadow, lo, hi) in pieces {
++                    list.CopyBufferRegion(&buffer, at, &shadow.buffer, *lo as u64, (*hi - *lo) as u64);
++                    at += (*hi - *lo) as u64;
++                }
++                list.Close()?;
++                let lists = [Some(list.cast::<ID3D12CommandList>()?)];
++                // Sends up to `after` are ahead of this fetch on the queue;
++                // with the order lock held elsewhere (a touch inside a send),
++                // none counts as older: the merge then keeps every logged
++                // send's bytes (the title's).
++                let after = match QUEUE_ORDER.try_lock() {
++                    Ok(order) => {
++                        self.queue.ExecuteCommandLists(&lists);
++                        *order
++                    }
++                    Err(_) => {
++                        self.queue.ExecuteCommandLists(&lists);
++                        0
++                    }
++                };
++                self.queue.Signal(&fence, sent)?;
++                fence.SetEventOnCompletion(sent, event)?;
++                WaitForSingleObject(event, INFINITE);
++                Ok(after)
++            })()
++        };
++        let Ok(after) = ran else {
++            tracing::warn!("a pending piece of what shaders wrote could not be fetched (VICTORY_LAZY_BACK=1)");
++            return;
++        };
++        let mut title = Vec::new();
++        let mut at = 0usize;
++        let mut written = 0;
++        for (shadow, lo, hi) in pieces {
++            // SAFETY: the mapping of the fetched bytes; the copy has run.
++            let gpu = unsafe { std::slice::from_raw_parts((data + at) as *const u8, hi - lo) };
++            written += shadow.card_merge_relay(*lo, gpu, after, &mut title);
++            at += hi - lo;
++        }
++        LAZY_FETCH_US.fetch_add(started.elapsed().as_micros() as u64, Ordering::Relaxed);
++        copy_back(1, written as u64);
++    }
++
+     fn relay_card_back(&self, plans: &[(u64, &CardPlan)], fetch: &mut Option<RelayFetch>, behind: u64, landed: u64) {
+         if inflight_fetch() {
+             let only: Vec<&CardPlan> = plans.iter().map(|p| p.1).collect();
+@@ -4531,6 +4942,16 @@ impl Host {
+             }
+         }
+         BESIDE_STATS[0].fetch_add(again, Ordering::Relaxed);
++        // HybridGt: copy-back on first touch (`crate::lazyback`): flagged
++        // pieces become pending instead of coming down now.
++        if crate::lazyback::on() && !pieces.is_empty() {
++            pieces.retain(|(shadow, lo, hi, _)| !crate::lazyback::defer(shadow, *lo, *hi));
++            total = 0;
++            for piece in &mut pieces {
++                piece.3 = total;
++                total += (piece.2 - piece.1) as u64;
++            }
++        }
+         if pieces.is_empty() {
+             if inflight_fetch() {
+                 // The next merge may be of a flight in the air now, with
+@@ -4573,6 +4994,53 @@ impl Host {
          f.sent += 1;
          let ((allocator, list), fence, event, sent) = (f.list.clone(), f.fence.clone(), f.event, f.sent);
          let waiting = std::time::Instant::now();
@@ -2208,7 +2015,7 @@ index b559f64..1fdd19a 100644
          // SAFETY: the list's last run was waited for by this thread; live
          // buffers (the copies are held by the plans); the fence and the
          // event are this thread's.
-@@ -5310,6 +5689,9 @@ impl Host {
+@@ -5362,6 +5830,9 @@ impl Host {
          // Flights in the air ([`late`]): a submission that is waited for
          // settles them first, one sent ahead only if preparing it reads
          // what they write.
@@ -2218,7 +2025,7 @@ index b559f64..1fdd19a 100644
          if !late {
              self.settle(&mut submitted, WHY_SYNC);
          } else if let Some(why) = late_blocked(runs) {
-@@ -5382,7 +5764,10 @@ impl Host {
+@@ -5434,7 +5905,10 @@ impl Host {
              // may write too, and this submission refreshes it. The flights
              // are settled, and the asking made again: the copy-back wrote
              // title memory, which other copies of it must see.
@@ -2230,11 +2037,10 @@ index b559f64..1fdd19a 100644
                  let settling = std::time::Instant::now();
                  self.settle(&mut submitted, WHY_STALE);
                  settled += settling.elapsed();
-@@ -6259,7 +6644,25 @@ impl HostList {
+@@ -6338,10 +6812,28 @@ impl HostList {
              (real != *first)
                  .then(|| transition(&copy.texture, host_state(real), host_state(*first)))
          }));
--        if barriers.is_empty() && syncs.is_empty() {
 +        let gpu_copies: Vec<(ID3D12Resource, u64, ID3D12Resource, u64, u64)> = self
 +            .deferred()
 +            .copies
@@ -2253,11 +2059,15 @@ index b559f64..1fdd19a 100644
 +                _ => None,
 +            })
 +            .collect();
-+        if barriers.is_empty() && syncs.is_empty() && gpu_copies.is_empty() && gpu_fills.is_empty() {
+         // The records the list's draws read from slots (`crate::indirect::gather`).
+         let gather = self.gather.lock().unwrap_or_else(|e| e.into_inner());
+         let gathered = gather.sets.iter().any(|s| s.records() > 0);
+-        if barriers.is_empty() && syncs.is_empty() && !gathered {
++        if barriers.is_empty() && syncs.is_empty() && gpu_copies.is_empty() && gpu_fills.is_empty() && !gathered {
              return None;
          }
          let Some((allocator, list)) = self
-@@ -6283,6 +6686,43 @@ impl HostList {
+@@ -6365,6 +6857,43 @@ impl HostList {
                  if !barriers.is_empty() {
                      list.ResourceBarrier(&barriers);
                  }
@@ -2298,10 +2108,10 @@ index b559f64..1fdd19a 100644
 +                    GPU_COPIES.fetch_add(gpu_copies.len() as u64, Ordering::Relaxed);
 +                    GPU_FILLS.fetch_add(gpu_fills.len() as u64, Ordering::Relaxed);
 +                }
-                 list.Close()
-             })
-         };
-@@ -6492,6 +6932,15 @@ impl HostList {
+                 if gathered {
+                     // The slots must hold clamped records before a draw
+                     // reads them: a prelude that cannot record the passes
+@@ -6670,6 +7199,15 @@ impl HostList {
  
      /// The bytes of scratch chunks the list holds now (after a reset:
      /// none while lists share their chunks).
@@ -2317,7 +2127,7 @@ index b559f64..1fdd19a 100644
      pub(crate) fn scratch_kept(&self) -> u64 {
          let scratch = self.scratch.lock().unwrap_or_else(|e| e.into_inner());
          scratch.chunks.iter().map(|c| c.1).sum()
-@@ -6791,6 +7240,9 @@ impl HostList {
+@@ -6969,6 +7507,9 @@ impl HostList {
                      }
                      continue;
                  }
@@ -2327,7 +2137,53 @@ index b559f64..1fdd19a 100644
                  Step::Texture(staging) => {
                      if batch.texture_due(staging) {
                          staging.refresh();
-@@ -7365,6 +7817,8 @@ struct Presenter {
+@@ -7271,6 +7812,13 @@ pub(crate) fn copy_mapped(dst: *mut u8, src: *const u8, len: usize, title_dst: b
+     if ask_first && !crate::texture::committed(dst, len) {
+         return;
+     }
++    // HybridGt: pieces pending on the card (`crate::lazyback`) come down
++    // first, on both sides: the kernel's copy would fail on their pages and
++    // the copy would take them for unmapped memory (zeros; next24, next25).
++    crate::lazyback::ensure(src as usize, len);
++    if title_dst {
++        crate::lazyback::ensure(dst as usize, len);
++    }
+     if title_dst {
+         // The kernel writes the destination: it must not be guarded.
+         crate::watch::writing(dst as usize, len);
+@@ -7307,6 +7855,7 @@ pub(crate) fn copy_mapped(dst: *mut u8, src: *const u8, len: usize, title_dst: b
+ /// After a failed bulk read into host memory, skip contiguous holes. Never
+ /// cache the query across copies: the title may remap the same address.
+ fn read_sparse(src: *const u8, dst: *mut u8, len: usize) {
++    crate::lazyback::ensure(src as usize, len);
+     use windows_sys::Win32::System::Memory::{
+         MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_NOACCESS, VirtualQuery,
+     };
+@@ -7338,6 +7887,7 @@ fn read_sparse(src: *const u8, dst: *mut u8, len: usize) {
+ }
+ 
+ fn read_pieces(src: *const u8, dst: *mut u8, len: usize) {
++    crate::lazyback::ensure(src as usize, len);
+     // Something is unmapped: page by page (64 KiB, then 4 KiB in a piece
+     // that fails), zeros for what cannot be read.
+     for_pieces(src as usize, len, 64 << 10, |at, n| {
+@@ -7359,6 +7909,7 @@ fn read_pieces(src: *const u8, dst: *mut u8, len: usize) {
+ /// Reads title memory at `src` into `dst`; false if a page of it is not
+ /// readable.
+ pub(crate) fn read_into(src: *const u8, dst: &mut [u8]) -> bool {
++    crate::lazyback::ensure(src as usize, dst.len());
+     // In place first, if asked for (`crate::plaincopy`): the destination is
+     // memory of ours, as in `copy_mapped`.
+     crate::plaincopy::copy(dst.as_mut_ptr(), src, dst.len()) || read(src, dst.as_mut_ptr(), dst.len())
+@@ -7403,6 +7954,7 @@ fn direct_writes() -> bool {
+ /// Copies host memory into title memory after a submission (what shaders
+ /// wrote), leaving pages that are not mapped alone.
+ pub(crate) fn write_mapped(dst: *mut u8, src: *const u8, len: usize) {
++    crate::lazyback::ensure(dst as usize, len);
+     use windows_sys::Win32::System::Diagnostics::Debug::WriteProcessMemory;
+     use windows_sys::Win32::System::Threading::GetCurrentProcess;
+     let direct = direct_writes();
+@@ -7569,6 +8121,8 @@ struct Presenter {
      ahead: Vec<(HostList, u64)>,
      hwnd: HWND,
      meter: Meter,
@@ -2336,7 +2192,22 @@ index b559f64..1fdd19a 100644
  }
  
  /// The frame rate, shown in the window's caption every second and logged
-@@ -7484,6 +7938,38 @@ impl Meter {
+@@ -7644,6 +8198,14 @@ impl Meter {
+         // the card's memory.)
+         {
+             let [texture_us, slots] = [0, 1].map(|i| crate::draw::HEAP_PASS_PARTS[i].swap(0, Ordering::Relaxed));
++            let [slot_us, refresh_us, _, span_bytes] = [2, 3, 4, 5].map(|i| crate::draw::HEAP_PASS_PARTS[i].swap(0, Ordering::Relaxed));
++            tracing::info!(
++                "the heap pass's parts per frame (HybridGt): {:.1} ms over buffer slots ({:.0} found unchanged and kept), {:.1} ms refreshing the copies their views cover ({:.1} MB of spans)",
++                slot_us as f64 / 1e3 / frames,
++                crate::draw::SLOTS_SKIPPED.swap(0, Ordering::Relaxed) as f64 / frames,
++                refresh_us as f64 / 1e3 / frames,
++                span_bytes as f64 / 1048576.0 / frames
++            );
+             tracing::info!(
+                 "the pass over the heap per frame (the frame line's \"heap buffers ... ms\" is both parts): {:.1} ms in its                  pass over textures picked by index; {:.0} buffer slots looked at by its pass over buffer views",
+                 texture_us as f64 / 1e3 / frames,
+@@ -7689,6 +8251,47 @@ impl Meter {
                       hold still (the runtime remapping it); the rest is reading, hashing and detiling"
                  );
              }
@@ -2360,6 +2231,15 @@ index b559f64..1fdd19a 100644
 +                    merge_us / 1000.0
 +                );
 +            }
++            if let Some(line) = crate::readprobe::line() {
++                tracing::info!("{line}");
++            }
++            if let Some(line) = crate::lazyback::line() {
++                tracing::info!(
++                    "{line}; {:.1} ms a frame fetching on touch",
++                    LAZY_FETCH_US.swap(0, Ordering::Relaxed) as f64 / 1e3 / frames
++                );
++            }
 +            let copy_queue_fetches = COPY_QUEUE_FETCHES.swap(0, Ordering::Relaxed) as f64 / frames;
 +            if copy_queue_fetches > 0.0 {
 +                tracing::info!("relay fetches on the copy queue per frame (VICTORY_FETCH_COPY_QUEUE=1): {copy_queue_fetches:.1}");
@@ -2375,7 +2255,7 @@ index b559f64..1fdd19a 100644
              let [through, left] = [0, 1].map(|i| crate::texture::UNLOCKED[i].swap(0, Ordering::Relaxed) as f64 / frames);
              if through + left > 0.0 {
                  tracing::info!(
-@@ -7690,7 +8176,10 @@ impl Host {
+@@ -7895,7 +8498,10 @@ impl Host {
              tracing::warn!(format = desc.Format.0, "cannot present this format");
              return None;
          };
@@ -2387,7 +2267,7 @@ index b559f64..1fdd19a 100644
          let mut presenter = self.presenter.lock().unwrap_or_else(|e| e.into_inner());
          if presenter.is_none() {
              *presenter = match self.presenter(width, height, format) {
-@@ -7759,6 +8248,26 @@ impl Host {
+@@ -7964,6 +8570,26 @@ impl Host {
              };
              copy.reset();
              let list = &copy.list;
@@ -2414,7 +2294,7 @@ index b559f64..1fdd19a 100644
              list.ResourceBarrier(&[
                  transition(texture, state, D3D12_RESOURCE_STATE_COPY_SOURCE),
                  transition(
-@@ -7848,6 +8357,7 @@ impl Host {
+@@ -8056,6 +8682,7 @@ impl Host {
                  ahead: Vec::new(),
                  hwnd,
                  meter: Meter::new(),
@@ -2422,7 +2302,7 @@ index b559f64..1fdd19a 100644
              })
          }
      }
-@@ -8405,6 +8915,95 @@ mod batch {   // Batch::texture_due lives here; `mod tests` is already taken at
+@@ -8613,6 +9240,95 @@ mod batch {   // Batch::texture_due lives here; `mod tests` is already taken at
      }
  }
  
@@ -2518,19 +2398,522 @@ index b559f64..1fdd19a 100644
  /// The host's own paths for a copy in the card's memory, end to end, on
  /// the software adapter only: the title's bytes go up, a shader reads them
  /// and writes, and what it wrote comes back into title memory. Run it with
+diff --git a/crates/victory-gpu/src/inplace.rs b/crates/victory-gpu/src/inplace.rs
+index 44f646f..8bafec1 100644
+--- a/crates/victory-gpu/src/inplace.rs
++++ b/crates/victory-gpu/src/inplace.rs
+@@ -139,9 +139,36 @@ pub(crate) fn place_for(start: u64, len: u64, window: bool) -> Option<Placed> {
+         return None;
+     }
+     // View memory: known from the runtime without asking Windows.
+-    if cover(start as usize, len as usize) != Cover::None {
+-        STATS[4].fetch_add(1, Ordering::Relaxed);
+-        return None;
++    // HybridGt: one run of a committed section (`VICTORY_POOL_COMMIT=1` in
++    // the runtime) is placed in the section's heap.
++    match cover(start as usize, len as usize) {
++        Cover::None => {}
++        Cover::Run(section, offset) if section_committed(section) => {
++            if STATS[1].load(Ordering::Relaxed) + STATS[3].load(Ordering::Relaxed) + len > most() {
++                STATS[6].fetch_add(1, Ordering::Relaxed);
++                return None;
++            }
++            let host = crate::host::host()?;
++            return match place_in_section(&host.device, section, offset, len) {
++                Ok(placed) => {
++                    let at = if window { 0 } else { 2 };
++                    STATS[at].fetch_add(1, Ordering::Relaxed);
++                    STATS[at + 1].fetch_add(len, Ordering::Relaxed);
++                    POOL_PLACED.fetch_add(1, Ordering::Relaxed);
++                    Some(placed)
++                }
++                Err(e) => {
++                    if STATS[5].fetch_add(1, Ordering::Relaxed) < 8 {
++                        tracing::warn!(start = format_args!("{start:#x}"), len, error = %e, "page pool memory not opened in place: a copy instead");
++                    }
++                    None
++                }
++            };
++        }
++        _ => {
++            STATS[4].fetch_add(1, Ordering::Relaxed);
++            return None;
++        }
+     }
+     if STATS[1].load(Ordering::Relaxed) + STATS[3].load(Ordering::Relaxed) + len > most() {
+         STATS[6].fetch_add(1, Ordering::Relaxed);
+@@ -168,6 +195,39 @@ pub(crate) fn place_for(start: u64, len: u64, window: bool) -> Option<Placed> {
+     }
+ }
+ 
++/// HybridGt: buffers placed in page pool sections since the start.
++static POOL_PLACED: AtomicU64 = AtomicU64::new(0);
++
++/// HybridGt: the heaps opened on committed page pool sections, by handle
++/// (each opened once and kept: the heap is the section, whatever its views
++/// do).
++static SECTION_HEAPS: Mutex<BTreeMap<usize, ID3D12Heap>> = Mutex::new(BTreeMap::new());
++
++fn section_committed(section: usize) -> bool {
++    views().sections.iter().any(|s| s.0 == section && s.2)
++}
++
++/// A buffer over bytes `[offset, offset + len)` of a committed section.
++fn place_in_section(device: &ID3D12Device, section: usize, offset: u64, len: u64) -> windows::core::Result<Placed> {
++    let heap = {
++        let mut heaps = SECTION_HEAPS.lock().unwrap_or_else(|e| e.into_inner());
++        match heaps.get(&section) {
++            Some(h) => h.clone(),
++            None => {
++                let h = open(device, From::Section(section))?;
++                heaps.insert(section, h.clone());
++                h
++            }
++        }
++    };
++    let at = offset & !(K64 as u64 - 1);
++    let bytes = (offset + len.max(1)).next_multiple_of(K64 as u64) - at;
++    let buffer = place(device, &heap, at, bytes)?;
++    // SAFETY: a live buffer.
++    let gpu = unsafe { buffer.GetGPUVirtualAddress() } + (offset - at);
++    Ok(Placed { buffer, heap, gpu, bias: offset - at })
++}
++
+ /// What [`place_for`] gave is gone.
+ pub(crate) fn gone(window: bool, bytes: u64) {
+     let at = if window { 0 } else { 2 };
+@@ -198,6 +258,11 @@ fn say() {
+         return;
+     }
+     let s: Vec<u64> = STATS.iter().map(|s| s.load(Ordering::Relaxed)).collect();
++    tracing::info!(
++        "title memory in place, page pool sections (VICTORY_POOL_COMMIT=1): {} buffers placed so far, {} sections opened",
++        POOL_PLACED.load(Ordering::Relaxed),
++        SECTION_HEAPS.lock().unwrap_or_else(|e| e.into_inner()).len()
++    );
+     tracing::info!(
+         "title memory in place: {} windows {} MB, {} title buffers {} MB (no copy, no refresh, no copy-back); turned down: {} view memory or not private memory committed whole, \
+          {} refused by the host, {} over VICTORY_INPLACE_MB; {} let go because their memory changed",
+diff --git a/crates/victory-gpu/src/lazyback.rs b/crates/victory-gpu/src/lazyback.rs
+new file mode 100644
+index 0000000..d842598
+--- /dev/null
++++ b/crates/victory-gpu/src/lazyback.rs
+@@ -0,0 +1,385 @@
++//! HybridGt: copy-back on first touch (`VICTORY_LAZY_BACK=1`; off by default).
++//!
++//! What the relay copies back from copies in the card's memory is mostly
++//! never read by the title's CPU before the card writes it again: run next22
++//! probed 153,816 merged pieces (7.2 GB) and the title touched 10,046 of
++//! them (`crate::readprobe`). shadPS4 handles the same (its "precise"
++//! readback): GPU-written pages lose CPU access and come down when touched.
++//!
++//! Here, a piece the card's compare flags at a landing is not fetched: it is
++//! noted pending and the 4 KiB pages it covers (in every view of them) are
++//! made no-access. It comes down, through the direct queue (behind every
++//! flight that wrote it), and is merged as the relay merges, when:
++//! - the title touches one of its pages (the exception handler here);
++//! - this runtime reads or writes title memory there (`crate::host`'s
++//!   kernel reads and writes call [`ensure`] first: they would fail on the
++//!   pages instead of faulting);
++//! - a later landing flags it again: it stays pending (newer bytes on the
++//!   card), nothing is fetched.
++//!
++//! Title fences are signalled after the landing that noted the piece, so a
++//! read the title makes after its fence faults here.
++//!
++//! shortcut: pages are whole 4 KiB pages, so a touch of bytes beside a piece
++//! in the same page fetches it; a remap of the memory drops what is pending
++//! there unfetched (the memory shows other pages then).
++
++use std::cell::Cell;
++use std::collections::{BTreeMap, HashMap};
++use std::sync::atomic::{AtomicU64, Ordering};
++use std::sync::{Arc, Mutex};
++
++use crate::shadow::Shadow;
++
++const PAGE: usize = 4096;
++
++pub(crate) fn on() -> bool {
++    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *ON.get_or_init(|| crate::shadow::relay() && std::env::var_os("VICTORY_LAZY_BACK").is_some_and(|v| v == "1"))
++}
++
++struct Pending {
++    shadow: Arc<Shadow>,
++    /// Bytes of the copy.
++    lo: usize,
++    hi: usize,
++    /// Title pages protected for it (every view), each with the protection
++    /// to give back.
++    pages: Vec<(usize, u32)>,
++}
++
++#[derive(Default)]
++struct Lazy {
++    /// By title address of the piece's first byte.
++    pending: BTreeMap<usize, Pending>,
++    /// Page number -> the pending pieces (their keys) that protect it.
++    pages: HashMap<usize, Vec<usize>>,
++}
++
++static LAZY: Mutex<Option<Lazy>> = Mutex::new(None);
++
++/// Pieces deferred, fetched on a title touch, fetched for this runtime,
++/// flagged again while pending, dropped by a remap; bytes deferred.
++static STATS: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
++
++/// Pieces not deferred because a page of theirs could not be closed.
++static NOT_CLOSED: AtomicU64 = AtomicU64::new(0);
++
++/// Pieces pending now (a check without the lock for [`ensure`]).
++static PENDING: AtomicU64 = AtomicU64::new(0);
++
++/// 64 KiB blocks of title memory with pending pieces, and how many: the
++/// check [`ensure`] makes before it takes the lock (next24: the texture
++/// pass, which reads title memory thousands of times a frame, went from
++/// 2-7 ms to 105-181 ms taking the lock each time).
++static BLOCKS: std::sync::RwLock<Option<HashMap<usize, u32>>> = std::sync::RwLock::new(None);
++
++fn blocks_of(at: usize, len: usize) -> std::ops::RangeInclusive<usize> {
++    (at >> 16)..=((at + len.max(1) - 1) >> 16)
++}
++
++fn blocks_add(at: usize, len: usize, by: i64) {
++    let mut b = BLOCKS.write().unwrap_or_else(|e| e.into_inner());
++    let map = b.get_or_insert_with(HashMap::new);
++    for block in blocks_of(at, len) {
++        let n = map.entry(block).or_insert(0);
++        *n = (i64::from(*n) + by).max(0) as u32;
++        if *n == 0 {
++            map.remove(&block);
++        }
++    }
++}
++
++/// Whether `[at, at + len)` may hold a pending piece.
++fn maybe_pending(at: usize, len: usize) -> bool {
++    let b = BLOCKS.read().unwrap_or_else(|e| e.into_inner());
++    let Some(map) = b.as_ref() else { return false };
++    blocks_of(at, len).any(|block| map.contains_key(&block))
++}
++
++/// The longest piece (the card's compare pieces are 64 KiB).
++const LONGEST: usize = 1 << 20;
++
++thread_local! {
++    /// Inside a fetch on this thread: [`ensure`] does nothing (the merge
++    /// reads and writes the piece's own memory, opened first).
++    static FETCHING: Cell<bool> = const { Cell::new(false) };
++}
++
++fn lazy() -> std::sync::MutexGuard<'static, Option<Lazy>> {
++    LAZY.lock().unwrap_or_else(|e| e.into_inner())
++}
++
++/// The title addresses showing the 4 KiB page `page`: it, and its other
++/// views (`crate::inplace`, by 64 KiB block).
++fn views_of(page: usize) -> Vec<usize> {
++    let at = page * PAGE;
++    let block = at & !0xFFFF;
++    let mut all: Vec<usize> = crate::inplace::pages_of(block).into_iter().map(|b| (b + (at - block)) / PAGE).collect();
++    if !all.contains(&page) {
++        all.push(page);
++    }
++    all
++}
++
++/// At a landing: piece `[lo, hi)` of `shadow` was flagged. `true` if it is
++/// now pending (the caller fetches nothing for it); `false` leaves the
++/// fetch to the caller.
++pub(crate) fn defer(shadow: &Arc<Shadow>, lo: usize, hi: usize) -> bool {
++    if !on() || lo >= hi {
++        return false;
++    }
++    install();
++    let start = shadow.start_address() as usize;
++    let (at, end) = (start + lo, start + hi);
++    // The other host copies of these bytes (buffers, textures over the same
++    // memory) learn that shaders wrote them as they do from a merge: their
++    // guarded blocks are opened, so they take the bytes again, and their
++    // read (`crate::host::copy_mapped`) brings the piece down first. Without
++    // it they kept the bytes from before and the card computed from them
++    // (next24, next25, next27: the title then wrote through null). Before
++    // this module's lock: the guards call back into it with theirs held.
++    crate::watch::writing(at, end - at);
++    let mut g = lazy();
++    let l = g.get_or_insert_with(Lazy::default);
++    if let Some(p) = l.pending.get(&at)
++        && std::sync::Arc::ptr_eq(&p.shadow, shadow)
++        && p.hi == hi
++    {
++        STATS[3].fetch_add(1, Ordering::Relaxed);
++        return true;
++    }
++    // Another pending piece over these bytes (of another copy): fetch now.
++    if l.pending.range(at.saturating_sub(LONGEST)..end).any(|(&k, p)| k + (p.hi - p.lo) > at && k != at) {
++        return false;
++    }
++    use windows_sys::Win32::System::Memory::{PAGE_NOACCESS, PAGE_READONLY, PAGE_READWRITE, VirtualProtect};
++    // Every page of the piece in every view closed, or none: a page left
++    // open would show the title the bytes from before the card's.
++    let mut pages = Vec::new();
++    let mut shared = Vec::new();
++    let mut whole = true;
++    'all: for page in at / PAGE..end.div_ceil(PAGE) {
++        for view in views_of(page) {
++            if l.pages.get(&view).is_some_and(|v| !v.is_empty()) {
++                shared.push(view);
++                continue;
++            }
++            let mut old = 0;
++            // SAFETY: title memory; only its protection changes.
++            if unsafe { VirtualProtect((view * PAGE) as *const _, PAGE, PAGE_NOACCESS, &mut old) } == 0 {
++                whole = false;
++                break 'all;
++            }
++            pages.push((view, old));
++            if old != PAGE_READWRITE && old != PAGE_READONLY {
++                whole = false;
++                break 'all;
++            }
++        }
++    }
++    if !whole {
++        for &(view, old) in &pages {
++            restore(view, old);
++        }
++        STATS[4].fetch_add(0, Ordering::Relaxed);
++        NOT_CLOSED.fetch_add(1, Ordering::Relaxed);
++        return false;
++    }
++    for &(view, _) in &pages {
++        l.pages.entry(view).or_default().push(at);
++    }
++    for view in shared {
++        l.pages.entry(view).or_default().push(at);
++    }
++    blocks_add(at, hi - lo, 1);
++    l.pending.insert(at, Pending { shadow: shadow.clone(), lo, hi, pages });
++    PENDING.fetch_add(1, Ordering::Relaxed);
++    STATS[0].fetch_add(1, Ordering::Relaxed);
++    STATS[5].fetch_add((hi - lo) as u64, Ordering::Relaxed);
++    true
++}
++
++fn restore(page: usize, old: u32) {
++    use windows_sys::Win32::System::Memory::VirtualProtect;
++    let mut was = 0;
++    // SAFETY: a page this module protected.
++    unsafe { VirtualProtect((page * PAGE) as *const _, PAGE, old, &mut was) };
++}
++
++/// Takes the pending pieces overlapping `[at, at + len)` out, their pages
++/// opened (a page another pending piece still holds stays closed).
++fn take(l: &mut Lazy, at: usize, len: usize) -> Vec<Pending> {
++    let end = at + len.max(1);
++    let keys: Vec<usize> = l
++        .pending
++        .range(at.saturating_sub(LONGEST)..end)
++        .filter(|(k, p)| **k + (p.hi - p.lo) > at)
++        .map(|(k, _)| *k)
++        .collect();
++    let mut out = Vec::new();
++    for key in keys {
++        let Some(p) = l.pending.remove(&key) else { continue };
++        blocks_add(key, p.hi - p.lo, -1);
++        PENDING.fetch_sub(1, Ordering::Relaxed);
++        for &(page, old) in &p.pages {
++            let holders = l.pages.entry(page).or_default();
++            holders.retain(|&k| k != key);
++            if holders.is_empty() {
++                l.pages.remove(&page);
++                restore(page, old);
++            }
++        }
++        // Pages this piece shared with others it did not protect itself.
++        for holders in l.pages.values_mut() {
++            holders.retain(|&k| k != key);
++        }
++        out.push(p);
++    }
++    out
++}
++
++/// Brings pending pieces down and merges them (on this thread).
++fn fetch(pieces: Vec<Pending>, title_touch: bool) {
++    if pieces.is_empty() {
++        return;
++    }
++    STATS[if title_touch { 1 } else { 2 }].fetch_add(pieces.len() as u64, Ordering::Relaxed);
++    let Some(host) = crate::host::host() else { return };
++    FETCHING.with(|f| f.set(true));
++    let list: Vec<(Arc<Shadow>, usize, usize)> = pieces.into_iter().map(|p| (p.shadow, p.lo, p.hi)).collect();
++    host.lazy_fetch(&list);
++    FETCHING.with(|f| f.set(false));
++}
++
++/// Before this runtime reads or writes title memory `[at, at + len)`: what
++/// is pending there comes down first.
++pub(crate) fn ensure(at: usize, len: usize) {
++    if PENDING.load(Ordering::Relaxed) == 0 || !on() || FETCHING.with(Cell::get) || !maybe_pending(at, len) {
++        return;
++    }
++    let pieces = {
++        let mut g = lazy();
++        let Some(l) = g.as_mut() else { return };
++        if l.pending.is_empty() {
++            return;
++        }
++        take(l, at, len)
++    };
++    fetch(pieces, false);
++}
++
++/// `crate::watch` gave `[at, at + len)` the protection `protection` (its
++/// guards): pages pending here are closed again, and given that protection
++/// back when opened.
++pub(crate) fn protected(at: usize, len: usize, protection: u32) {
++    if PENDING.load(Ordering::Relaxed) == 0 || !on() || !maybe_pending(at, len) {
++        return;
++    }
++    use windows_sys::Win32::System::Memory::{PAGE_NOACCESS, VirtualProtect};
++    let mut g = lazy();
++    let Some(l) = g.as_mut() else { return };
++    for page in at / PAGE..(at + len.max(1)).div_ceil(PAGE) {
++        let Some(holders) = l.pages.get(&page) else { continue };
++        for key in holders.clone() {
++            if let Some(p) = l.pending.get_mut(&key)
++                && let Some(entry) = p.pages.iter_mut().find(|e| e.0 == page)
++            {
++                entry.1 = protection;
++            }
++        }
++        let mut old = 0;
++        // SAFETY: a page this module holds closed.
++        unsafe { VirtualProtect((page * PAGE) as *const _, PAGE, PAGE_NOACCESS, &mut old) };
++        RECLOSED.fetch_add(1, Ordering::Relaxed);
++    }
++}
++
++/// Pages closed again after the guards changed them.
++static RECLOSED: AtomicU64 = AtomicU64::new(0);
++
++/// The title's memory `[at, at + len)` shows other pages now: what was
++/// pending there is dropped unfetched.
++pub(crate) fn remapped(at: usize, len: usize) {
++    if !on() {
++        return;
++    }
++    let mut g = lazy();
++    let Some(l) = g.as_mut() else { return };
++    let gone = take(l, at, len);
++    STATS[4].fetch_add(gone.len() as u64, Ordering::Relaxed);
++}
++
++/// Before the relay merges `[at, at + len)` of title memory: a pending piece
++/// there is dropped (the merge brings newer bytes of the card) if it is the
++/// same piece, else fetched first.
++pub(crate) fn before_merge(shadow: *const Shadow, at: usize, len: usize) {
++    if PENDING.load(Ordering::Relaxed) == 0 || !on() || !maybe_pending(at, len) {
++        return;
++    }
++    let pieces = {
++        let mut g = lazy();
++        let Some(l) = g.as_mut() else { return };
++        take(l, at, len)
++    };
++    let others: Vec<Pending> = pieces.into_iter().filter(|p| !std::ptr::eq(Arc::as_ptr(&p.shadow), shadow)).collect();
++    fetch(others, false);
++}
++
++fn install() {
++    use windows_sys::Win32::Foundation::{EXCEPTION_ACCESS_VIOLATION, NTSTATUS};
++    use windows_sys::Win32::System::Diagnostics::Debug::{
++        AddVectoredExceptionHandler, EXCEPTION_CONTINUE_EXECUTION, EXCEPTION_CONTINUE_SEARCH, EXCEPTION_POINTERS,
++    };
++    unsafe extern "system" fn on_touch(info: *mut EXCEPTION_POINTERS) -> i32 {
++        // SAFETY: the system passes the exception being dispatched.
++        let r = unsafe { &*(*info).ExceptionRecord };
++        if r.ExceptionCode != EXCEPTION_ACCESS_VIOLATION as NTSTATUS || r.NumberParameters < 2 {
++            return EXCEPTION_CONTINUE_SEARCH;
++        }
++        let at = r.ExceptionInformation[1];
++        let pieces = {
++            let mut g = lazy();
++            let Some(l) = g.as_mut() else {
++                return EXCEPTION_CONTINUE_SEARCH;
++            };
++            let Some(keys) = l.pages.get(&(at / PAGE)).cloned() else {
++                return EXCEPTION_CONTINUE_SEARCH;
++            };
++            let mut out = Vec::new();
++            for key in keys {
++                out.extend(take(l, key, 1));
++            }
++            out
++        };
++        fetch(pieces, true);
++        EXCEPTION_CONTINUE_EXECUTION
++    }
++    static ONCE: std::sync::Once = std::sync::Once::new();
++    // SAFETY: the handler touches this module's state, protections and the
++    // host's own fetch.
++    ONCE.call_once(|| unsafe {
++        AddVectoredExceptionHandler(1, Some(on_touch));
++    });
++}
++
++/// The line for the frame-rate log (since the start).
++pub(crate) fn line() -> Option<String> {
++    if !on() {
++        return None;
++    }
++    let s: Vec<u64> = STATS.iter().map(|s| s.load(Ordering::Relaxed)).collect();
++    let pending = lazy().as_ref().map_or(0, |l| l.pending.len());
++    Some(format!(
++        "copy-back on first touch (VICTORY_LAZY_BACK=1), since the start: {} pieces deferred ({} MB); fetched for the title {}, for this runtime {}; flagged again while pending {}; dropped by remaps {}; pending now {}; not closable {}; pages closed again after the guards {}",
++        s[0],
++        s[5] >> 20,
++        s[1],
++        s[2],
++        s[3],
++        s[4],
++        pending,
++        NOT_CLOSED.load(Ordering::Relaxed),
++        RECLOSED.load(Ordering::Relaxed)
++    ))
++}
 diff --git a/crates/victory-gpu/src/lib.rs b/crates/victory-gpu/src/lib.rs
-index d493607..e136053 100644
+index 4ec7d6f..26a24a7 100644
 --- a/crates/victory-gpu/src/lib.rs
 +++ b/crates/victory-gpu/src/lib.rs
-@@ -59,6 +59,7 @@ mod sampler;
+@@ -63,6 +63,23 @@ mod sampler;
  #[cfg(windows)]
  pub mod shader_cache;
  #[cfg(windows)]
 +mod fsr;
++
++/// HybridGt: from a native program's first 12 bytes to its shader container
++/// (`apps/victory`'s `native_index`), for device methods 0x1c8 and 0x218.
++pub type ContainerLookup = Box<dyn Fn(&[u8; 12]) -> Option<Vec<u8>> + Send + Sync>;
++static CONTAINER_LOOKUP: std::sync::OnceLock<ContainerLookup> = std::sync::OnceLock::new();
++
++/// Sets the lookup [`ContainerLookup`] (once).
++pub fn set_container_lookup(lookup: ContainerLookup) {
++    let _ = CONTAINER_LOOKUP.set(lookup);
++}
++
++pub(crate) fn container_for(header: &[u8; 12]) -> Option<Vec<u8>> {
++    CONTAINER_LOOKUP.get()?(header)
++}
++mod readprobe;
++mod lazyback;
  mod memory;
  #[cfg(windows)]
  mod shadow;
-@@ -76,6 +77,6 @@ pub use host::on_failure;
+@@ -80,6 +97,6 @@ pub use host::on_failure;
  pub use inplace::{title_memory_freeing, title_memory_section, title_memory_view};
  #[cfg(windows)]
  pub use watch::{
@@ -2595,8 +2978,45 @@ index 3bf89f3..cd4c5ea 100644
  /// Moves a title texture's host copy to `state` in the list, if needed.
  #[cfg(windows)]
  pub(crate) fn ensure_state(list: &crate::host::HostList, resource: This, state: u32) {
+diff --git a/crates/victory-gpu/src/pipeline.rs b/crates/victory-gpu/src/pipeline.rs
+index 327f07a..0b4b607 100644
+--- a/crates/victory-gpu/src/pipeline.rs
++++ b/crates/victory-gpu/src/pipeline.rs
+@@ -614,6 +614,32 @@ fn hand_out(
+     object::hand_out(PIPELINE, pipeline, iid, &PIPELINE_IIDS, out)
+ }
+ 
++/// HybridGt: a pipeline object with no shaders, for the device methods the
++/// runtime does not implement yet (0x1c8, 0x218): the title holds a real
++/// object (reference counts, queries), and its draws and dispatches with it
++/// are dropped as those of any pipeline without a host pipeline.
++pub(crate) fn placeholder(iid: *const Iid, out: *mut This) -> HRESULT {
++    hand_out(
++        Vec::new(),
++        #[cfg(windows)]
++        None,
++        iid,
++        out,
++    )
++}
++
++/// HybridGt: a compute pipeline from one shader container (device method
++/// 0x218, its code found as a container's by `crate::container_for`).
++pub(crate) fn compute_from_container(bytes: &[u8], iid: *const Iid, out: *mut This) -> HRESULT {
++    hand_out(
++        vec![shader("compute", bytes)],
++        #[cfg(windows)]
++        None,
++        iid,
++        out,
++    )
++}
++
+ /// Device method.
+ pub(crate) extern "system" fn create_graphics(
+     _: This,
 diff --git a/crates/victory-gpu/src/pipeline/host.rs b/crates/victory-gpu/src/pipeline/host.rs
-index 9aef7b8..0d4b66d 100644
+index 9aef7b8..55bbcda 100644
 --- a/crates/victory-gpu/src/pipeline/host.rs
 +++ b/crates/victory-gpu/src/pipeline/host.rs
 @@ -91,6 +91,65 @@ impl Default for GraphicsState {
@@ -2665,16 +3085,73 @@ index 9aef7b8..0d4b66d 100644
  impl GraphicsState {
      /// Takes in one subobject of a stream: its type, then its data at +4
      /// (+8 for those holding pointers).
-@@ -634,7 +693,7 @@ impl HostPipeline {
+@@ -335,6 +394,15 @@ fn refuse(reason: &'static str, shaders: &[Arc<Shader>]) -> Option<HostPipeline>
+     None
+ }
+ 
++/// HybridGt: whether a title pipeline with a geometry stage gets a host
++/// pipeline with the translated geometry program (`VICTORY_TITLE_GS=1`;
++/// off by default: the first run with it, next19, ended in a crash not yet
++/// traced to it or away from it).
++fn title_gs() -> bool {
++    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *ON.get_or_init(|| std::env::var_os("VICTORY_TITLE_GS").is_some_and(|v| v == "1"))
++}
++
+ impl HostPipeline {
+     /// A host pipeline for vertex and pixel shaders with the graphics
+     /// state `g`, or for one compute shader.
+@@ -350,10 +418,10 @@ impl HostPipeline {
+         if compute.is_none()
+             && shaders
+                 .iter()
+-                .any(|s| !matches!(s.stage, "vertex" | "pixel" | "mesh"))
++                .any(|s| !matches!(s.stage, "vertex" | "pixel" | "mesh") && !(s.stage == "geometry" && title_gs()))
+         {
+             return refuse(
+-                "only vertex, mesh, pixel and compute stages are translated",
++                "only vertex, mesh, pixel, geometry and compute stages are translated",
+                 shaders,
+             );
+         }
+@@ -368,6 +436,11 @@ impl HostPipeline {
+             };
+             let mut stages = vec![first];
+             stages.extend(find("pixel").map(|ps| (ps, D3D12_SHADER_VISIBILITY_PIXEL)));
++            // HybridGt: a title's own geometry stage (`victory_shader`'s
++            // legacy geometry programs), after the pixel stage.
++            if mesh.is_none() {
++                stages.extend(find("geometry").map(|gs| (gs, D3D12_SHADER_VISIBILITY_GEOMETRY)));
++            }
+             stages
+         };
+         if mesh.is_some() && !host()?.mesh_shaders() {
+@@ -623,18 +696,20 @@ impl HostPipeline {
+                 Err(e) => tracing::warn!(error = %e, ?shaders, "no rectangle geometry stage"),
+             }
+         }
++        let at = |name: &str| stages.iter().position(|(s, _)| s.stage == name).unwrap_or(usize::MAX);
++        let title_gs = at("geometry");
+         let mut desc = D3D12_GRAPHICS_PIPELINE_STATE_DESC {
+             // SAFETY: a borrowed pointer the description never releases.
+             pRootSignature: unsafe { std::mem::transmute_copy(&root) },
+             VS: code(0),
+-            PS: code(1),
+-            GS: rect_gs.as_ref().map_or(D3D12_SHADER_BYTECODE::default(), |gs| {
++            PS: code(at("pixel")),
++            GS: if title_gs != usize::MAX { code(title_gs) } else { rect_gs.as_ref().map_or(D3D12_SHADER_BYTECODE::default(), |gs| {
+                 D3D12_SHADER_BYTECODE {
+                     pShaderBytecode: gs.as_ptr().cast(),
                      BytecodeLength: gs.len(),
                  }
-             }),
+-            }),
 -            BlendState: g.blend,
++            }) },
 +            BlendState: host_blend(&g.blend, &g.targets),
              SampleMask: g.sample_mask,
              RasterizerState: g.rasterizer,
              DepthStencilState: g.depth,
-@@ -881,7 +940,7 @@ fn mesh_pipeline(
+@@ -881,7 +956,7 @@ fn mesh_pipeline(
              root: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE, root.as_raw()),
              ms: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_MS, ms),
              ps: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PS, ps),
@@ -2683,7 +3160,7 @@ index 9aef7b8..0d4b66d 100644
              mask: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_MASK, g.sample_mask),
              raster: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RASTERIZER, g.rasterizer),
              depth,
-@@ -900,7 +959,7 @@ fn mesh_pipeline(
+@@ -900,7 +975,7 @@ fn mesh_pipeline(
              root: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE, root.as_raw()),
              ms: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_MS, ms),
              ps: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PS, ps),
@@ -2692,7 +3169,7 @@ index 9aef7b8..0d4b66d 100644
              mask: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_MASK, g.sample_mask),
              raster: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RASTERIZER, g.rasterizer),
              depth: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL1, g.depth1()),
-@@ -1316,4 +1375,60 @@ mod tests {
+@@ -1316,4 +1391,60 @@ mod tests {
          assert_eq!(run_draw(0.6, 1.0), 0, "depth 0.5 outside [0.6, 1.0] must be rejected");
          assert_eq!(run_draw(0.4, 0.6), 255, "depth 0.5 inside [0.4, 0.6] must pass");
      }
@@ -2754,10 +3231,10 @@ index 9aef7b8..0d4b66d 100644
 +    }
  }
 diff --git a/crates/victory-gpu/src/queue.rs b/crates/victory-gpu/src/queue.rs
-index 3c1f271..530663d 100644
+index 84009e5..507c78c 100644
 --- a/crates/victory-gpu/src/queue.rs
 +++ b/crates/victory-gpu/src/queue.rs
-@@ -1217,7 +1217,11 @@ extern "system" fn copy_page_mappings(
+@@ -1474,7 +1474,11 @@ extern "system" fn copy_page_mappings(
          // SAFETY: the title passes `count` batches.
          unsafe { std::slice::from_raw_parts(batches, count as usize) }
      });
@@ -2769,7 +3246,7 @@ index 3c1f271..530663d 100644
      for b in batches.into_iter().flatten() {
          if b.ranges.is_null() {
              continue;
-@@ -1229,16 +1233,20 @@ extern "system" fn copy_page_mappings(
+@@ -1486,16 +1490,20 @@ extern "system" fn copy_page_mappings(
              let len = u64::from(r.count) * PAGE;
              let inside = |pages: u32| r.start.checked_add(pages).is_some_and(|e| e <= pool_pages);
              let source = pool + u64::from(r.start) * PAGE;
@@ -2797,6 +3274,177 @@ index 3c1f271..530663d 100644
      if !ok {
          static ONCE: std::sync::Once = std::sync::Once::new();
          ONCE.call_once(|| tracing::warn!(pool = format_args!("{pool:#x}"), "a page mapping failed"));
+diff --git a/crates/victory-gpu/src/readprobe.rs b/crates/victory-gpu/src/readprobe.rs
+new file mode 100644
+index 0000000..51e1293
+--- /dev/null
++++ b/crates/victory-gpu/src/readprobe.rs
+@@ -0,0 +1,165 @@
++//! HybridGt diagnostics: does the title's CPU read what the relay copies back?
++//!
++//! `VICTORY_READ_PROBE=N` (off by default): after the relay merges a fetched
++//! piece of what shaders wrote into title memory (`Shadow::card_merge_relay`),
++//! every `N`th such piece's 4 KiB pages are made no-access. The first touch
++//! of one faults here: the page gets its protection back and the touch is
++//! counted, as the title's or as this runtime's (the faulting instruction in
++//! `victory.exe` or not). A probed piece that comes back for the next merge
++//! untouched is counted as never read, and opened first.
++//!
++//! What it tells: the share of copy-back bytes the CPU reads before the GPU
++//! writes them again; what nobody reads need not come down each frame.
++//! shortcut: pages are whole 4 KiB pages, so a read of bytes beside the
++//! piece in the same page counts as a read of it; kernel reads by this
++//! runtime (`read_into`) of a probed page fail instead of faulting, so
++//! fetch-on-read must not rely on this module. A diagnostics aid: frame
++//! times of a run with it are not comparable.
++
++use std::collections::HashMap;
++use std::sync::Mutex;
++use std::sync::atomic::{AtomicU64, Ordering};
++
++const PAGE: usize = 4096;
++
++/// Protected pages: page number -> protection to give back.
++static PROBED: Mutex<Option<HashMap<usize, u32>>> = Mutex::new(None);
++
++/// Pieces probed, touched by the title, touched by this runtime, merged
++/// again untouched; bytes probed.
++static STATS: [AtomicU64; 5] = [const { AtomicU64::new(0) }; 5];
++static NEXT: AtomicU64 = AtomicU64::new(0);
++
++pub(crate) fn every() -> u64 {
++    static N: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
++    *N.get_or_init(|| std::env::var("VICTORY_READ_PROBE").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0))
++}
++
++fn pages(at: usize, len: usize) -> std::ops::Range<usize> {
++    at / PAGE..(at + len.max(1)).div_ceil(PAGE)
++}
++
++/// Before the relay merges into `[at, at + len)`: probed pages there get
++/// their protection back (counted as never read).
++pub(crate) fn before_merge(at: usize, len: usize) {
++    if every() == 0 {
++        return;
++    }
++    let mut g = PROBED.lock().unwrap_or_else(|e| e.into_inner());
++    let Some(map) = g.as_mut() else { return };
++    let mut opened = false;
++    for page in pages(at, len) {
++        if let Some(old) = map.remove(&page) {
++            restore(page, old);
++            opened = true;
++        }
++    }
++    if opened {
++        STATS[3].fetch_add(1, Ordering::Relaxed);
++    }
++}
++
++/// After the relay merged `[at, at + len)`: every `N`th piece is probed.
++pub(crate) fn after_merge(at: usize, len: usize) {
++    let n = every();
++    if n == 0 || NEXT.fetch_add(1, Ordering::Relaxed) % n != 0 {
++        return;
++    }
++    install();
++    use windows_sys::Win32::System::Memory::{PAGE_NOACCESS, PAGE_READONLY, PAGE_READWRITE, VirtualProtect};
++    let mut g = PROBED.lock().unwrap_or_else(|e| e.into_inner());
++    let map = g.get_or_insert_with(HashMap::new);
++    let mut any = false;
++    for page in pages(at, len) {
++        if map.contains_key(&page) {
++            continue;
++        }
++        let mut old = 0;
++        // SAFETY: title memory the merge just wrote; only its protection changes.
++        if unsafe { VirtualProtect((page * PAGE) as *const _, PAGE, PAGE_NOACCESS, &mut old) } == 0 {
++            continue;
++        }
++        if old != PAGE_READWRITE && old != PAGE_READONLY {
++            restore(page, old);
++            continue;
++        }
++        map.insert(page, old);
++        any = true;
++    }
++    if any {
++        STATS[0].fetch_add(1, Ordering::Relaxed);
++        STATS[4].fetch_add(len as u64, Ordering::Relaxed);
++    }
++}
++
++fn restore(page: usize, old: u32) {
++    use windows_sys::Win32::System::Memory::VirtualProtect;
++    let mut was = 0;
++    // SAFETY: a page this module protected.
++    unsafe { VirtualProtect((page * PAGE) as *const _, PAGE, old, &mut was) };
++}
++
++/// `victory.exe`'s own code: [start, end).
++fn own_code() -> (usize, usize) {
++    static RANGE: std::sync::OnceLock<(usize, usize)> = std::sync::OnceLock::new();
++    *RANGE.get_or_init(|| {
++        use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
++        use windows_sys::Win32::System::ProcessStatus::{K32GetModuleInformation, MODULEINFO};
++        use windows_sys::Win32::System::Threading::GetCurrentProcess;
++        // SAFETY: the process's own module; plain data out.
++        unsafe {
++            let module = GetModuleHandleW(std::ptr::null());
++            let mut info: MODULEINFO = std::mem::zeroed();
++            if K32GetModuleInformation(GetCurrentProcess(), module, &mut info, size_of::<MODULEINFO>() as u32) == 0 {
++                return (0, 0);
++            }
++            (info.lpBaseOfDll as usize, info.lpBaseOfDll as usize + info.SizeOfImage as usize)
++        }
++    })
++}
++
++fn install() {
++    use windows_sys::Win32::Foundation::{EXCEPTION_ACCESS_VIOLATION, NTSTATUS};
++    use windows_sys::Win32::System::Diagnostics::Debug::{
++        AddVectoredExceptionHandler, EXCEPTION_CONTINUE_EXECUTION, EXCEPTION_CONTINUE_SEARCH, EXCEPTION_POINTERS,
++    };
++    unsafe extern "system" fn on_touch(info: *mut EXCEPTION_POINTERS) -> i32 {
++        // SAFETY: the system passes the exception being dispatched.
++        let (r, rip) = unsafe { (&*(*info).ExceptionRecord, (*(*info).ContextRecord).Rip as usize) };
++        if r.ExceptionCode != EXCEPTION_ACCESS_VIOLATION as NTSTATUS || r.NumberParameters < 2 {
++            return EXCEPTION_CONTINUE_SEARCH;
++        }
++        let page = r.ExceptionInformation[1] / PAGE;
++        let mut g = PROBED.lock().unwrap_or_else(|e| e.into_inner());
++        let Some(old) = g.as_mut().and_then(|m| m.remove(&page)) else {
++            return EXCEPTION_CONTINUE_SEARCH;
++        };
++        restore(page, old);
++        let (a, b) = own_code();
++        let ours = rip >= a && rip < b;
++        STATS[if ours { 2 } else { 1 }].fetch_add(1, Ordering::Relaxed);
++        EXCEPTION_CONTINUE_EXECUTION
++    }
++    static ONCE: std::sync::Once = std::sync::Once::new();
++    // SAFETY: the handler touches only this module's state and protections.
++    ONCE.call_once(|| unsafe {
++        AddVectoredExceptionHandler(1, Some(on_touch));
++    });
++}
++
++/// The line for the frame-rate log (since the start).
++pub(crate) fn line() -> Option<String> {
++    if every() == 0 {
++        return None;
++    }
++    let s: Vec<u64> = STATS.iter().map(|s| s.load(Ordering::Relaxed)).collect();
++    Some(format!(
++        "copy-back read probe (VICTORY_READ_PROBE={}), since the start: {} pieces probed ({} MB); read by the title {}, by this runtime {}, merged again unread {}",
++        every(),
++        s[0],
++        s[4] >> 20,
++        s[1],
++        s[2],
++        s[3]
++    ))
++}
 diff --git a/crates/victory-gpu/src/resource.rs b/crates/victory-gpu/src/resource.rs
 index 244a76c..59b7dd0 100644
 --- a/crates/victory-gpu/src/resource.rs
@@ -2886,7 +3534,7 @@ index c5365c4..a9c36ee 100644
                  table_slot: 1,
                  constant_slot: 2,
 diff --git a/crates/victory-gpu/src/shadow.rs b/crates/victory-gpu/src/shadow.rs
-index da0a268..19efc0b 100644
+index bb9d802..73f0cbd 100644
 --- a/crates/victory-gpu/src/shadow.rs
 +++ b/crates/victory-gpu/src/shadow.rs
 @@ -101,6 +101,9 @@ struct Card {
@@ -3068,7 +3716,7 @@ index da0a268..19efc0b 100644
  /// Ranges in order, those that overlap or touch as one.
  fn joined(mut ranges: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
      ranges.sort_unstable();
-@@ -2237,6 +2402,13 @@ impl Shadow {
+@@ -2334,6 +2499,13 @@ impl Shadow {
      }
  
      /// The title memory the copy is of: its start and length.
@@ -3082,7 +3730,7 @@ index da0a268..19efc0b 100644
      pub(crate) fn span(&self) -> (u64, u64) {
          (self.start, self.len)
      }
-@@ -2932,16 +3104,31 @@ impl Shadow {
+@@ -3063,16 +3235,31 @@ impl Shadow {
                      // SAFETY: inside the mapping of the copy's CPU side,
                      // which only the submitting thread writes.
                      let held = unsafe { std::slice::from_raw_parts_mut(self.data.add(at), n) };
@@ -3124,7 +3772,19 @@ index da0a268..19efc0b 100644
                      }
                  } else {
                      let Some(snapshot) = before.as_mut() else {
-@@ -3354,11 +3541,13 @@ impl Shadow {
+@@ -3513,6 +3700,11 @@ impl Shadow {
+     /// a copy has no other use for), as [`Shadow::merge_under_writes`].
+     /// `title` is scratch memory. Returns the bytes written to title
+     /// memory.
++    /// HybridGt: where the title buffer starts.
++    pub(crate) fn start_address(&self) -> u64 {
++        self.start
++    }
++
+     pub(crate) fn card_merge_relay(&self, at: usize, gpu: &[u8], fetched_after: u64, title: &mut Vec<u8>) -> usize {
+         let start = self.start as usize;
+         let Some(card) = &self.card else {
+@@ -3536,15 +3728,19 @@ impl Shadow {
          let skip: Vec<(usize, usize)> = {
              let dirty = card.dirty.lock().unwrap_or_else(|e| e.into_inner());
              let sent = card.sent.lock().unwrap_or_else(|e| e.into_inner());
@@ -3138,7 +3798,21 @@ index da0a268..19efc0b 100644
                  .collect()
          };
          title.clear();
-@@ -3547,6 +3736,7 @@ fn lookup(address: u64, len: u64, any: bool) -> Option<Arc<Shadow>> {
+         title.resize(n, 0);
++        crate::readprobe::before_merge(start + at, n);
++        crate::lazyback::before_merge(std::ptr::from_ref(self), start + at, n);
+         let mapped = crate::host::read_into((start + at) as *const u8, title);
+         // The stretch as read: what the card did not change is the
+         // title's, and may have been written again since.
+@@ -3566,6 +3762,7 @@ impl Shadow {
+         crate::watch::writing(start + at, n);
+         merge_race(as_read.as_deref(), (self.start, self.len), start + at, &title[..], "card relay");
+         crate::host::write_mapped((start + at) as *mut u8, title.as_ptr(), n);
++        crate::readprobe::after_merge(start + at, n);
+         n
+     }
+ }
+@@ -3729,6 +3926,7 @@ fn lookup(address: u64, len: u64, any: bool) -> Option<Arc<Shadow>> {
                      before: Mutex::default(),
                      dirty: Mutex::default(),
                      sent: Mutex::default(),
@@ -3146,7 +3820,7 @@ index da0a268..19efc0b 100644
                      size,
                  };
                  (on_card, Some(card))
-@@ -3763,6 +3953,7 @@ fn loose(address: u64, end: u64, unsized_ask: bool, any: bool) -> Option<Arc<Sha
+@@ -3945,6 +4143,7 @@ fn loose(address: u64, end: u64, unsized_ask: bool, any: bool) -> Option<Arc<Sha
                  before: Mutex::default(),
                  dirty: Mutex::default(),
                  sent: Mutex::default(),
@@ -3154,7 +3828,7 @@ index da0a268..19efc0b 100644
                  size: len,
              };
              (on_card, Some(card))
-@@ -4042,6 +4233,7 @@ mod card_merge_tests {
+@@ -4224,6 +4423,7 @@ mod card_merge_tests {
                  before: Mutex::new(None),
                  dirty: Mutex::default(),
                  sent: Mutex::new(vec![(title_byte, title_byte + 1, 7)]),
@@ -3162,7 +3836,7 @@ index da0a268..19efc0b 100644
                  // 0: no card bytes counted (`Drop` takes them off again).
                  size: 0,
              });
-@@ -4098,3 +4290,46 @@ pub(crate) fn near(va: u64) -> String {
+@@ -4280,3 +4480,46 @@ pub(crate) fn near(va: u64) -> String {
      }
      text
  }
@@ -3571,7 +4245,7 @@ index b9cf571..670dcb9 100644
 +    }
  }
 diff --git a/crates/victory-gpu/src/watch.rs b/crates/victory-gpu/src/watch.rs
-index 057f938..129f66b 100644
+index 72612f2..acfd3e3 100644
 --- a/crates/victory-gpu/src/watch.rs
 +++ b/crates/victory-gpu/src/watch.rs
 @@ -25,6 +25,7 @@
@@ -3582,7 +4256,37 @@ index 057f938..129f66b 100644
  
  /// The unit tracked and copied: 64 KiB, the console's page (the kernel's
  /// 4 KiB pages fold into it). Finer units made the checks of the world's
-@@ -983,21 +984,47 @@ pub struct Remapping(#[allow(dead_code)] std::sync::RwLockWriteGuard<'static, ()
+@@ -821,6 +822,7 @@ fn protect_alias(g: &mut Guards, block: usize) {
+     let mut old = 0;
+     // SAFETY: title view memory; only its protection changes.
+     if unsafe { VirtualProtect((block * BLOCK) as *const _, BLOCK, PAGE_READONLY, &mut old) } != 0 {
++        crate::lazyback::protected(block * BLOCK, BLOCK, PAGE_READONLY);
+         g.protected.insert(block);
+         if view_known() {
+             g.viewed.insert(block);
+@@ -851,11 +853,13 @@ fn protect_here(g: &mut Guards, from: usize, to: usize) {
+         }
+     };
+     if set(from, to) {
++        crate::lazyback::protected(from * BLOCK, (to - from) * BLOCK, PAGE_READONLY);
+         note(g, from, to);
+         return;
+     }
+     for block in from..to {
+         if set(block, block + 1) {
++            crate::lazyback::protected(block * BLOCK, BLOCK, PAGE_READONLY);
+             note(g, block, block + 1);
+         } else {
+             #[cfg(feature = "diagnostics")]
+@@ -932,6 +936,7 @@ fn open_here(g: &mut Guards, start: usize, end: usize) -> bool {
+         let mut old = 0;
+         // SAFETY: a block we made read-only.
+         unsafe { VirtualProtect((block * BLOCK) as *const _, BLOCK, PAGE_READWRITE, &mut old) };
++        crate::lazyback::protected(block * BLOCK, BLOCK, windows_sys::Win32::System::Memory::PAGE_READWRITE);
+     }
+     !blocks.is_empty()
+ }
+@@ -1066,21 +1071,47 @@ pub struct Remapping(#[allow(dead_code)] std::sync::RwLockWriteGuard<'static, ()
  
  impl Drop for Remapping {
      fn drop(&mut self) {
@@ -3633,6 +4337,14 @@ index 057f938..129f66b 100644
  }
  
  /// What a read of title memory in place holds ([`title_memory_reading`]).
+@@ -1109,6 +1140,7 @@ pub fn title_memory_reading_now() -> Option<Reading> {
+ /// shows is new and read-write, so it is no longer guarded (nor known
+ /// unmapped).
+ pub fn title_memory_remapped(at: usize, len: usize) {
++    crate::lazyback::remapped(at, len);
+     // A placed texture there arrives, goes or changes with no descriptor
+     // written.
+     crate::descriptor::host::remapped(at, len);
 diff --git a/crates/victory-gpu/third_party/fsr1/LICENSE.txt b/crates/victory-gpu/third_party/fsr1/LICENSE.txt
 new file mode 100644
 index 0000000..324cba5
@@ -7984,7 +8696,7 @@ index 51e3590..4b4cc96 100644
      #[cfg(windows)]
      all.push(apu::module());
 diff --git a/crates/victory-hle/src/modules/xmem.rs b/crates/victory-hle/src/modules/xmem.rs
-index e898459..8792921 100644
+index e898459..dbe4691 100644
 --- a/crates/victory-hle/src/modules/xmem.rs
 +++ b/crates/victory-hle/src/modules/xmem.rs
 @@ -383,6 +383,14 @@ struct Physical {
@@ -8002,7 +8714,71 @@ index e898459..8792921 100644
  }
  
  static PHYSICAL: LazyLock<Mutex<Physical>> = LazyLock::new(|| {
-@@ -474,7 +482,11 @@ pub extern "system" fn XMemFreePhysicalPages(n: usize, pages: *const usize) -> B
+@@ -397,6 +405,13 @@ fn physical() -> MutexGuard<'static, Physical> {
+     PHYSICAL.lock().unwrap_or_else(|e| e.into_inner())
+ }
+ 
++/// HybridGt: whether the title's physical pages are made in committed
++/// sections (`VICTORY_POOL_COMMIT=1`; off by default).
++fn pool_commit() -> bool {
++    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *ON.get_or_init(|| std::env::var_os("VICTORY_POOL_COMMIT").is_some_and(|v| v == "1"))
++}
++
+ /// `count` is in and out (pages wanted, pages given); all or nothing here.
+ pub extern "system" fn XMemAllocatePhysicalPages(
+     flags: u64,
+@@ -414,21 +429,33 @@ pub extern "system" fn XMemAllocatePhysicalPages(
+     // A pagefile-backed section of `size` bytes, its pages committed when
+     // first mapped or written (`commit`): the title asks for 6.1
+     // GiB at once, which a busy host often cannot commit (error 1450).
+-    // SAFETY: plain section creation.
+-    let handle = unsafe {
++    // HybridGt: `VICTORY_POOL_COMMIT=1` makes it committed whole, which
++    // the GPU side can open as a host heap and place the title's buffers
++    // in (`victory_gpu` `inplace`: no copies); refused (the commit limit),
++    // it is made reserved as before.
++    let make = |flags| unsafe {
+         CreateFileMappingW(
+             INVALID_HANDLE_VALUE,
+             std::ptr::null(),
+-            // Under Wine a committed section is a sparse file, free until
+-            // touched, and committing a reserved one page by page costs a
+-            // wineserver request each that scans every range committed so
+-            // far: commit it whole there.
+-            PAGE_READWRITE | if on_wine() { SEC_COMMIT } else { SEC_RESERVE },
++            PAGE_READWRITE | flags,
+             (size as u64 >> 32) as u32,
+             size as u32,
+             std::ptr::null(),
+         )
+     };
++    // Under Wine a committed section is a sparse file, free until touched,
++    // and committing a reserved one page by page costs a wineserver request
++    // each that scans every range committed so far: commit it whole there.
++    let want_commit = on_wine() || pool_commit();
++    // SAFETY: plain section creation.
++    let mut handle = if want_commit { make(SEC_COMMIT) } else { std::ptr::null_mut() };
++    let committed = !handle.is_null();
++    if !committed {
++        if want_commit && !on_wine() {
++            tracing::warn!(n, error = %std::io::Error::last_os_error(), "a committed page pool section was refused: reserved instead");
++        }
++        handle = make(SEC_RESERVE);
++    }
+     if handle.is_null() {
+         let error = std::io::Error::last_os_error();
+         tracing::warn!(n, %error, "XMemAllocatePhysicalPages failed");
+@@ -443,7 +470,7 @@ pub extern "system" fn XMemAllocatePhysicalPages(
+     );
+     // For the GPU side's in-place census: only a committed section can be
+     // opened as a host heap.
+-    victory_gpu::title_memory_section(handle as usize, size as u64, on_wine());
++    victory_gpu::title_memory_section(handle as usize, size as u64, committed);
+     let section = Arc::new(Section(handle));
+     let mut physical = physical();
+     let first = physical.next_page;
+@@ -474,7 +501,11 @@ pub extern "system" fn XMemFreePhysicalPages(n: usize, pages: *const usize) -> B
      let mut physical = physical();
      for i in 0..n {
          // SAFETY: the title passes `n` page numbers.
@@ -8015,7 +8791,7 @@ index e898459..8792921 100644
      }
      1
  }
-@@ -668,24 +680,64 @@ pub extern "system" fn XMemMapPhysicalPages(
+@@ -668,24 +699,64 @@ pub extern "system" fn XMemMapPhysicalPages(
      n: usize,
      pages: *const usize,
  ) -> *mut c_void {
@@ -8087,7 +8863,7 @@ index e898459..8792921 100644
          };
          // One view per run of consecutive slices of one section.
          let run = 1 + pages[i + 1..]
-@@ -697,16 +749,23 @@ pub extern "system" fn XMemMapPhysicalPages(
+@@ -697,16 +768,23 @@ pub extern "system" fn XMemMapPhysicalPages(
                  })
              })
              .count();
@@ -8114,7 +8890,7 @@ index e898459..8792921 100644
  pub extern "system" fn XMemMapPhysicalPagesScatter(
      addresses: *const *mut c_void,
      n: usize,
-@@ -715,19 +774,16 @@ pub extern "system" fn XMemMapPhysicalPagesScatter(
+@@ -715,19 +793,16 @@ pub extern "system" fn XMemMapPhysicalPagesScatter(
      if addresses.is_null() {
          return 0;
      }
@@ -8144,7 +8920,7 @@ index e898459..8792921 100644
              return 0;
          }
      }
-@@ -740,29 +796,69 @@ pub extern "system" fn XMemMapPhysicalPagesScatter(
+@@ -740,29 +815,69 @@ pub extern "system" fn XMemMapPhysicalPagesScatter(
  /// the title maps pages into a pool view, then has the GPU map them into its tiled
  /// heap. Page by page; false if a source page is not mapped physical memory.
  pub fn map_alias(to: u64, from: u64, len: u64) -> bool {
@@ -8228,7 +9004,7 @@ index e898459..8792921 100644
              return false;
          }
      }
-@@ -775,12 +871,8 @@ fn map(physical: &mut Physical, base: usize, len: usize, slice: Slice) -> bool {
+@@ -775,12 +890,8 @@ fn map(physical: &mut Physical, base: usize, len: usize, slice: Slice) -> bool {
      // SAFETY: splits the placeholder around the range (failing harmlessly
      // when the range is the whole placeholder), then maps the section
      // there; both act only on placeholders.
@@ -8243,7 +9019,7 @@ index e898459..8792921 100644
          MapViewOfFile3(
              slice.section.0,
              GetCurrentProcess(),
-@@ -793,6 +885,26 @@ fn map(physical: &mut Physical, base: usize, len: usize, slice: Slice) -> bool {
+@@ -793,6 +904,26 @@ fn map(physical: &mut Physical, base: usize, len: usize, slice: Slice) -> bool {
              0,
          )
      };
@@ -8270,7 +9046,7 @@ index e898459..8792921 100644
      if view.Value as usize != base {
          tracing::warn!(
              address = format_args!("{base:#x}"),
-@@ -802,17 +914,24 @@ fn map(physical: &mut Physical, base: usize, len: usize, slice: Slice) -> bool {
+@@ -802,17 +933,24 @@ fn map(physical: &mut Physical, base: usize, len: usize, slice: Slice) -> bool {
          );
          return false;
      }
@@ -8297,7 +9073,7 @@ index e898459..8792921 100644
      }
      physical.views.insert(base, (len, slice));
      true
-@@ -901,7 +1020,9 @@ fn unmap(physical: &mut Physical, base: usize, len: usize) {
+@@ -901,7 +1039,9 @@ fn unmap(physical: &mut Physical, base: usize, len: usize) {
                  }
              }
          }
@@ -8307,7 +9083,7 @@ index e898459..8792921 100644
          // SAFETY: a view we mapped; it becomes a placeholder again.
          unsafe {
              UnmapViewOfFile2(
-@@ -912,6 +1033,8 @@ fn unmap(physical: &mut Physical, base: usize, len: usize) {
+@@ -912,6 +1052,8 @@ fn unmap(physical: &mut Physical, base: usize, len: usize) {
                  MEM_PRESERVE_PLACEHOLDER,
              )
          };
@@ -13240,3 +14016,79 @@ index 2b6edd4..1a03345 100644
          } else {
              Err(why)
          }
+diff --git a/crates/victory-shader/src/structure.rs b/crates/victory-shader/src/structure.rs
+index a913176..ef731fd 100644
+--- a/crates/victory-shader/src/structure.rs
++++ b/crates/victory-shader/src/structure.rs
+@@ -897,6 +897,17 @@ impl<'a> Lanes<'a> {
+         if let Some(&m) = self.other.get(&k) {
+             return (m, false);
+         }
++        // A scalar pair can be parked in two VGPR lanes and restored one
++        // dword at a time. The spill pass turns these into scalar moves.
++        // Recover the original lane predicate only when the two words
++        // still come from the same known mask, in their original order.
++        if self.p.wave64 {
++            let source = (self.move_source(k.0), self.move_source(k.1));
++            if source != k && let Some(&m) = self.masks.get(&source) {
++                self.masks.insert(k, m);
++                return (m, true);
++            }
++        }
+         let p = self.p;
+         let (m, derived) = match self.join(k) {
+             Some(join) => join,
+@@ -939,6 +950,20 @@ impl<'a> Lanes<'a> {
+         (m, derived)
+     }
+ 
++    fn move_source(&self, mut value: Value) -> Value {
++        while let Some(&(b, i)) = self.defs.get(&value) {
++            let inst = &self.p.blocks[b].insts[i];
++            let [(Reg::S(_), source)] = inst.reads.as_slice() else {
++                break;
++            };
++            if inst.name() != "s_mov_b32" {
++                break;
++            }
++            value = *source;
++        }
++        value
++    }
++
+     /// A mask joined by phis at a block entry, and whether a mask coming in
+     /// on a forward edge derives from EXEC or a VALU result. Where every
+     /// lane arriving so far has the incoming mask set (or clear), the join
+@@ -1690,6 +1715,32 @@ mod tests {
+         }
+     }
+ 
++    #[test]
++    fn split_scalar_copies_across_a_branch_preserve_both_words_of_a_wave64_mask() {
++        for (high, intact) in [(0xBE83_036B, true), (0xBE83_036A, false)] {
++            let p = build(
++                &[
++                    0x7D84_0080, // v_cmp_eq_u32 vcc, 0, v0
++                    0xBE84_046A, // s_mov_b64 s[4:5], vcc
++                    0xBF06_0100, // s_cmp_eq_u32 s0, s1
++                    0xBF85_0004, // s_cbranch_scc1 -> join at 32
++                    0xBE82_036A, // s_mov_b32 s2, vcc_lo
++                    high,        // s_mov_b32 s3, vcc_hi (or vcc_lo)
++                    0xBE84_0302, // s_mov_b32 s4, s2
++                    0xBE85_0303, // s_mov_b32 s5, s3
++                    0xBEFE_0404, // s_mov_b64 exec, s[4:5]
++                    0x7E02_0280, // v_mov_b32 v1, 0
++                    S_ENDPGM,
++                ],
++                true,
++            );
++            let s = structure(&p).unwrap();
++            let compare = p.blocks[0].insts[0].write(Reg::S(VCC)).unwrap();
++            let restored = p.blocks[2].insts[0].write(Reg::S(EXEC)).unwrap();
++            assert_eq!(s.masks[&restored] == s.masks[&compare], intact);
++        }
++    }
++
+     #[test]
+     fn a_mask_joined_over_a_back_edge_with_a_rewritten_high_dword_is_not_the_compare() {
+         let p = build(

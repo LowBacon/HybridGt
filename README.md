@@ -20,18 +20,17 @@ Updated with each run. Measured numbers only.
 
 | Area | Progress | Detail |
 |---|---|---|
-| Shader programs translated | `███████████████████░` 99.8 % | 26,102 of 26,148 (offline `translate`, 2026-11-25 evening). Left: 29 FidelityFX DXBC the game never runs, 10 POPS ped shaders (switch `VICTORY_POPS=1`, off: glowing eyes), 5 shadow-ray (need the BVH builder), 2 lane-mask |
-| Shaders passing Microsoft's DXIL validator | `███████████████████░` 99.1 % | the rest: signature packing (flat and interpolated values in one row) and 71 mesh shaders over 32 KiB of outputs; NVIDIA's driver takes them |
-| Geometry shaders (voxel lighting) | `████████████████████` 100.0 % | all 195 translate and validate; host pipelines with them behind `VICTORY_TITLE_GS=1` (stable in next20; not yet seen drawing in the cell) |
-| Frame rate vs 30 fps goal | `███░░░░░░░░░░░░░░░░░` 17.0 % | median 5.1 fps (196 ms, run next28); spikes: one frame in ten over 0.6 s |
-| Ray tracing | `░░░░░░░░░░░░░░░░░░░░` 0.0 % | BVH builder corrupts title memory: off |
-| FSR 1 upscale on present | `██████████░░░░░░░░░░` 50.0 % | built and tested on the GPU (`VICTORY_FSR=1`); not measured in game |
-| Series S boot | `░░░░░░░░░░░░░░░░░░░░` 0.0 % | blocked on device method 0x218 |
+| Shader programs translated | `███████████████████░` 99.8 % | 45 left: 29 FidelityFX DXBC the game never runs, 10 POPS ped shaders (off: glowing eyes), 5 shadow-ray (BVH), 1 cascade shadow (wave64 in multi-wave groups) |
+| Shaders passing Microsoft's DXIL validator | `███████████████████░` 99.1 % | the rest: signature rows mixing flat and interpolated values, 71 mesh shaders over 32 KiB of outputs (NVIDIA takes them) |
+| Geometry shaders (voxel lighting) | `████████████████████` 100.0 % | translate and validate; host pipelines behind `VICTORY_TITLE_GS=1` |
+| Console pipeline methods 0x218 / 0x1c8 | `██████████░░░░░░░░░░` 50.0 % | 0x218 (compute) builds pipelines from the containers of its code (`VICTORY_NATIVE_PIPELINES=1`, 1,024+ made, 0 missed); 0x1c8 (graphics: water, glass, prologue crash) not yet |
+| Frame rate vs 30 fps goal | `████░░░░░░░░░░░░░░░░` 23.3 % | 5.2-7.0 fps in the world (run next36, fxceless d510ee4 merged); streaming frames stall on per-page remaps (246 ms) |
+| Ray tracing | `░░░░░░░░░░░░░░░░░░░░` 0.0 % | BVH builder off; DexNom's builder work needs a merge by hand |
+| FSR 1 upscale on present | `████████████████████` 100.0 % | runs in game (`VICTORY_FSR=1`, 720p -> 1080p); no frame-rate gain measured: the frame is CPU-bound |
+| FSR 3.1 (temporal) | `░░░░░░░░░░░░░░░░░░░░` 0.0 % | needs the game's motion vectors and depth: the game calls FSR only on its Series S path (blocked by 0x1c8/0x218) |
+| Series S boot | `░░░░░░░░░░░░░░░░░░░░` 0.0 % | blocked on device method 0x1c8 |
 
-Where a frame goes now (run next22-next28, ~200 ms): copy-back of what shaders wrote 70-100 ms (the
-title reads only 6.5 % of it: copy-back on first touch built, `VICTORY_LAZY_BACK=1`, crashes, off);
-copies of title memory to the card 45-80 ms (185 MB at 2.3 GB/s: overhead, not bandwidth); the pass
-over bindless buffer views 45-75 ms; GPU 3-130 ms.
+Details of every run: `docs/PERFORMANCE_OPTIMIZATION.md`.
 
 ## Status (2026-11-25)
 
