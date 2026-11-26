@@ -4,9 +4,9 @@
 <text x="16" y="28" class="t">HybridGt progress</text>
 <text x="16" y="60">Shader programs translate</text>
 <rect class="bg" x="250" y="48" width="380" height="16" rx="4" fill="#eaeef2"/>
-<rect x="250" y="48" width="379.6" height="16" rx="4" fill="#2e9e4f"/>
-<text x="640" y="61" class="p">99.9 %</text>
-<text x="686" y="61" class="n">26,069 of 26,084</text>
+<rect x="250" y="48" width="379.9" height="16" rx="4" fill="#2e9e4f"/>
+<text x="640" y="61" class="p">100.0 %</text>
+<text x="686" y="61" class="n">26,079 of 26,084 (POPS with ROVs)</text>
 <text x="16" y="90">Pass Microsoft's DXIL validator</text>
 <rect class="bg" x="250" y="78" width="380" height="16" rx="4" fill="#eaeef2"/>
 <rect x="250" y="78" width="373.9" height="16" rx="4" fill="#7cb342"/>

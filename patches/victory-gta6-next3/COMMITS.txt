@@ -1,3 +1,4 @@
+9a60506d Shaders: pixel shaders that order their pixels themselves (POPS) get rasterizer-ordered views for their writable textures (VICTORY_POPS=rov, off): the 10 ped tint cut-out shaders validate and
 05dd46a5 Shaders: wave-wide branches in thread groups of several console waves are decided by the whole group (VICTORY_GROUP_WIDE=1, off until a game run): the last 6 compute programs NVIDIA refused f
 f3b013d0 FidelityFX: the title's upscale context flags said by name; AMD's runtime's messages go to our log (not to the title's callback); VICTORY_FFX_DEBUG=1 turns on its checks, VICTORY_FFX_ADD_FLAG
 0655a8d9 Textures on screen first (VICTORY_TEXTURE_MARKS=1, off): translated pixel and compute shaders mark the heap slots of the textures they pick in a map on the card; a copy queue of ours reads it
