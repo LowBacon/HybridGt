@@ -1,0 +1,34 @@
+@echo off
+rem combined build (hybridgt/on-coolfox): cool_fox settings + HybridGt pipelines
+set VICTORY_GAME_DIR=E:\GTA\GTA6.Xbox.v1.0.2.1
+set VICTORY_DATA_DIR=E:\GTA\HybridGt-work\data
+set VICTORY_CACHE_DIR=E:\GTA\HybridGt-work\cache-merged
+set VICTORY_LOG=info
+set VICTORY_GAME_DIR=%~dp0..\GTA6.Xbox.v1.0.2.1
+set VICTORY_AMBIENT_AIR=1.5
+set VICTORY_TEXTURE_NO_WAIT=1
+set VICTORY_RELAY=2
+set VICTORY_WIDE_BACK=1
+set VICTORY_CARD_REHASH_RUNS=1
+set VICTORY_JOIN_COPIES=1
+set VICTORY_INDIRECT_WINDOW=1
+set VICTORY_RELAY_COPY=1
+set VICTORY_CARD_STEPS=2
+set VICTORY_INDIRECT_BATCH=2
+set VICTORY_MAP_THREADS=1
+set VICTORY_CARD_AWAKE=1
+set VICTORY_SHOW_AFTER=1
+set VICTORY_AMBIENT=0.8
+set VICTORY_THIN=1
+set VICTORY_JOIN_PARTS=8
+set VICTORY_UPLOAD_AHEAD=1
+set VICTORY_LEVELS_ON_DEMAND=1
+set VICTORY_CARD_BUFFERS_MIN_KB=64
+set VICTORY_NATIVE_INDEX=E:\GTA\HybridGt-work
+ative-index.txt
+set VICTORY_NATIVE_PIPELINES=1
+set VICTORY_NATIVE_GRAPHICS=1
+set VICTORY_NATIVE_RECTS=1
+set VICTORY_TITLE_GS=1
+set VICTORY_TEXTURE_BACK=1
+E:\GTA\HybridGt-work\target-coolfox\release\victory.exe run "E:\GTA\GTA6.Xbox.v1.0.2.1\game_scarlett_master.exe" --console series-s --execute > "E:\GTA\HybridGt-work\logs\%~n0.log" 2>&1

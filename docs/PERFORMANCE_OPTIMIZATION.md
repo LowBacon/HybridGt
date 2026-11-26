@@ -606,3 +606,15 @@ Plan: cool_fox as the base, our 0x1c8 pipelines, rectangle stage, format memory,
 translator fixes and fxceless's texture thread carried onto it, then the 295 ms found.
 A straight merge of cool_fox into our tree met 347 conflict hunks (128 additions on both sides,
 219 real collisions).
+
+### Combined build: HybridGt on cool_fox (branch `hybridgt/on-coolfox`)
+
+Carried 27 HybridGt commits onto cool_fox (patch in `patches/hybridgt-on-coolfox/`). Translation
+over the whole game folder: **34 containers do not translate** (cool_fox alone 229, ours 47).
+Tests: victory-hle 150 and victory-gpu 334 passed; 2 cool_fox indirect tests fail (`indirect.rs`
+untouched by the carried commits). In the same new game with cool_fox's switch set plus ours
+(`tools/play-merged.example.cmd`): **2.7 fps median, 369 ms a frame: preparing 70 ms (copies 15),
+283 ms "on the GPU", copy-back 56** - the same as cool_fox alone. Two open problems: the cost on
+the GPU (cool_fox's base on this NVIDIA card), and device methods 0x218/0x1c8 report their code
+not found in that tree although the index loads (in our own tree they find 2,048 and 16,384).
+Our own tree (`play-fast.cmd`, 5.6 fps median with the boat fix merged) stays the build to play.
