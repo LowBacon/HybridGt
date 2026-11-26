@@ -618,3 +618,21 @@ untouched by the carried commits). In the same new game with cool_fox's switch s
 the GPU (cool_fox's base on this NVIDIA card), and device methods 0x218/0x1c8 report their code
 not found in that tree although the index loads (in our own tree they find 2,048 and 16,384).
 Our own tree (`play-fast.cmd`, 5.6 fps median with the boat fix merged) stays the build to play.
+
+### After the fxceless f6a09d3b merge: 0x1c8 pipelines off is faster and right (2026-11-26)
+
+Same new game, `play-fast.cmd` with fxceless's test set (frame lines with 300+ draws):
+
+| Run | fps median | p10 | best | Picture |
+|---|---|---|---|---|
+| before the merge (`play-rects`) | 5.6 | 1.2 | 6.9 | intro, bodies missing |
+| merged, 0x1c8 on (`play-fast`) | 6.5-7.0 | 2.6-2.8 | 8.8-9.0 | prologue reached, **bodies missing** |
+| merged, **0x1c8 off** (`play-ab-noncs`) | **7.7** | 2.3 | 8.9 | **cutscene and prison yard with whole characters** |
+| merged + cool_fox's relay switches (`play-cpu1`) | 2.1 | 0.9 | 6.8 | rejected |
+
+The merged fxceless code renders the prologue without device method 0x1c8; with our 0x1c8
+pipelines on, the characters' bodies are missing (the pipelines' state is not fully decoded:
+stencil operations among it). `play-fast.cmd` now has `VICTORY_NATIVE_GRAPHICS=0`; the 0x1c8 code
+stays in the tree behind the switch for later work.
+Memory while playing: VRAM 9.0-9.1 of 10.3 GB, RAM 23-24 GB with 0.7-4.5 GB free; the log notes the
+card without room for new textures, which is where late textures come from next.

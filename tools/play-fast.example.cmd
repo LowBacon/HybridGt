@@ -22,8 +22,9 @@ set VICTORY_COPY_PLAIN=1
 set VICTORY_BACK_OWN_VIEW=1
 set VICTORY_NATIVE_INDEX=E:\GTA\HybridGt-work\native-index.txt
 set VICTORY_NATIVE_PIPELINES=1
-rem 0x1c8 graphics pipelines (intro/prologue rendering); delete this line to turn it off
-set VICTORY_NATIVE_GRAPHICS=1
+rem 0x1c8 graphics pipelines: OFF (with them on, character bodies were missing; the merged fxceless
+rem code renders the prologue without them: A/B run 2026-11-26). Set to 1 only for tests.
+set VICTORY_NATIVE_GRAPHICS=0
 rem rectangle lists in 0x1c8 pipelines (the intro grids); delete to turn off
 set VICTORY_NATIVE_RECTS=1
 rem fxceless f6a09d3b test set (boats float with TEXTURE_BACK; texture pass on its own thread)
