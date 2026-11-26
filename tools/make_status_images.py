@@ -10,7 +10,7 @@ OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'docs', 'im
 
 # (file, label, value, colour)
 BADGES = [
-    ('badge-shaders.svg', 'shaders translated', '26,067 / 26,084', '#2e9e4f'),
+    ('badge-shaders.svg', 'shaders translated', '26,069 / 26,084', '#2e9e4f'),
     ('badge-fps.svg', 'world fps', '7.7 / 30', '#d9822b'),
     ('badge-fsr.svg', 'AMD FSR', '3.1.6 on RTX 4070 Ti', '#2e9e4f'),
     ('badge-raytracing.svg', 'ray tracing', 'builder runs, crashes', '#c0392b'),
@@ -20,7 +20,11 @@ BADGES = [
 # (area, percent done, note). Percentages are measured ratios where one exists
 # (programs, fps); otherwise the five-step scale of docs/STATUS.md (20 % a step).
 AREAS = [
-    ('Shader programs translate', 99.9, '26,067 of 26,084'),
+    ('Shader programs translate', 99.9, '26,069 of 26,084'),
+    ('Pass Microsoft\'s DXIL validator', 98.4, '25,466 of 25,874 emitted'),
+    ('Vertex/pixel pipelines on the card', 98.6, '14,237 of 14,442'),
+    ('Compute pipelines on the card', 98.8, '2,650 of 2,682 (27 need 64 lanes)'),
+    ('Mesh pipelines on the card', 100.0, '8,765 of 8,765'),
     ('Ray-tracing builder translates', 100.0, '52 of 52 programs'),
     ('Menus at 30 fps', 100.0, '30 fps'),
     ('World frame rate (goal 30)', 25.7, '7.7 fps median'),

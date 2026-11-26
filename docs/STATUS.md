@@ -16,7 +16,8 @@ game**.
 | Series S mode | `●●●●○` ④ | Boots and plays the prologue |
 | Black interiors (traced indirect light) | `●●●●○` ④ | `VICTORY_AMBIENT=1` stand-in lights them (costs about 1 fps). On in `play-fast` |
 | Boat sinks ("Cal fell off the boat") | `●●●○○` ③ | fxceless's `VICTORY_TEXTURE_BACK=1` makes boats float; not yet checked at that mission in our runs |
-| Water light volume shaders (above and under water) | `●●●○○` ③ | A mask parked in two halves across a loop was not followed; fixed in the translator, both now translate offline. Pipeline check on the card and game run pending |
+| Water light volume shaders (above and under water) | `●●●○○` ③ | A mask parked in two halves across a loop was not followed: fixed in the translator (with a test), both now translate and validate. The card still refuses their pipelines: they need 64-lane waves |
+| 27 compute programs that need 64-lane waves | `●●○○○` ② | Translate and validate, refused by NVIDIA (32 lanes): volumetric light (5), particle emitters (7), decal trails (7), hair shadow masks (2), `CS_Visibility`, triangle collection (2), heap defrag (2), liquid trails. In the last game run 5 of them came up and were dropped |
 | Ray tracing (real traced light) | `●●●○○` ③ | Builder translates whole (52/52) and runs, but our build crashes 11 s later; VIctory-7900XTX's build survives it but loses the GPU after 3.5 min |
 | 0x1c8 graphics pipelines (console path) | `●●●○○` ③ | Built, but they hide bodies (stencil not decoded). Off |
 | Lag spikes | `●●○○○` ② | Worst frames 1.3-2.8 s, when textures and pipelines arrive |
