@@ -1,3 +1,4 @@
+586469bb Merge fxceless/victory-gta6 52ac4ec0: mouths move (16-bit values through typed views, #927), SDWA sign extension, black-face texture fixes (textures under DirectStorage writes made due again)
 bd9e5f6a 0x1c8 pipelines: the console's stencil operations (DB_STENCIL_CONTROL at +0xbc, front and back faces) instead of KEEP everywhere; test with the prologue's most common stencil state (EQUAL, ad
 f926693c View addresses after the strides only with VICTORY_VIEW_ADDRESSES=1: they made every view heap's table 24 MiB instead of 8, and the run that had them (g2) had 0.5 GB of RAM left and every par
 041be1b9 Repository policy: FSR 1 headers as .hlsli; host.rs and lower.rs under the 512 KiB limit (frame meter, presenting and card-copy methods to host/extra.rs; lowering analyses, signature layout a
