@@ -10,6 +10,65 @@ index 29bab8c7..b0b1c778 100644
   "victory-hle",
   "victory-loader",
   "victory-pe",
+diff --git a/README.md b/README.md
+index bcfe844a..cdd29fdf 100644
+--- a/README.md
++++ b/README.md
+@@ -28,7 +28,7 @@ developer or publisher.
+   are carried here unchanged apart from one merge conflict.
+ - This fork's changes were developed with [Claude Code](https://claude.com/claude-code).
+ 
+-## Status of this fork (2026-11-26, 09:00 UTC)
++## Status of this fork (2026-11-26, 11:50 UTC)
+ 
+ **Playable, slowly: about 8 to 9.5 world frames per second at the first boat mission (the console runs
+ 30), 10 to 14 in lighter views. The tester has played from the opening through the prologue and past
+@@ -49,7 +49,44 @@ Tested on one machine: Windows 11, Intel i7-14700KF, NVIDIA RTX 4070 12 GB,
+ | Stability | **the card is lost after 30 to 50 minutes of play**: Windows reports the device removed (0x887A0005) with no driver event and no freeze, twice (runs 277 and 279); once a hang after 6 minutes with two driver events (run 276). Cause not known. In the tree to find it: crash tracing cheap enough to leave on (`VICTORY_D3D12_DRED=faults`), the memory at the moment of a loss, and a cap on oversized constant views (an invalid call another tester's card answered with a removal) |
+ | Memory | about 23 to 27 GB of the PC's 32 GB and 9.2 to 9.6 GB of the card's 10.3 GB budget while playing |
+ 
+-### Newest (2026-11-26, 09:00 UTC)
++### Newest (2026-11-26, 11:50 UTC)
++
++- **Measured twice: a submission's texture checks side by side on the helper threads
++  (`VICTORY_PARALLEL_REFRESH=1`):** 8.7 and 9.4 ms less of the preparing thread's work a frame at equal
++  draws (two launches, switched on and off every 20 s); the checks run 3.6-3.8 times side by side.
++  With `VICTORY_SETTLE_ROOM=1` that is about 20 ms off that thread.
++- **Found: the frame's wall is now the graphics card.** With both on, the preparing thread works about
++  60 ms a frame at the boat but the card runs 84 to 128 ms a frame (by its own clock) and the frame does
++  not move: the two were nearly equal before. The card's time is spread over about 1,300 pipelines; the
++  translated programs are about 2.4 times the console's instruction count, broadly, with no single
++  cheap pattern. That is where the frame rate has to come from next.
++- **Measured at no gain, left off:** `VICTORY_WIDE_REFRESH`, `VICTORY_VIEW_KNOWN`, `VICTORY_CARD_HASH_WIDE`
++  (card time down, the preparing thread's up by more).
++- **The streaming of models is not held up on our side:** no DirectStorage request took a second; the
++  slowest was half a second. The stand-in models and the haze come from elsewhere (most likely the
++  title streaming per frame at a low frame rate; not proven).
++- The dispatch spread's switch is now `VICTORY_DISPATCH_SPREAD` (`VICTORY_SPREAD` is another feature's).
++
++### Earlier (2026-11-26, 10:40 UTC)
++
++- **Measured: flights get more room before they are settled (`VICTORY_SETTLE_ROOM=1`):** the thread
++  that prepares submissions waits for the card 4.6 ms a frame instead of 17.7 at the first boat
++  mission, 11.5 ms less of its work a frame at equal draws (one launch, switched on and off every
++  20 s). Off by default; the test set turns it on.
++- **Compute dispatches of more than 65,535 groups run spread across z** (after upstream VIctory pull
++  request #2312): the title asks for up to 115,200 groups (one per 32 pixels at 1440p) in a pass that
++  was cut to 65,535, losing 43 % of it. Tested on the card; costs nothing measurable. No visible change
++  yet (the pass most likely gathers ray-traced light, which does not run).
++- **Texture slots that read zeros for good are asked again (`VICTORY_REASK_BLANK=1`, diagnostics
++  builds):** at the boat the slots showing a copy with no level went from about 385 to 0.
++- **BC7 channel rotation only in modes 4 and 5** (upstream VIctory pull request #3111).
++- **Instruments:** reads held for the title's DirectStorage Submit (they wait about 40 ms, so not the
++  cause of the late models), the price of a failed write-watch asking, refreshes that copied nothing,
++  `VICTORY_DENY_PIPELINES` (a pipeline is never built), the ray-tracing builder's pipelines named.
++- **Measured at no gain, left off:** `VICTORY_NEAR_WRITES` (the work moved into the final flush),
++  `VICTORY_SYNC_BESIDE` (the two threads slow each other), `VICTORY_VIEW_KNOWN` (about 2 ms).
++
++### Earlier (2026-11-26, 09:00 UTC)
+ 
+ - **Measured: the texture pass on a thread of its own (`VICTORY_HEAP_WORKER=1`, pull request #1007)
+   raises the world frame rate at the boat from 6.2 to 6.7 to 8.65, 9.50 and 9.53 frames a second**
 diff --git a/apps/victory/Cargo.toml b/apps/victory/Cargo.toml
 index 5fddd5b2..7ce38e26 100644
 --- a/apps/victory/Cargo.toml
@@ -376,6 +435,143 @@ index 640d2109..7a4ccbf8 100644
              _ => host::stub_vs(&shader).and_then(|vs| h.pipeline(&vs, &shader).map(drop)),
          };
          match made {
+diff --git a/crates/victory-formats/src/bcpack.rs b/crates/victory-formats/src/bcpack.rs
+index c8d35378..11dada0f 100644
+--- a/crates/victory-formats/src/bcpack.rs
++++ b/crates/victory-formats/src/bcpack.rs
+@@ -744,10 +744,19 @@ fn pbits(mode: u16) -> bool {
+     matches!(mode, 0 | 1 | 3 | 6 | 7)
+ }
+ 
++/// Channel rotation bits; only BC7 modes 4 and 5 have a rotation field.
++fn rotation(ctrl: u16) -> usize {
++    if matches!(ctrl & 7, 4 | 5) {
++        usize::from(ctrl >> 3 & 3)
++    } else {
++        0
++    }
++}
++
+ /// Channel precisions: the p-bit is red's lowest bit; rotation swaps alpha
+ /// with the rotated channel.
+ fn bc7_precision(ctrl: u16) -> [u8; 4] {
+-    let (mode, rot) = (ctrl & 7, usize::from(ctrl >> 3 & 3));
++    let (mode, rot) = (ctrl & 7, rotation(ctrl));
+     let mut p = BC7_BITS[usize::from(mode)];
+     if rot != 0 {
+         p.swap(3, rot - 1);
+@@ -852,7 +861,7 @@ fn bc7_pack(ep: &Bc7Ep, ix: &Bc7Ix, prec: [u8; 4], out: &mut [u8]) {
+     let mode = ctrl & 7;
+     let subsets = usize::from((ctrl & 0xff) >> 6);
+     let part = usize::from(ctrl >> 8 & 63);
+-    let rot = usize::from(ctrl >> 3 & 3);
++    let rot = rotation(ctrl);
+     let mut w = Bits::default();
+     w.put(1 << mode, u32::from(mode) + 1);
+     match mode {
+@@ -1341,6 +1350,102 @@ mod tests {
+         assert_eq!(dst, w.v.to_le_bytes());
+     }
+ 
++    #[test]
++    fn bc7_rotation_applies_only_to_modes_4_and_5() {
++        const BC7_WIDTHS: [u8; 16] = [3, 3, 7, 7, 7, 7, 7, 6, 6, 4, 5, 7, 7, 7, 7, 4];
++        const CTRL7_OFFSET: usize = MODELS * BUCKETS * 2 + 256 + 64 + 256 + 64 + 64;
++        let tables_for = |ctrl: u16| {
++            let mut raw = tables();
++            raw[CTRL7_OFFSET..CTRL7_OFFSET + 2].copy_from_slice(&ctrl.to_le_bytes());
++            let t = Tables::parse(&raw).unwrap();
++            assert_eq!(t.ctrl7[0], ctrl);
++            t
++        };
++
++        let mut record = vec![0u8; 32];
++        for (i, &val) in [11, 23, 5, 19, 13, 29, 7, 17, 3, 25, 9, 21, 15, 31, 1, 12]
++            .iter()
++            .enumerate()
++        {
++            record[4 + i] = zigzag(val);
++        }
++        record[20] = zigzag(6);
++        record[21] = zigzag(14);
++
++        // Modes without a BC7 rotation field must ignore ctrl bits 4:3 instead of
++        // panicking on shift overflow (modes 0/1/3 with rot=1) or corrupting channels.
++        for (mode, subsets) in [(0u16, 3u16), (1, 2), (2, 3), (3, 2), (6, 1), (7, 2)] {
++            let base_ctrl = (subsets << 6) | mode;
++            let base_tables = tables_for(base_ctrl);
++            let base_src = stream(&base_tables, &BC7_WIDTHS, 2, std::slice::from_ref(&record));
++            let mut want = [0u8; 16];
++            decode(7, &base_src, &mut want, &base_tables).unwrap();
++
++            for rot in 1..=3u16 {
++                let ctrl = base_ctrl | (rot << 3);
++                let t = tables_for(ctrl);
++                let src = stream(&t, &BC7_WIDTHS, 2, std::slice::from_ref(&record));
++                let mut got = [0u8; 16];
++                decode(7, &src, &mut got, &t).unwrap();
++                assert_eq!(got, want, "mode {mode} rot {rot}");
++                assert_eq!(
++                    bc7_precision(ctrl),
++                    bc7_precision(base_ctrl),
++                    "mode {mode} rot {rot}"
++                );
++            }
++        }
++
++        // Modes 4 and 5 do have a 2-bit rotation field: rotation swaps alpha with channel rot-1.
++        for (mode, base_bits) in [(4u16, [5u8, 5, 5, 6]), (5u16, [7u8, 7, 7, 8])] {
++            for rot in 1..=3usize {
++                let ctrl = (1 << 6) | ((rot as u16) << 3) | mode;
++                let mut expected_prec = base_bits;
++                expected_prec.swap(3, rot - 1);
++                assert_eq!(bc7_precision(ctrl), expected_prec, "mode {mode} rot {rot}");
++            }
++
++            // Decode mode 4/5 with rot=1 (swap R and A) and check the packed BC7 block.
++            let ctrl = (1 << 6) | (1 << 3) | mode;
++            let t = tables_for(ctrl);
++            let mut s = vec![0u8; 32];
++            s[4] = zigzag(0x21); // stored R0 (holds alpha precision after rot=1)
++            s[5] = zigzag(0x12); // stored R1
++            s[6] = zigzag(0x05); // stored G0
++            s[7] = zigzag(0x06); // stored G1
++            s[8] = zigzag(0x09); // stored B0
++            s[9] = zigzag(0x0a); // stored B1
++            s[10] = zigzag(0x0d); // stored A0 (holds color precision after rot=1)
++            s[11] = zigzag(0x0e); // stored A1
++            let src = stream(&t, &BC7_WIDTHS, 2, &[s]);
++            let mut dst = [0u8; 16];
++            decode(7, &src, &mut dst, &t).unwrap();
++
++            let color_bits = u32::from(base_bits[0]);
++            let alpha_bits = u32::from(base_bits[3]);
++            let mut w = Bits::default();
++            w.put(1 << mode, u32::from(mode) + 1);
++            w.put(1, 2); // rotation = 1
++            if mode == 4 {
++                w.put(0, 1); // indexSelectionBit = 0
++            }
++            // Endpoint order after rot=1 swaps indices 3 and 0: [3 (R), 1 (G), 2 (B), 0 (A)].
++            for (v, n) in [
++                (0x0d, color_bits),
++                (0x0e, color_bits),
++                (0x05, color_bits),
++                (0x06, color_bits),
++                (0x09, color_bits),
++                (0x0a, color_bits),
++                (0x21, alpha_bits),
++                (0x12, alpha_bits),
++            ] {
++                w.put(v, n);
++            }
++            assert_eq!(dst, w.v.to_le_bytes(), "mode {mode} rot 1");
++        }
++    }
++
+     #[test]
+     fn malformed_input_is_an_error() {
+         let t = Tables::parse(&tables()).unwrap();
 diff --git a/crates/victory-game/src/sgd5.rs b/crates/victory-game/src/sgd5.rs
 index 5605b516..20357c59 100644
 --- a/crates/victory-game/src/sgd5.rs
@@ -930,11 +1126,280 @@ index 00000000..8a3d46e1
 +        make(&host.device, |bytes| host.uav_buffer(bytes)).expect("the passes");
 +    }
 +}
+diff --git a/crates/victory-gpu/src/copystat.rs b/crates/victory-gpu/src/copystat.rs
+index b05bd7f4..e916dcb8 100644
+--- a/crates/victory-gpu/src/copystat.rs
++++ b/crates/victory-gpu/src/copystat.rs
+@@ -133,8 +133,33 @@ pub(crate) enum C {
+     /// `watch::writes` askings not made because the range's first block is
+     /// already known to be guarded view memory (no kernel call).
+     WatchKnownView,
++    /// Microseconds of the `watch::writes` askings whose kernel call failed
++    /// and fell to the guards: the failed call, the look at what the
++    /// memory is, the guards' walk.
++    WatchFailedUs,
++    /// Microseconds of the askings answered by the guards with no kernel
++    /// call (`WatchKnownView`).
++    WatchKnownUs,
++    /// Refreshes of a watched host copy's range (`Shadow::update_free`)
++    /// that copied nothing, and their microseconds (the asking included).
++    RefreshNone,
++    RefreshNoneUs,
++    /// The ones that copied something, and their microseconds.
++    RefreshSome,
++    RefreshSomeUs,
++    /// With `VICTORY_REFRESH_COUNT=1`: of the refreshes that copied
++    /// nothing, those known unchanged before asking
++    /// (`crate::watch::unchanged_known`), and their microseconds: what a
++    /// skip of them would take off at most.
++    RefreshKnown,
++    RefreshKnownUs,
++    /// Refreshes skipped as known unchanged (`VICTORY_REGION_SKIP`).
++    RefreshSkipped,
+ }
+-const COUNTERS: usize = 80;
++/// One slot per counter: follows the enum (a fixed 80 was outrun by the
++/// refresh counters and ended run 324 with an index past the end).
++const COUNTERS: usize = C::RefreshSkipped as usize + 1;
++const _: () = assert!(COUNTERS <= 256, "the counters' array stays small");
+ static COUNT: [AtomicU64; COUNTERS] = [const { AtomicU64::new(0) }; COUNTERS];
+ 
+ pub(crate) fn add(c: C, n: u64) {
+@@ -410,6 +435,21 @@ mod command_tests {
+     }
+ }
+ 
++#[cfg(test)]
++mod counter_tests {
++    /// Every counter has a slot: the last one too (run 324 ended with an
++    /// index past the end of a fixed-size array).
++    #[test]
++    fn the_last_counter_has_a_slot() {
++        use super::{C, COUNT, add};
++        use std::sync::atomic::Ordering::Relaxed;
++        let before = COUNT[C::RefreshSkipped as usize].load(Relaxed);
++        add(C::RefreshSkipped, 1);
++        add(C::RefreshKnownUs, 0);
++        assert!(COUNT[C::RefreshSkipped as usize].load(Relaxed) > before);
++    }
++}
++
+ #[cfg(test)]
+ mod own_tests {
+     use super::{OWN, block_class};
+@@ -1281,13 +1321,30 @@ pub(crate) fn log(frames: f64) {
+         );
+     }
+     tracing::info!(
+-        "  write-watch askings per frame that failed in the kernel: {:.0}; not made because the range \
+-         is known guarded view memory: {:.0} (VICTORY_VIEW_ASK=1 asks the kernel anyway); such ranges left \
++        "  write-watch askings per frame that failed in the kernel: {:.0} ({:.2} ms in all with their guard walks); \
++         not made because the range is known guarded view memory: {:.0} ({:.2} ms in all) (VICTORY_VIEW_ASK=1 asks \
++         the kernel anyway; VICTORY_VIEW_KNOWN=1 keeps written view blocks known); such ranges left \
+          out of the submissions' askings ahead: {:.0}",
+         c[C::WatchFailed as usize],
++        c[C::WatchFailedUs as usize] / 1e3,
+         c[C::WatchKnownView as usize],
++        c[C::WatchKnownUs as usize] / 1e3,
+         crate::watch::AHEAD_VIEWS.swap(0, Relaxed) as f64 / frames,
+     );
++    tracing::info!(
++        "  refreshes of watched host copies per frame: {:.0} copied nothing ({:.2} ms), {:.0} copied something \
++         ({:.2} ms); of those that copied nothing, {:.0} were known unchanged before asking ({:.2} ms; \
++         VICTORY_REFRESH_COUNT=1 looks: every block of the range read-only by our hand and clean, or the range \
++         asked ahead, and no page noted written since the copy took it); skipped as known unchanged \
++         (VICTORY_REGION_SKIP): {:.0}",
++        c[C::RefreshNone as usize],
++        c[C::RefreshNoneUs as usize] / 1e3,
++        c[C::RefreshSome as usize],
++        c[C::RefreshSomeUs as usize] / 1e3,
++        c[C::RefreshKnown as usize],
++        c[C::RefreshKnownUs as usize] / 1e3,
++        c[C::RefreshSkipped as usize],
++    );
+     crate::draw::window_line(frames);
+     tracing::info!(
+         "  waits for every earlier shader write, per frame: {:.0} for the title's barrier groups, {:.0} \
+diff --git a/crates/victory-gpu/src/descriptor.rs b/crates/victory-gpu/src/descriptor.rs
+index 2a51ff09..bd5273dd 100644
+--- a/crates/victory-gpu/src/descriptor.rs
++++ b/crates/victory-gpu/src/descriptor.rs
+@@ -267,6 +267,123 @@ pub(crate) fn sync_heaps() {
+     }
+ }
+ 
++/// Whether a submission's pass over the title's view heaps ([`sync_heaps`])
++/// and the making of the slots that waited for a texture's host copy
++/// ([`make_waiting`]) run on a thread of their own while the submitting
++/// thread prepares the submission (`VICTORY_SYNC_BESIDE=1`; off by default:
++/// both on the submitting thread before preparing, as before). `alt`:
++/// twenty seconds with, twenty without, in turn, each change said in the
++/// log; decided once per submission.
++///
++/// Why: the pass is 9.0 to 11.1 ms a frame on the submitting thread in the
++/// boat-save runs 311-316 (its by-part line; "making the host slots of the
++/// changed records" 6.0 to 7.6 of it, 7,000 to 10,000 records a frame),
++/// and that thread is the frame's wall (at work 68 of a 79 ms usual frame,
++/// run 316). Preparing (40 to 60 ms) reads and writes title memory and host
++/// copies, not the host heap's slots; the slots are read when the lists
++/// run, after [`sync_end`].
++///
++/// What changes: the pass starts after the once-a-second sweep instead of
++/// before it (the sweep lets go only of what no slot names, so nothing the
++/// pass names is let go under it), and after the submission counts as
++/// started (what its slot writes retire waits for this submission too). It
++/// runs beside the submitting thread's steps, which may write title
++/// memory (memory-to-memory copies); records such a step writes into a
++/// view heap may be mirrored in this submission instead of the next.
++#[cfg(windows)]
++pub(crate) fn sync_beside() -> bool {
++    /// 0 off, 1 on, 2 in turn.
++    static MODE: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
++    match *MODE.get_or_init(|| match std::env::var("VICTORY_SYNC_BESIDE").as_deref() {
++        Ok("1") => 1,
++        Ok("alt") => 2,
++        _ => 0,
++    }) {
++        0 => false,
++        1 => true,
++        _ => {
++            static EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
++            let on = (EPOCH.get_or_init(std::time::Instant::now).elapsed().as_secs() / 20) % 2 == 1;
++            static LAST: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(2);
++            if LAST.swap(u8::from(on), std::sync::atomic::Ordering::Relaxed) != u8::from(on) {
++                tracing::info!(
++                    "the pass over the title's view heap runs beside the preparing from now (VICTORY_SYNC_BESIDE=alt): {}",
++                    if on { "ON" } else { "off, on the submitting thread before it as usual" }
++                );
++            }
++            on
++        }
++    }
++}
++
++/// [`sync_beside`]'s hand-over: 0 nothing asked, 1 asked, 2 running.
++#[cfg(windows)]
++static BESIDE: (std::sync::Mutex<u8>, std::sync::Condvar) = (std::sync::Mutex::new(0), std::sync::Condvar::new());
++
++/// Since the line last took them: passes run beside, microseconds the
++/// submitting thread waited for one at [`sync_end`], passes it found done.
++#[cfg(windows)]
++static BESIDE_COUNTS: [std::sync::atomic::AtomicU64; 3] = [const { std::sync::atomic::AtomicU64::new(0) }; 3];
++
++/// Hands the pass and [`make_waiting`] to their thread (started once); the
++/// submitting thread goes on preparing. Without the thread both run here.
++#[cfg(windows)]
++pub(crate) fn sync_begin() {
++    static THREAD: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    let started = *THREAD.get_or_init(|| {
++        std::thread::Builder::new()
++            .name("victory-heap-sync".into())
++            .spawn(|| {
++                crate::framelog::keep_on_fast_cores("victory-heap-sync");
++                loop {
++                    {
++                        let mut state = BESIDE.0.lock().unwrap_or_else(|e| e.into_inner());
++                        while *state != 1 {
++                            state = BESIDE.1.wait(state).unwrap_or_else(|e| e.into_inner());
++                        }
++                        *state = 2;
++                    }
++                    sync_heaps();
++                    make_waiting();
++                    *BESIDE.0.lock().unwrap_or_else(|e| e.into_inner()) = 0;
++                    BESIDE.1.notify_all();
++                }
++            })
++            .is_ok()
++    });
++    if !started {
++        sync_heaps();
++        make_waiting();
++        return;
++    }
++    let mut state = BESIDE.0.lock().unwrap_or_else(|e| e.into_inner());
++    // (One submission at a time holds the submission lock, and each ends
++    // with [`sync_end`]: nothing is running here now.)
++    while *state != 0 {
++        state = BESIDE.1.wait(state).unwrap_or_else(|e| e.into_inner());
++    }
++    *state = 1;
++    BESIDE_COUNTS[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++    BESIDE.1.notify_all();
++}
++
++/// Waits until the pass handed over by [`sync_begin`] is done (at once if
++/// none is out).
++#[cfg(windows)]
++pub(crate) fn sync_end() {
++    use std::sync::atomic::Ordering::Relaxed;
++    let waiting = std::time::Instant::now();
++    let mut state = BESIDE.0.lock().unwrap_or_else(|e| e.into_inner());
++    if *state == 0 {
++        BESIDE_COUNTS[2].fetch_add(1, Relaxed);
++        return;
++    }
++    while *state != 0 {
++        state = BESIDE.1.wait(state).unwrap_or_else(|e| e.into_inner());
++    }
++    BESIDE_COUNTS[1].fetch_add(waiting.elapsed().as_micros() as u64, Relaxed);
++}
++
+ /// Whether [`sync_heaps`] leaves alone the part of a title view heap the
+ /// host heap has no title slots for (`VICTORY_HEAP_SYNC_CUT=1`; off by
+ /// default; `alt`: twenty seconds with, twenty without, in turn, each
+@@ -341,6 +458,15 @@ pub(crate) fn sync_line(frames: f64) {
+         host::COPIED_TABLED.swap(0, std::sync::atomic::Ordering::Relaxed) as f64 / frames,
+         micros as f64 / 1000.0 / frames
+     );
++    let [beside, waited_us, found_done] = [0, 1, 2].map(|i| BESIDE_COUNTS[i].swap(0, std::sync::atomic::Ordering::Relaxed));
++    if beside > 0 {
++        tracing::info!(
++            "the pass over the title's view heap beside the preparing (VICTORY_SYNC_BESIDE), per frame: {:.1} passes, the submitting thread waited {:.2} ms for them, {:.1} found done",
++            beside as f64 / frames,
++            waited_us as f64 / 1e3 / frames,
++            found_done as f64 / frames
++        );
++    }
+     let parts = [0, 1, 2, 3].map(|i| SYNC_PARTS[i].swap(0, std::sync::atomic::Ordering::Relaxed) as f64 / 1e3 / frames);
+     tracing::info!(
+         "the pass over the title's view heap by part, ms per frame: asking which pages changed {:.2}, reading the pages {:.2},          the walk over their records {:.2}, making the host slots of the changed records {:.2}",
+@@ -349,6 +475,19 @@ pub(crate) fn sync_line(frames: f64) {
+         parts[2],
+         parts[3]
+     );
++    #[cfg(feature = "diagnostics")]
++    {
++        use std::sync::atomic::Ordering::Relaxed;
++        let n = host::MIRRORED.each_ref().map(|a| a.swap(0, Relaxed) as f64 / frames);
++        let us = host::MIRROR_US.each_ref().map(|a| a.swap(0, Relaxed) as f64 / 1e3 / frames);
++        tracing::info!(
++            "the view-heap pass's records made, per frame, by what making them did (count, ms): made already {:.0} {:.2}, \
++             not a view of ours {:.0} {:.2}, the same view as made {:.0} {:.2}, the old view kept {:.0} {:.2}, \
++             left for later (a null view made) {:.0} {:.2}, a view created {:.0} {:.2}, other {:.0} {:.2}; inside: \
++             buffer notes and stale slots {:.2} ms, creating views {:.2} ms, keeping the slots' resources {:.2} ms",
++            n[0], n[7], n[1], n[8], n[2], n[9], n[3], n[10], n[4], n[11], n[5], n[12], n[6], n[13], us[0], us[1], us[2]
++        );
++    }
+ }
+ 
+ /// Whether [`sync_heaps`] hands a changed page's records to the host heap
 diff --git a/crates/victory-gpu/src/descriptor/host.rs b/crates/victory-gpu/src/descriptor/host.rs
-index 991c399c..09164f91 100644
+index 991c399c..2bdaa8c4 100644
 --- a/crates/victory-gpu/src/descriptor/host.rs
 +++ b/crates/victory-gpu/src/descriptor/host.rs
-@@ -1103,9 +1103,13 @@ impl HostHeap {
+@@ -945,6 +945,10 @@ pub(crate) fn device_removed() -> Option<String> {
+ 
+ /// Writes of title view-heap slots with a placed texture view and with a
+ /// view of a texture object, since the start (diagnostic counts).
++/// Slots asked again by [`HostHeap::texture_slots_blank`] since the start:
++/// shown with no level judged held (Z), null in no queue (N).
++#[cfg(feature = "diagnostics")]
++pub(crate) static REASKED: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+ pub(crate) static PLACED_TEXTURE_SLOTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+ pub(crate) static OBJECT_TEXTURE_SLOTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+ 
+@@ -1103,9 +1107,13 @@ impl HostHeap {
          } else {
              victory_shader::emit::view_heap_limit()
          };
@@ -950,7 +1415,7 @@ index 991c399c..09164f91 100644
                  Err(e) => {
                      tracing::warn!(error = %e, count, sampler, "no host descriptor heap");
                      return None;
-@@ -1137,6 +1141,9 @@ impl HostHeap {
+@@ -1137,6 +1145,9 @@ impl HostHeap {
              )
          };
          tracing::debug!(count, sampler, "host descriptor heap");
@@ -960,7 +1425,7 @@ index 991c399c..09164f91 100644
          // SAFETY: a live shader-visible heap.
          let gpu = unsafe { heap.GetGPUDescriptorHandleForHeapStart().ptr };
          GPU_RANGES.lock().unwrap_or_else(|e| e.into_inner()).push((
-@@ -1537,6 +1544,15 @@ impl HostHeap {
+@@ -1537,6 +1548,15 @@ impl HostHeap {
      /// has at `handle` now. Its host texture then exists (a slot keeps what
      /// it views), so bringing that texture up to date takes no memory of
      /// the card.
@@ -976,7 +1441,338 @@ index 991c399c..09164f91 100644
      pub(crate) fn texture_slot_made_from(&self, index: u32, handle: u64) -> bool {
          if index >= self.count {
              return false;
-@@ -2750,7 +2766,7 @@ pub(crate) static COPIED_TABLED: std::sync::atomic::AtomicU64 = std::sync::atomi
+@@ -1619,6 +1639,122 @@ impl HostHeap {
+         slots.len()
+     }
+ 
++    /// `VICTORY_REASK_BLANK=1` (off by default): see
++    /// [`HostHeap::texture_slots_blank`].
++    #[cfg(feature = "diagnostics")]
++    fn reask_blank() -> bool {
++        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++        *ON.get_or_init(|| std::env::var_os("VICTORY_REASK_BLANK").is_some_and(|v| v == "1"))
++    }
++
++    /// Slots of placed textures that read zeros for good and that nothing
++    /// asks for again, whose memory's first page is mapped now: up to
++    /// [`Self::REASK_A_PASS`] made due from the next frame, about once a
++    /// second (`VICTORY_REASK_BLANK=1`). Two classes of the census
++    /// ([`HostHeap::placed_slot_census`]): (Z) shown, made level by level,
++    /// showing no level and judged holding none at its last upload; (N)
++    /// null and in no texture queue. Run 319 at the boat: about 384 and 795
++    /// of 13,000 slots, never asked again by anything else (gfx41). A slot
++    /// asked three times that is still blank is left alone for 30 s.
++    /// Returns how many. (Diagnostics builds only for now: an experiment,
++    /// built on the census's helpers.)
++    #[cfg(feature = "diagnostics")]
++    pub(crate) fn texture_slots_blank(&self, frame: u64) -> usize {
++        use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
++        static LAST: AtomicU64 = AtomicU64::new(0);
++        static ASKED: Mutex<Option<std::collections::HashMap<u32, (u8, u64)>>> = Mutex::new(None);
++        if self.sampler || !Self::reask_blank() {
++            return 0;
++        }
++        let now = crate::host::now_ms();
++        let last = LAST.load(Relaxed);
++        if now.saturating_sub(last) < 1_000 || LAST.swap(now, Relaxed) != last {
++            return 0;
++        }
++        let slots: Vec<(u32, u64)> = {
++            let placed = self.placed.lock().unwrap_or_else(|e| e.into_inner());
++            placed.by_slot.iter().map(|(&slot, &start)| (slot, start)).collect()
++        };
++        let keys: Vec<u64> = {
++            let made = self.made.lock().unwrap_or_else(|e| e.into_inner());
++            slots.iter().map(|&(slot, _)| made.get(slot as usize).copied().unwrap_or(0)).collect()
++        };
++        let queued: Vec<bool> = {
++            let textures = self.textures.lock().unwrap_or_else(|e| e.into_inner());
++            slots.iter().map(|&(slot, _)| textures.slots.contains_key(&slot)).collect()
++        };
++        let mut asked = ASKED.lock().unwrap_or_else(|e| e.into_inner());
++        let asked = asked.get_or_insert_with(std::collections::HashMap::new);
++        let mut due = Vec::new();
++        let (mut z, mut n) = (0u64, 0u64);
++        for (i, &(slot, start)) in slots.iter().enumerate() {
++            if due.len() >= Self::REASK_A_PASS {
++                break;
++            }
++            if self.tabled_lately(slot, frame) {
++                continue;
++            }
++            let key = keys[i];
++            let shows = key != 0
++                && self.kept[(slot % KEPT_PIECES) as usize]
++                    .lock()
++                    .unwrap_or_else(|e| e.into_inner())
++                    .get((slot / KEPT_PIECES) as usize)
++                    .is_some_and(Option::is_some);
++            let class_z = shows
++                && view_at(key as u32, (key >> 32) as u32)
++                    .and_then(|view| match view {
++                        View::Placed(false, resource, desc) => crate::resource::texture_at_made(
++                            u64::from(desc[10]) | u64::from(desc[11]) << 32,
++                            &resource,
++                        ),
++                        View::Shader(texture, _) => Some(texture as crate::object::This),
++                        _ => None,
++                    })
++                    .and_then(|texture| {
++                        let on_demand = crate::resource::host_tiled(texture)?;
++                        let tiled = on_demand.tiled()?;
++                        Some(tiled.first_shown().is_none() && tiled.held_now() == 0)
++                    })
++                    .unwrap_or(false);
++            let class_n = !shows && key == 0 && !queued[i];
++            if !(class_z || class_n) {
++                asked.remove(&slot);
++                continue;
++            }
++            let (times, since) = asked.get(&slot).copied().unwrap_or((0, 0));
++            if times >= 3 && now.saturating_sub(since) < 30_000 {
++                continue;
++            }
++            if !crate::texture::committed(start as *const u8, 1) {
++                continue;
++            }
++            asked.insert(slot, (if times >= 3 { 1 } else { times + 1 }, now));
++            if class_z {
++                z += 1;
++            } else {
++                n += 1;
++            }
++            due.push(slot);
++        }
++        if due.is_empty() {
++            return 0;
++        }
++        {
++            let mut textures = self.textures.lock().unwrap_or_else(|e| e.into_inner());
++            for &slot in &due {
++                textures.changed(slot, frame, frame + 1);
++            }
++        }
++        REASKED[0].fetch_add(z, Relaxed);
++        REASKED[1].fetch_add(n, Relaxed);
++        due.len()
++    }
++
++    /// Blank slots a pass asks again ([`HostHeap::texture_slots_blank`]).
++    #[cfg(feature = "diagnostics")]
++    const REASK_A_PASS: usize = 128;
++
+     /// Textures a pass asks again for their levels
+     /// ([`HostHeap::texture_slots_waiting`]): the first ones given tiles
+     /// may take the room the others were asked for, and an upload that
+@@ -2246,7 +2382,13 @@ impl HostHeap {
+         }
+         let making = std::time::Instant::now();
+         for &(index, handle) in &due {
++            #[cfg(feature = "diagnostics")]
++            MIRROR_HOW.with(|how| how.set(MIRROR_UNSET));
++            #[cfg(feature = "diagnostics")]
++            let one = std::time::Instant::now();
+             self.mirror(index, handle, false);
++            #[cfg(feature = "diagnostics")]
++            mirror_counted(one.elapsed().as_micros() as u64);
+         }
+         super::SYNC_PARTS[2].fetch_add((making - walking).as_micros() as u64, std::sync::atomic::Ordering::Relaxed);
+         super::SYNC_PARTS[3].fetch_add(making.elapsed().as_micros() as u64, std::sync::atomic::Ordering::Relaxed);
+@@ -2301,6 +2443,8 @@ impl HostHeap {
+             && self.made_now[index as usize].load(std::sync::atomic::Ordering::Acquire) == key
+             && let Some(view) = view_at(i, generation)
+         {
++            #[cfg(feature = "diagnostics")]
++            mirror_how(MIRROR_FAST);
+             return Some(view);
+         }
+         let mut made = locked(&self.made, 4);
+@@ -2310,6 +2454,8 @@ impl HostHeap {
+         let Some(view) = view else {
+             // Not a view of ours (never written, or of a resource the
+             // title released): nothing to read.
++            #[cfg(feature = "diagnostics")]
++            mirror_how(MIRROR_NOT_VIEW);
+             if made[index as usize] != 0 {
+                 #[cfg(feature = "diagnostics")]
+                 held.slot_changed();
+@@ -2332,11 +2478,17 @@ impl HostHeap {
+             // Views of other textures in the memory this one describes
+             // are stale: their host slots read nothing from here on, and
+             // let go of the host copies they held.
++            #[cfg(feature = "diagnostics")]
++            let noting = std::time::Instant::now();
+             for stale in self.note_buffer(index, Some(&view), for_draw) {
+                 if stale != index {
+                     self.unmake(&mut made, stale);
+                 }
+             }
++            #[cfg(feature = "diagnostics")]
++            if mirror_timing() {
++                MIRROR_US[0].fetch_add(noting.elapsed().as_micros() as u64, std::sync::atomic::Ordering::Relaxed);
++            }
+             // A view of a texture object that has no host copy yet waits
+             // for it, as buffer views wait for a draw: the slot is made
+             // when the texture is first used (`super::make_waiting`), or
+@@ -2359,11 +2511,17 @@ impl HostHeap {
+                     .is_some_and(|old| same_placed_texture(&old, &view))
+             {
+                 KEPT_VIEWS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++                #[cfg(feature = "diagnostics")]
++                mirror_how(MIRROR_KEPT);
+                 // The slot goes on showing what it was made from.
+                 self.made_now[index as usize].store(made[index as usize], std::sync::atomic::Ordering::Release);
+                 return Some(view);
+             }
+             made[index as usize] = if later { 0 } else { key };
++            #[cfg(feature = "diagnostics")]
++            mirror_how(if later { MIRROR_LATER } else { MIRROR_MADE });
++            #[cfg(feature = "diagnostics")]
++            let creating = std::time::Instant::now();
+             let kept = if later {
+                 None
+             } else {
+@@ -2372,11 +2530,21 @@ impl HostHeap {
+             if kept.is_none() && !self.sampler {
+                 null_for(&view, self.cpu(index));
+             }
++            #[cfg(feature = "diagnostics")]
++            let keeping = std::time::Instant::now();
+             self.keep(index, kept.flatten());
++            #[cfg(feature = "diagnostics")]
++            if mirror_timing() {
++                use std::sync::atomic::Ordering::Relaxed;
++                MIRROR_US[1].fetch_add((keeping - creating).as_micros() as u64, Relaxed);
++                MIRROR_US[2].fetch_add(keeping.elapsed().as_micros() as u64, Relaxed);
++            }
+             // After the slot is made and kept: a reader without the lock
+             // takes the record as made only once it is.
+             self.made_now[index as usize].store(made[index as usize], std::sync::atomic::Ordering::Release);
+         }
++        #[cfg(feature = "diagnostics")]
++        mirror_how(MIRROR_SAME);
+         Some(view)
+     }
+ 
+@@ -2463,7 +2631,7 @@ impl HostHeap {
+                 })
+                 .collect()
+         };
+-        let mut c = [0u64; 9];
++        let mut c = [0u64; 10];
+         let mut forgotten = 0u64;
+         for (i, &(slot, start)) in slots.iter().enumerate() {
+             c[0] += 1;
+@@ -2485,10 +2653,21 @@ impl HostHeap {
+                         View::Shader(texture, _) => Some(texture as crate::object::This),
+                         _ => None,
+                     })
+-                    .is_some_and(|texture| {
+-                        crate::resource::host_tiled(texture).is_some() && crate::resource::first_shown(texture).is_none()
++                    // The levels judged the title's at its last upload, if it
++                    // shows none (0 also if never uploaded).
++                    .and_then(|texture| {
++                        let on_demand = crate::resource::host_tiled(texture)?;
++                        let tiled = on_demand.tiled()?;
++                        tiled.first_shown().is_none().then(|| tiled.held_now())
+                     });
+-                c[if blank { 2 } else { 1 }] += 1;
++                match blank {
++                    None => c[1] += 1,
++                    Some(0) => {
++                        c[2] += 1;
++                        c[9] += 1;
++                    }
++                    Some(_) => c[2] += 1,
++                }
+                 continue;
+             }
+             if key != 0 {
+@@ -2513,7 +2692,8 @@ impl HostHeap {
+              {} shown from a copy made level by level that has no level with tiles (reads zeros); {} made but null (the host \
+              could not make the view); null: {} held for room, {} waiting for their memory, {} in the queue otherwise, {} in no \
+              queue (about {} of those with their first page mapped now); the census took {} ms; placed views the host could \
+-             not make since the start: {} shader views, {} unordered",
++             not make since the start: {} shader views, {} unordered; of the slots that read zeros, {} show a copy with no \
++             level judged the title's at its last upload (never uploaded, or nothing held: no room is asked for those);              asked again since the start (VICTORY_REASK_BLANK): {} shown with no level held, {} null in no queue",
+             c[0],
+             c[1],
+             c[2],
+@@ -2526,6 +2706,9 @@ impl HostHeap {
+             began.elapsed().as_millis(),
+             PLACED_NOT_MADE[0].load(Relaxed),
+             PLACED_NOT_MADE[1].load(Relaxed),
++            c[9],
++            REASKED[0].load(Relaxed),
++            REASKED[1].load(Relaxed),
+         );
+     }
+ 
+@@ -2746,11 +2929,71 @@ fn sync_tables() -> bool {
+ /// [`HostHeap::mirror_copied`] left to their draws (tables' slots).
+ pub(crate) static COPIED_TABLED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+ 
++// What the view-heap pass's "make" does with each record it mirrors
++// (`HostHeap::mirror_copied_page`; fps41 round 12), by outcome of
++// `HostHeap::mirror`: made already (the lock-free look), not a view of
++// ours, the same view as made (under the lock), the old view kept, left
++// for later (a buffer or a texture with no host copy: a null view made),
++// made (a host view created). Diagnostics only.
++#[cfg(feature = "diagnostics")]
++const MIRROR_UNSET: usize = 6;
++/// Not inside the pass's timed `mirror` (draws and other passes mirror too).
++#[cfg(feature = "diagnostics")]
++const MIRROR_IDLE: usize = 7;
++#[cfg(feature = "diagnostics")]
++const MIRROR_FAST: usize = 0;
++#[cfg(feature = "diagnostics")]
++const MIRROR_NOT_VIEW: usize = 1;
++#[cfg(feature = "diagnostics")]
++const MIRROR_SAME: usize = 2;
++#[cfg(feature = "diagnostics")]
++const MIRROR_KEPT: usize = 3;
++#[cfg(feature = "diagnostics")]
++const MIRROR_LATER: usize = 4;
++#[cfg(feature = "diagnostics")]
++const MIRROR_MADE: usize = 5;
++#[cfg(feature = "diagnostics")]
++thread_local! {
++    /// The outcome of the `mirror` call being timed on this thread.
++    static MIRROR_HOW: std::cell::Cell<usize> = const { std::cell::Cell::new(MIRROR_IDLE) };
++}
++/// By outcome (the six above and "other"): records, and their microseconds.
++#[cfg(feature = "diagnostics")]
++pub(crate) static MIRRORED: [std::sync::atomic::AtomicU64; 14] = [const { std::sync::atomic::AtomicU64::new(0) }; 14];
++/// Inside `mirror`, summed over the records: the buffer notes and the
++/// unmaking of stale slots, creating the view (or the null one), keeping
++/// the slot's resource (the old one retired).
++#[cfg(feature = "diagnostics")]
++pub(crate) static MIRROR_US: [std::sync::atomic::AtomicU64; 3] = [const { std::sync::atomic::AtomicU64::new(0) }; 3];
++
++#[cfg(feature = "diagnostics")]
++fn mirror_how(how: usize) {
++    MIRROR_HOW.with(|cell| {
++        if cell.get() == MIRROR_UNSET {
++            cell.set(how);
++        }
++    });
++}
++
++/// Whether this thread is inside the pass's timed `mirror`.
++#[cfg(feature = "diagnostics")]
++fn mirror_timing() -> bool {
++    MIRROR_HOW.with(|cell| cell.get() != MIRROR_IDLE)
++}
++
++#[cfg(feature = "diagnostics")]
++fn mirror_counted(us: u64) {
++    use std::sync::atomic::Ordering::Relaxed;
++    let how = MIRROR_HOW.with(|cell| cell.replace(MIRROR_IDLE)).min(MIRROR_UNSET);
++    MIRRORED[how].fetch_add(1, Relaxed);
++    MIRRORED[7 + how].fetch_add(us, Relaxed);
++}
++
+ /// A 64-bit fingerprint of a descriptor record's bytes (16 or 32 of them):
  /// equal records give equal prints, and two different records the same
  /// print about once in 2^64. Not a hash anyone can attack: the records
  /// are our own.
@@ -985,7 +1781,7 @@ index 991c399c..09164f91 100644
      const K: u64 = 0x9e37_79b9_7f4a_7c15;
      let mut h = K ^ record.len() as u64;
      let mut words = record.chunks_exact(8);
-@@ -4348,3 +4364,68 @@ mod own_copy_tests {
+@@ -4348,3 +4591,68 @@ mod own_copy_tests {
          assert_eq!(own_bytes_if(false, 8, base, 2, 4, 32, 32, true), None);
      }
  }
@@ -1318,10 +2114,31 @@ index dfbf2b22..bda5cff1 100644
  /// methods `ID3D12Device1` to `ID3D12Device8` add, in order: 3, 1, 3, 6, 9,
  /// 1, 2, 9 (0x298-0x3a0, the console's own among them), then those of
 diff --git a/crates/victory-gpu/src/draw.rs b/crates/victory-gpu/src/draw.rs
-index 3a20d794..36ff5425 100644
+index 3a20d794..0225eceb 100644
 --- a/crates/victory-gpu/src/draw.rs
 +++ b/crates/victory-gpu/src/draw.rs
-@@ -502,6 +502,10 @@ pub(crate) struct State {
+@@ -215,6 +215,12 @@ enum BakeMode {
+     Off,
+     Count,
+     Upload,
++    /// [`BakeMode::Upload`] also while the card has no room
++    /// (`VICTORY_BAKE_SOURCES=full`), as fork pull request #1264 had it:
++    /// at the boat save every such upload was skipped for room (run 316: 55
++    /// of 55), the card being at its line through the whole world. Still
++    /// within `VICTORY_BAKE_SOURCES_MB` a draw.
++    Full,
+ }
+ 
+ /// [`BakeMode`], and the bytes one draw may have uploaded.
+@@ -224,6 +230,7 @@ fn bake_sources_mode() -> (BakeMode, u64) {
+         let mode = match std::env::var("VICTORY_BAKE_SOURCES").ok().as_deref().map(str::trim) {
+             Some("count") => BakeMode::Count,
+             Some("1") => BakeMode::Upload,
++            Some("full") => BakeMode::Full,
+             _ => BakeMode::Off,
+         };
+         let mb = std::env::var("VICTORY_BAKE_SOURCES_MB").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(64);
+@@ -502,6 +509,10 @@ pub(crate) struct State {
      /// Bound render target and depth resources, for their host states.
      targets: Vec<usize>,
      depth: usize,
@@ -1332,7 +2149,15 @@ index 3a20d794..36ff5425 100644
      /// The host state the bound depth view needs ([`depth_state`]).
      depth_state: u32,
      /// The title's primitive topology (the host's may differ).
-@@ -538,6 +542,10 @@ pub(crate) struct State {
+@@ -534,10 +545,18 @@ pub(crate) struct State {
+     /// whether a draw has read from it since.
+     window_jumped: bool,
+     window_read: bool,
++    /// A direct dispatch spread across z, for [`State::host_word`] at its
++    /// bind: `[row, asked x]` (`[0, 0]`: not spread; an indirect one gets
++    /// its words from the clamp through its command signature).
++    dispatch_spread: [u32; 2],
+     /// Diagnostics: the argument buffer and the offset of the indirect
      /// command before this one on the list.
      #[cfg(feature = "diagnostics")]
      last_indirect: (u64, u64),
@@ -1343,7 +2168,7 @@ index 3a20d794..36ff5425 100644
      /// What the host list has: pipeline, root signature, heaps.
      host_pipeline: usize,
      /// Graphics, compute.
-@@ -954,7 +962,18 @@ pub(crate) enum Into<'a> {
+@@ -954,7 +973,18 @@ pub(crate) enum Into<'a> {
  /// Of [`HEAP_BUFFER_MICROS`], the microseconds of the pass over textures
  /// picked by index that runs inside it (`heap_textures`), and the buffer
  /// slots the pass over buffer views looked at; since the last frame line.
@@ -1363,7 +2188,30 @@ index 3a20d794..36ff5425 100644
  /// Textures brought up to date for shaders that pick them by index
  /// ([`State::heap_textures`]), the bytes of their memory, and the slots
  /// still waiting.
-@@ -1244,6 +1263,18 @@ impl State {
+@@ -1005,6 +1035,22 @@ fn heap_recheck() -> bool {
+     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+     *ON.get_or_init(|| std::env::var_os("VICTORY_HEAP_RECHECK").is_none_or(|v| v != "0"))
+ }
++
++/// Whether a texture picked by index that a look found changed after its
++/// upload is looked at again in the next frame, not after
++/// `RECHECK_FRAMES[0]` (`VICTORY_RECHECK_SOON=1`; off by default). A
++/// texture whose bytes land in several pieces, or that the title keeps
++/// writing, was shown four frames behind at each change. (The AMD sibling
++/// repository's switch of that name, on by default there.)
++fn recheck_soon() -> bool {
++    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *ON.get_or_init(|| std::env::var_os("VICTORY_RECHECK_SOON").is_some_and(|v| v == "1"))
++}
++
++/// Uploads of textures picked by index looked at again in the next frame
++/// because a look had found them changed ([`recheck_soon`]), since the
++/// start.
++pub(crate) static HEAP_TEXTURES_SOON: AtomicU64 = AtomicU64::new(0);
+ /// Times a placed texture's slot was passed over because its memory is not
+ /// mapped.
+ pub(crate) static HEAP_TEXTURES_AWAY: AtomicU64 = AtomicU64::new(0);
+@@ -1244,6 +1290,18 @@ impl State {
      }
  
      /// Render targets and depth, set on the host list at once.
@@ -1382,7 +2230,7 @@ index 3a20d794..36ff5425 100644
      pub(crate) fn set_targets(&mut self, list: &HostList, handles: &[u64], depth: u64) {
          let Some(host) = crate::host::host() else {
              return;
-@@ -1253,6 +1284,8 @@ impl State {
+@@ -1253,6 +1311,8 @@ impl State {
          self.depth_handle = depth;
          self.targets_set = true;
          self.targets.clear();
@@ -1391,7 +2239,7 @@ index 3a20d794..36ff5425 100644
          // The formats of the host views, for the draws' pipelines.
          let mut formats = [0; 9];
          let mut rtvs = Vec::new();
-@@ -1275,6 +1308,7 @@ impl State {
+@@ -1275,6 +1335,7 @@ impl State {
                      .desc()
                      .filter(|d| d.Format.0 != 0 && d.ViewDimension.0 != 0);
                  if let Some(desc) = null {
@@ -1399,7 +2247,7 @@ index 3a20d794..36ff5425 100644
                      if rtvs.len() < 8 {
                          formats[rtvs.len()] = desc.Format.0 as u32;
                      }
-@@ -1283,6 +1317,8 @@ impl State {
+@@ -1283,6 +1344,8 @@ impl State {
                  continue;
              };
              self.targets.push(record.resource as usize);
@@ -1408,7 +2256,7 @@ index 3a20d794..36ff5425 100644
              #[cfg(feature = "diagnostics")]
              crate::capture::note_target(record.resource);
              let desc = record.desc();
-@@ -1297,6 +1333,8 @@ impl State {
+@@ -1297,6 +1360,8 @@ impl State {
              let texture = crate::resource::host_resource(record.resource)?;
              self.depth = record.resource as usize;
              let desc = record.depth_desc();
@@ -1417,7 +2265,7 @@ index 3a20d794..36ff5425 100644
              self.depth_state = depth_state(texture, desc.as_ref());
              formats[8] = bound_format(texture, desc.as_ref().map(|d| d.Format));
              if crate::resource::depth_and_unordered(record.resource) {
-@@ -1372,6 +1410,16 @@ impl State {
+@@ -1372,6 +1437,16 @@ impl State {
      /// shortcut: the render target views are made again from the handles'
      /// descriptors as they are now, not as they were when the title set
      /// the targets (a descriptor rewritten in between names another view).
@@ -1434,7 +2282,19 @@ index 3a20d794..36ff5425 100644
      pub(crate) fn replay(&mut self, list: &HostList) {
          self.host_pipeline = 0;
          self.host_roots = [0; 2];
-@@ -1519,7 +1567,7 @@ impl State {
+@@ -1441,7 +1516,10 @@ impl State {
+         dword: u32,
+         memory: Option<&crate::memory::Ready>,
+     ) -> u32 {
+-        use victory_shader::emit::{USER_MEMORY_BASE, USER_VIEW_ADDRESS, USER_VIEW_BIAS};
++        use victory_shader::emit::{USER_DISPATCH_SPREAD, USER_MEMORY_BASE, USER_VIEW_ADDRESS, USER_VIEW_BIAS};
++        if kind == USER_DISPATCH_SPREAD {
++            return self.dispatch_spread[usize::from(dword != 0)];
++        }
+         if kind == USER_MEMORY_BASE {
+             return memory.map_or(0, |m| m.base);
+         }
+@@ -1519,7 +1597,7 @@ impl State {
          if crate::pipeline::is_skipped(self.pipeline as This) {
              return false;
          }
@@ -1443,7 +2303,7 @@ index 3a20d794..36ff5425 100644
              return false;
          };
          if p.compute || p.mesh != mesh {
-@@ -1683,6 +1731,10 @@ impl State {
+@@ -1683,6 +1761,10 @@ impl State {
                  crate::pipeline::note_why(format!("no free dynamic slots for a table of {}", p.name));
                  return false;
              }
@@ -1454,7 +2314,7 @@ index 3a20d794..36ff5425 100644
              // What the shader stores through root views and raw addresses is
              // copied back into title memory afterwards.
              let writes = (t.stores || !write_skip())
-@@ -2113,12 +2165,74 @@ impl State {
+@@ -2113,12 +2195,74 @@ impl State {
          static GONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
          let mut alive = !GONE.load(Ordering::Relaxed) && crate::descriptor::host::device_removed().is_none();
          HEAP_PASS_PARTS[1].fetch_add(slots.len() as u64, Ordering::Relaxed);
@@ -1530,7 +2390,7 @@ index 3a20d794..36ff5425 100644
                  continue;
              };
              // Every 64 views while the device lives (a cheap query).
-@@ -2147,6 +2261,7 @@ impl State {
+@@ -2147,6 +2291,7 @@ impl State {
              }
              ranges.insert(index, (shadow, address, address + len));
          }
@@ -1538,7 +2398,7 @@ index 3a20d794..36ff5425 100644
          let views = ranges.len() as u32;
          // Per host copy, the span its picked views cover.
          let mut spans: std::collections::HashMap<usize, (std::sync::Arc<crate::shadow::Shadow>, u64, u64)> =
-@@ -2169,6 +2284,8 @@ impl State {
+@@ -2169,6 +2314,8 @@ impl State {
          static WHOLE: std::sync::Mutex<Option<std::collections::HashMap<usize, u64>>> = std::sync::Mutex::new(None);
          let mut whole = WHOLE.lock().unwrap_or_else(|e| e.into_inner());
          let whole = whole.get_or_insert_with(Default::default);
@@ -1547,7 +2407,7 @@ index 3a20d794..36ff5425 100644
          for (shadow, from, to) in spans.values() {
              if shadow.unwatched() {
                  // By the copy's number: a copy made where one let go was
-@@ -2191,6 +2308,7 @@ impl State {
+@@ -2191,6 +2338,7 @@ impl State {
              }
              shadow.refresh(list, *from, to - from);
          }
@@ -1555,7 +2415,47 @@ index 3a20d794..36ff5425 100644
          let textures_began = std::time::Instant::now();
          if !crate::heap_worker::kick(heap) {
              Self::heap_textures(Into::List(list), heap, host);
-@@ -2897,6 +3015,16 @@ impl State {
+@@ -2489,8 +2637,8 @@ impl State {
+         let waiting = !sources.queued.is_empty() || !sources.unmade.is_empty();
+         let mut done = [0u64; 4];
+         let mut skipped = false;
+-        if mode == BakeMode::Upload && waiting {
+-            if crate::resource::room() {
++        if matches!(mode, BakeMode::Upload | BakeMode::Full) && waiting {
++            if mode == BakeMode::Full || crate::resource::room() {
+                 let _pass = crate::heap_worker::on().then(crate::heap_worker::urgent);
+                 host.texture_slots_requeue(&sources.unmade, crate::frame::current());
+                 PASS_SOURCES.set(Some(sources.queued.iter().chain(&sources.unmade).copied().collect()));
+@@ -2779,13 +2927,16 @@ impl State {
+         // makes room again: so the slots are still looked at (the pass
+         // returned here, and a slot whose texture had been streamed out
+         // kept its host copy for as long as the card was full).
+-        let mut room = crate::resource::room();
+         // A skin-bake draw's own textures (`State::bake_sources_pass`): a
+         // run for them alone, on the thread that records the draw. Nothing
+         // of the queue's upkeep is done in it, which a pass of this frame
+         // did or will do.
+         let sources = PASS_SOURCES.take();
+         let only = sources.is_some();
++        // A bake draw's own run with `VICTORY_BAKE_SOURCES=full` goes on
++        // as if the card had room, within its own bytes.
++        let forced = only && bake_sources_mode().0 == BakeMode::Full;
++        let mut room = forced || crate::resource::room();
+         // Bytes uploaded by this pass since the card was last asked
+         // whether it has room: asked again every 32 MiB (a pass may upload
+         // 192 MB and more, and one asking a pass let the queue run some
+@@ -2814,6 +2965,10 @@ impl State {
+             if room {
+                 host.texture_slots_waiting(frame);
+             }
++            // Slots that read zeros for good and nothing asks for again
++            // (`VICTORY_REASK_BLANK=1`; off by default; diagnostics builds).
++            #[cfg(feature = "diagnostics")]
++            host.texture_slots_blank(frame);
+         }
+         let due = match &sources {
+             // The bake draw's own, due or not, held or not.
+@@ -2897,6 +3052,16 @@ impl State {
              } else if SPENT.load(Ordering::Relaxed) >= bytes_at_most || began.elapsed() > span {
                  break;
              }
@@ -1572,7 +2472,56 @@ index 3a20d794..36ff5425 100644
              let ahead = matches!(into, Into::Ahead(_));
              if ahead && crate::heap_worker::make_way() {
                  break;
-@@ -3198,7 +3326,7 @@ impl State {
+@@ -2935,6 +3100,9 @@ impl State {
+             // first look for the rest of the run. The look reads 48 KiB;
+             // only a changed texture is uploaded again.
+             // `VICTORY_HEAP_RECHECK=0`: uploaded once, as before.
++            // One found changed by such a look is looked at again in the
++            // next frame with `VICTORY_RECHECK_SOON=1` ([`recheck_soon`]).
++            let mut again_in = RECHECK_FRAMES[0];
+             if let Some((at, len, print, looks, uploaded)) = host.texture_slot_checked(index) {
+                 if crate::texture::fingerprint(at, len) == print {
+                     HEAP_TEXTURES_RECHECKED[0].fetch_add(1, Ordering::Relaxed);
+@@ -2946,6 +3114,9 @@ impl State {
+                     }
+                     continue;
+                 }
++                if recheck_soon() {
++                    again_in = 1;
++                }
+                 let n = HEAP_TEXTURES_RECHECKED[1].fetch_add(1, Ordering::Relaxed);
+                 if n < 200 || n.is_multiple_of(1000) {
+                     tracing::warn!(
+@@ -2955,6 +3126,7 @@ impl State {
+                         frames_after_upload = frame.saturating_sub(uploaded),
+                         looks,
+                         changed = n + 1,
++                        looked_at_next_frame = HEAP_TEXTURES_SOON.load(Ordering::Relaxed),
+                         "a texture picked by index changed after its upload with nothing to tell of it: uploaded again"
+                     );
+                 }
+@@ -3141,7 +3313,7 @@ impl State {
+             since_asked += bytes;
+             if room && since_asked >= 32 << 20 {
+                 since_asked = 0;
+-                room = crate::resource::room();
++                room = forced || crate::resource::room();
+             }
+             HEAP_TEXTURE_BYTES.fetch_add(bytes, Ordering::Relaxed);
+             HEAP_TEXTURES.fetch_add(1, Ordering::Relaxed);
+@@ -3149,7 +3321,10 @@ impl State {
+                 // Whole and uploaded: looked at again (see above).
+                 Some((at, len)) => {
+                     let print = crate::texture::fingerprint(at, len);
+-                    host.texture_slot_recheck(index, write, frame + RECHECK_FRAMES[0], (at, len), print, 0, frame);
++                    if again_in != RECHECK_FRAMES[0] {
++                        HEAP_TEXTURES_SOON.fetch_add(1, Ordering::Relaxed);
++                    }
++                    host.texture_slot_recheck(index, write, frame + again_in, (at, len), print, 0, frame);
+                 }
+                 None => host.texture_slot_done(index, write, again),
+             }
+@@ -3198,7 +3373,7 @@ impl State {
      /// (`crate::indirect::gather`). The same test keeps such a draw out of
      /// a window ([`windows`]).
      fn may_store(&self) -> bool {
@@ -1581,7 +2530,7 @@ index 3a20d794..36ff5425 100644
      }
  
      /// What is about to be recorded may write arguments (`stores`: a
-@@ -3261,7 +3389,7 @@ impl State {
+@@ -3261,7 +3436,7 @@ impl State {
              }
              return;
          }
@@ -1590,18 +2539,34 @@ index 3a20d794..36ff5425 100644
              once!(
                  pipeline = format_args!("{:#x}", self.pipeline),
                  "a dispatch without a host pipeline dropped"
-@@ -3278,6 +3406,8 @@ impl State {
+@@ -3278,7 +3453,20 @@ impl State {
              once!("a dispatch with a graphics pipeline");
              return;
          }
+-        if !self.bind(list, p, true) {
 +        let traced = crate::host::traced(&p.name);
 +        let steps_before = if traced.is_some() { list.steps_len() } else { 0 };
-         if !self.bind(list, p, true) {
++        // More than 65,535 groups in x: spread across z for a program that
++        // takes the spread words (`USER_DISPATCH_SPREAD`).
++        let (row, asked, gx, gy, gz) = victory_shader::emit::spread_groups(x, y, z, spreads(p).is_some());
++        if row != 0 {
++            SPREAD[0].fetch_add(1, Ordering::Relaxed);
++        } else if gx > 65_535 || gy > 65_535 || gz > 65_535 {
++            once!(gx, gy, gz, "a dispatch asks for more than 65,535 groups in a dimension and is not spread");
++        }
++        self.dispatch_spread = [row, asked];
++        let bound = self.bind(list, p, true);
++        self.dispatch_spread = [0, 0];
++        if !bound {
              DROPPED.fetch_add(1, Ordering::Relaxed);
              // A stage of the structure builder that cannot be bound is a
-@@ -3292,6 +3422,81 @@ impl State {
+             // dropped stage: the others stop too.
+@@ -3290,8 +3478,83 @@ impl State {
+         #[cfg(feature = "diagnostics")]
+         list.note_op(|| self.op_text(format!("dispatch {x}x{y}x{z}"), true));
          // SAFETY: an open list with everything set.
-         unsafe { list.list.Dispatch(x, y, z) };
+-        unsafe { list.list.Dispatch(x, y, z) };
++        unsafe { list.list.Dispatch(gx, gy, gz) };
          DISPATCHED.fetch_add(1, Ordering::Relaxed);
 +        if let Some(hash) = traced {
 +            let writes = list.gpu_writes_since(steps_before);
@@ -1681,7 +2646,7 @@ index 3a20d794..36ff5425 100644
      }
  
      /// What a draw or dispatch runs, for the device-removed report
-@@ -3301,7 +3506,7 @@ impl State {
+@@ -3301,7 +3564,7 @@ impl State {
      #[cfg(feature = "diagnostics")]
      fn op_text(&self, kind: String, compute: bool) -> String {
          use std::fmt::Write;
@@ -1690,7 +2655,7 @@ index 3a20d794..36ff5425 100644
              return kind;
          };
          let mut text = format!("{kind} {}", p.name);
-@@ -3385,7 +3590,7 @@ impl State {
+@@ -3385,7 +3648,7 @@ impl State {
          const GLOBAL: u32 = 688;
          const DRAW_CONSTANTS: u32 = 56;
          let wanted = list_slots();
@@ -1699,7 +2664,7 @@ index 3a20d794..36ff5425 100644
              return String::new();
          };
          let Some(stage) = p.stages.iter().find(|s| wanted.iter().any(|w| s.shader.hash.starts_with(w.as_str())))
-@@ -3983,7 +4188,7 @@ impl State {
+@@ -3983,7 +4246,7 @@ impl State {
      /// builds).
      #[cfg(feature = "diagnostics")]
      fn reads(&self, compute: bool) -> Vec<String> {
@@ -1708,7 +2673,7 @@ index 3a20d794..36ff5425 100644
              return vec!["no host pipeline".into()];
          };
          let mut out = Vec::new();
-@@ -4049,13 +4254,13 @@ impl State {
+@@ -4049,13 +4312,13 @@ impl State {
      /// Whether the bound pipeline completes rectangles itself, in the
      /// geometry stage rectangle pipelines get (`HostPipeline::rects`).
      fn completes_rects(&self) -> bool {
@@ -1724,7 +2689,7 @@ index 3a20d794..36ff5425 100644
              return false;
          };
          let rects = u64::from(count / 3);
-@@ -4187,7 +4392,7 @@ impl State {
+@@ -4187,7 +4450,7 @@ impl State {
          let why = |what: &str| crate::pipeline::note_why(format!("indirect kind {kind}: {what}"));
          #[cfg(not(feature = "diagnostics"))]
          let why = |_: &str| {};
@@ -1733,7 +2698,41 @@ index 3a20d794..36ff5425 100644
              #[cfg(feature = "diagnostics")]
              crate::pipeline::note_drop(self.pipeline as This);
              return false;
-@@ -4456,6 +4661,11 @@ impl State {
+@@ -4237,10 +4500,19 @@ impl State {
+             },
+             None => None,
+         };
+-        let Some(signature) = matches!(kind, DRAW | INDEXED | DISPATCH | MESH)
+-            .then(|| host_signature(kind, stride))
++        // A dispatch of a program that takes the spread words: the clamp
++        // writes [row, asked x, x, y, z] records, run through a signature
++        // that sets the two words, then dispatches.
++        let spread = (kind == DISPATCH && p.compute)
++            .then(|| spreads(p))
+             .flatten()
+-        else {
++            .and_then(|(param, index)| host_spread_signature(&p.root, param, index));
++        let is_spread = spread.is_some();
++        let Some(signature) = spread.or_else(|| {
++            matches!(kind, DRAW | INDEXED | DISPATCH | MESH)
++                .then(|| host_signature(kind, stride))
++                .flatten()
++        }) else {
+             why("no host signature");
+             return false;
+         };
+@@ -4406,7 +4678,9 @@ impl State {
+                 let bounded = if windowed && records > 1 {
+                     crate::indirect::bound_ahead(list, (&args.buffer, offset), (kind, step, records))
+                 } else {
+-                    crate::indirect::bound(list, (&args.buffer, offset), count_arg, (kind, step, records))
++                    // (A spread dispatch is never windowed: `windowed` is
++                    // false for dispatches.)
++                    crate::indirect::bound(list, (&args.buffer, offset), count_arg, (kind, step, records), is_spread)
+                 };
+                 let Some(bounded) = bounded else {
+                     self.window = None;
+@@ -4456,6 +4730,11 @@ impl State {
          {
              self.last_indirect = (args.id(), offset);
          }
@@ -1745,7 +2744,7 @@ index 3a20d794..36ff5425 100644
          let ran = match kind {
              DRAW | INDEXED => self.prepare(list, kind == INDEXED),
              MESH => self.prepare_for(list, false, true),
-@@ -4488,6 +4698,20 @@ impl State {
+@@ -4488,11 +4767,28 @@ impl State {
          if kind == MESH {
              self.mesh_scissor(list, false);
          }
@@ -1766,7 +2765,123 @@ index 3a20d794..36ff5425 100644
          // The scratch buffer stays readable as arguments: the next draw of
          // the window reads it with no barrier, and the next clamp moves it
          // back (`crate::indirect`).
-@@ -4810,6 +5034,15 @@ fn describe(view: Option<&View>) -> String {
+         if kind == DISPATCH {
+             DISPATCHED.fetch_add(1, Ordering::Relaxed);
++            if is_spread {
++                SPREAD[1].fetch_add(1, Ordering::Relaxed);
++            }
+         } else {
+             DRAWN.fetch_add(1, Ordering::Relaxed);
+         }
+@@ -4503,6 +4799,107 @@ impl State {
+ /// The host command signature for one argument of `kind` with records
+ /// `stride` bytes apart (no root arguments, so no root signature), made
+ /// once.
++/// Dispatches spread across z since the frame line last took them: direct,
++/// indirect ([`victory_shader::emit::USER_DISPATCH_SPREAD`]).
++pub(crate) static SPREAD: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
++
++/// The user-data root parameter of compute pipeline `p` whose program takes
++/// the spread words, and the index of the first in it (the second follows:
++/// one root-constant argument sets both); `None` for any other pipeline.
++fn spreads(p: &crate::pipeline::host::HostPipeline) -> Option<(u32, u32)> {
++    if !spread_on() {
++        return None;
++    }
++    let stage = p.stages.first()?;
++    let (param, _) = stage.user_data?;
++    let kind = RootType::Other(victory_shader::emit::USER_DISPATCH_SPREAD);
++    let words = &stage.translated().host.user_data;
++    let first = words.iter().find(|u| u.root == kind && u.dword == 0)?.index;
++    words
++        .iter()
++        .any(|u| u.root == kind && u.dword == 1 && u.index == first + 1)
++        .then_some((param, first))
++}
++
++/// Whether dispatches past 65,535 groups in x are spread across z
++/// (`VICTORY_DISPATCH_SPREAD`: on by default; `0` off, as before f93: clamped to
++/// 65,535; `alt`: twenty seconds with, twenty without, in turn, each change
++/// said in the log), to measure what the spread costs and shows within one
++/// run. Off, a translated program's words stay 0: it runs as dispatched.
++fn spread_on() -> bool {
++    /// 0 off, 1 on, 2 in turn.
++    static MODE: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
++    // (Not `VICTORY_SPREAD`: `crate::spread` reads that one, for the title's
++    // pinned threads; run 326 alternated both under it.)
++    match *MODE.get_or_init(|| match std::env::var("VICTORY_DISPATCH_SPREAD").as_deref() {
++        Ok("0") => 0,
++        Ok("alt") => 2,
++        _ => 1,
++    }) {
++        0 => false,
++        1 => true,
++        _ => {
++            static EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
++            let on = (EPOCH.get_or_init(std::time::Instant::now).elapsed().as_secs() / 20) % 2 == 1;
++            static LAST: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(2);
++            if LAST.swap(u8::from(on), Ordering::Relaxed) != u8::from(on) {
++                tracing::info!(
++                    "dispatches past 65,535 groups are spread across z from now (VICTORY_DISPATCH_SPREAD=alt): {}",
++                    if on { "ON" } else { "off, clamped to 65,535 as before" }
++                );
++            }
++            on
++        }
++    }
++}
++
++/// The command signature of a spread dispatch: two root constants (row,
++/// asked x) at `index` of root parameter `param`, then the dispatch; 20
++/// bytes a record (the clamp's spread layout). Made once per root
++/// signature, parameter and index. (After upstream VIctory pull request
++/// #2312.)
++fn host_spread_signature(root: &ID3D12RootSignature, param: u32, index: u32) -> Option<ID3D12CommandSignature> {
++    type Key = (usize, u32, u32);
++    static MADE: std::sync::Mutex<Vec<(Key, ID3D12CommandSignature)>> = std::sync::Mutex::new(Vec::new());
++    let key = (root.as_raw() as usize, param, index);
++    let mut made = MADE.lock().unwrap_or_else(|e| e.into_inner());
++    if let Some((_, s)) = made.iter().find(|(k, _)| *k == key) {
++        return Some(s.clone());
++    }
++    let args = [
++        D3D12_INDIRECT_ARGUMENT_DESC {
++            Type: D3D12_INDIRECT_ARGUMENT_TYPE_CONSTANT,
++            Anonymous: D3D12_INDIRECT_ARGUMENT_DESC_0 {
++                Constant: D3D12_INDIRECT_ARGUMENT_DESC_0_1 {
++                    RootParameterIndex: param,
++                    DestOffsetIn32BitValues: index,
++                    Num32BitValuesToSet: 2,
++                },
++            },
++        },
++        D3D12_INDIRECT_ARGUMENT_DESC {
++            Type: D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH,
++            ..Default::default()
++        },
++    ];
++    let desc = D3D12_COMMAND_SIGNATURE_DESC {
++        ByteStride: 20,
++        NumArgumentDescs: args.len() as u32,
++        pArgumentDescs: args.as_ptr(),
++        NodeMask: 0,
++    };
++    let mut signature: Option<ID3D12CommandSignature> = None;
++    // SAFETY: two valid argument descriptions and a live root signature.
++    let result = unsafe { crate::host::host()?.device.CreateCommandSignature(&desc, Some(root), &mut signature) };
++    if let Err(e) = result {
++        once!(error = %e, param, index, "spread command signature refused");
++        return None;
++    }
++    let signature = signature?;
++    made.push((key, signature.clone()));
++    Some(signature)
++}
++
+ fn host_signature(kind: u32, stride: u32) -> Option<ID3D12CommandSignature> {
+     static MADE: std::sync::Mutex<Vec<((u32, u32), ID3D12CommandSignature)>> =
+         std::sync::Mutex::new(Vec::new());
+@@ -4810,6 +5207,15 @@ fn describe(view: Option<&View>) -> String {
  }
  
  /// The console's own primitive topologies.
@@ -2323,7 +3438,7 @@ index 00000000..c53860d0
 +    }
 +}
 diff --git a/crates/victory-gpu/src/host.rs b/crates/victory-gpu/src/host.rs
-index 0a6f20d4..33ab5685 100644
+index 0a6f20d4..52f00f5b 100644
 --- a/crates/victory-gpu/src/host.rs
 +++ b/crates/victory-gpu/src/host.rs
 @@ -2336,7 +2336,9 @@ fn take_chunk(host: &Host, size: u64) -> Option<Chunk> {
@@ -2401,7 +3516,20 @@ index 0a6f20d4..33ab5685 100644
  }
  
  /// One piece of submission-time work, in recorded order.
-@@ -2840,6 +2885,14 @@ enum Step {
+@@ -2831,8 +2876,10 @@ enum Step {
+     /// once per submission, whichever lists ask, until a `Copy` or `Run`
+     /// intervenes.
+     Refresh(std::sync::Arc<crate::shadow::Shadow>, usize, usize),
+-    /// Work that may write title memory.
+-    Run(Box<dyn Fn() + Send>),
++    /// Work that may write title memory; with the place it writes
++    /// (address, bytes) when that is known (the title's memory-to-memory
++    /// copies, `crate::list` `copy_memory`): [`near_writes`].
++    Run(Box<dyn Fn() + Send>, Option<(usize, usize)>),
+     /// Work that writes host memory only.
+     Host(Box<dyn Fn() + Send>),
+     /// Shaders write a range (address, bytes) of a buffer's host copy.
+@@ -2840,6 +2887,14 @@ enum Step {
      /// Brings a texture's staging buffer up to date: once per submission,
      /// whichever lists sample it, until a `Copy` or `Run` intervenes.
      Texture(std::sync::Arc<crate::texture::Staging>),
@@ -2416,7 +3544,59 @@ index 0a6f20d4..33ab5685 100644
  }
  
  /// What a list does on the CPU when it is submitted: copies between host
-@@ -3464,6 +3517,96 @@ static LATE_STATS: [std::sync::atomic::AtomicU64; 18] = [const { std::sync::atom
+@@ -3341,9 +3396,49 @@ mod relay_tests {
+ /// all at once ran the slots out before (run 45).
+ fn late_most() -> usize {
+     static MOST: OnceLock<usize> = OnceLock::new();
+-    *MOST.get_or_init(|| {
++    let most = *MOST.get_or_init(|| {
+         std::env::var("VICTORY_LATE_WAIT_LISTS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(256).max(1)
+-    })
++    });
++    if settle_room() { most * 2 } else { most }
++}
++
++/// Whether the flights get twice the room before "lists in the air"
++/// settles them ([`late_most`]) and eight times the changed runs before
++/// the merge under shaders' writes gives up and settles them
++/// (`VICTORY_MERGE_RUNS`, [`stale_under_flights`]) (`VICTORY_SETTLE_ROOM=1`;
++/// off by default: the caps as set; `alt`: twenty seconds with, twenty
++/// without, in turn, each change said in the log).
++///
++/// Why: at the boat save (runs 311 and 316, world readings) the submitting
++/// thread waits 4.9 to 6.6 ms a frame in settles: 2.4 to 2.5 ms for "title
++/// memory changed under shader writes", where the merge gave up 0.55 times
++/// a frame for more than 512 changed runs (about 1,000 changed runs a frame
++/// are merged), and 1.6 to 2.9 ms for 256 lists in the air. Watch the
++/// tables line ("N refused": dynamic slots are held while lists fly) and
++/// the card's time (each merged run is a copy of its own there).
++fn settle_room() -> bool {
++    /// 0 off, 1 on, 2 in turn.
++    static MODE: OnceLock<u8> = OnceLock::new();
++    match *MODE.get_or_init(|| match std::env::var("VICTORY_SETTLE_ROOM").as_deref() {
++        Ok("1") => 1,
++        Ok("alt") => 2,
++        _ => 0,
++    }) {
++        0 => false,
++        1 => true,
++        _ => {
++            static EPOCH: OnceLock<std::time::Instant> = OnceLock::new();
++            let on = (EPOCH.get_or_init(std::time::Instant::now).elapsed().as_secs() / 20) % 2 == 1;
++            static LAST: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(2);
++            if LAST.swap(u8::from(on), Ordering::Relaxed) != u8::from(on) {
++                tracing::info!(
++                    "flights get more room (lists in the air x2, changed runs merged x8) before they are settled from now (VICTORY_SETTLE_ROOM=alt): {}",
++                    if on { "ON" } else { "off, the caps as set" }
++                );
++            }
++            on
++        }
++    }
+ }
+ 
+ /// Whether a submission with bottom-of-pipe writes may fly
+@@ -3464,6 +3559,96 @@ static LATE_STATS: [std::sync::atomic::AtomicU64; 18] = [const { std::sync::atom
  static LATE_WAITED: [std::sync::atomic::AtomicU64; 11] = [const { std::sync::atomic::AtomicU64::new(0) }; 11];
  
  /// Whether `[from, to)` touches one of `ranges` (in order, joined).
@@ -2513,16 +3693,28 @@ index 0a6f20d4..33ab5685 100644
  fn touches(ranges: &[(usize, usize)], from: usize, to: usize) -> bool {
      if from >= to {
          return false;
-@@ -3573,7 +3716,7 @@ fn blocked_by(written: &[(usize, usize)], runs: &[&HostList], count: bool) -> Op
+@@ -3572,8 +3757,8 @@ fn blocked_by(written: &[(usize, usize)], runs: &[&HostList], count: bool) -> Op
+                         return Some(WHY_READ);
                      }
                  }
-                 Step::Run(_) => return Some(WHY_RUN),
+-                Step::Run(_) => return Some(WHY_RUN),
 -                Step::Refresh(..) | Step::GpuWrite(..) | Step::Host(_) => {}
++                Step::Run(..) => return Some(WHY_RUN),
 +                Step::Refresh(..) | Step::GpuWrite(..) | Step::Host(_) | Step::GpuCopy(..) | Step::GpuFill(..) => {}
              }
          }
      }
-@@ -4422,6 +4565,31 @@ struct RelayFetch {
+@@ -4140,6 +4325,9 @@ fn stale_under_flights(runs: &[&HostList]) -> bool {
+         let mut runs_left = *RUNS.get_or_init(|| {
+             std::env::var("VICTORY_MERGE_RUNS").ok().and_then(|v| v.trim().parse::<usize>().ok()).map_or(512, |n| n.clamp(1, 1 << 16))
+         });
++        if settle_room() {
++            runs_left = (runs_left * 8).min(1 << 16);
++        }
+         return spans.iter().any(|(shadow, from, to)| shadow.merge_under_writes(*from, *to - *from, &mut runs_left));
+     }
+     spans.iter().any(|(shadow, from, to)| shadow.stale_under_writes(*from, *to - *from))
+@@ -4422,6 +4610,31 @@ struct RelayFetch {
      sent: u64,
      /// Buffer, mapping, bytes.
      buffer: Option<(ID3D12Resource, usize, u64)>,
@@ -2554,7 +3746,7 @@ index 0a6f20d4..33ab5685 100644
  }
  
  /// The thread that lands flights ([`relay`]): as soon as the card has run
-@@ -4837,9 +5005,109 @@ fn read_backs(list: &HostList) {
+@@ -4837,9 +5050,109 @@ fn read_backs(list: &HostList) {
      }
  }
  
@@ -2664,7 +3856,7 @@ index 0a6f20d4..33ab5685 100644
      if crate::shadow::wide_back() {
          // Every range first (the pieces that differ, found on several
          // threads), then the merges, in order, as below.
-@@ -5154,7 +5422,11 @@ impl Host {
+@@ -5154,7 +5467,11 @@ impl Host {
                  },
                  ..Default::default()
              })?;
@@ -2676,7 +3868,7 @@ index 0a6f20d4..33ab5685 100644
                  sync: vec![list()?],
                  check: vec![list()?],
                  fetch: list()?,
-@@ -5169,6 +5441,53 @@ impl Host {
+@@ -5169,6 +5486,53 @@ impl Host {
          }
      }
  
@@ -2730,7 +3922,7 @@ index 0a6f20d4..33ab5685 100644
      /// [`CardInflight`] for `results` bytes of the compare's results; `None`
      /// (and the old fetch) if the shader or the memory cannot be had.
      fn make_card_inflight(&self, results: u64) -> Option<CardInflight> {
-@@ -5304,6 +5623,14 @@ impl Host {
+@@ -5304,6 +5668,14 @@ impl Host {
              None => 0,
          };
          let mut dirty = crate::shadow::card_dirty(sent_as);
@@ -2745,7 +3937,7 @@ index 0a6f20d4..33ab5685 100644
          // With fetches on a copy queue (`crate::queue2`, bit 1 of
          // `VICTORY_QUEUE2`): the send's number is signalled on the direct
          // queue behind the send, so that a fetch knows which sends the card
-@@ -5321,6 +5648,39 @@ impl Host {
+@@ -5321,6 +5693,39 @@ impl Host {
          }
          let mut work = CARD_WORK.lock().unwrap_or_else(|e| e.into_inner());
          let work = work.as_mut()?;
@@ -2785,7 +3977,7 @@ index 0a6f20d4..33ab5685 100644
          // A copy whose shader writes are declared for the first time gets
          // its bytes from before, whole.
          let mut whole: Vec<Arc<crate::shadow::Shadow>> = Vec::new();
-@@ -5460,6 +5820,52 @@ impl Host {
+@@ -5460,6 +5865,52 @@ impl Host {
                          let Some((staging, before, size)) = shadow.card_sides() else {
                              continue;
                          };
@@ -2838,7 +4030,7 @@ index 0a6f20d4..33ab5685 100644
                          for &(a, b) in ranges {
                              match &landed {
                                  Some(landing) => list.CopyBufferRegion(&shadow.buffer, a as u64, landing, at, (b - a) as u64),
-@@ -5501,6 +5907,7 @@ impl Host {
+@@ -5501,6 +5952,7 @@ impl Host {
              sent_as,
              inflight: false,
              inflight_landed: 0,
@@ -2846,7 +4038,7 @@ index 0a6f20d4..33ab5685 100644
          };
          // Each byte once, as the copy-back joins the declared ranges. The
          // results go behind those of plans still in the air.
-@@ -5648,6 +6055,9 @@ impl Host {
+@@ -5648,6 +6100,9 @@ impl Host {
          for (check, list) in plan.lists {
              if check { work.check.push(list) } else { work.sync.push(list) }
          }
@@ -2856,7 +4048,7 @@ index 0a6f20d4..33ab5685 100644
          work.out = work.out.saturating_sub(1);
          // With the relay other plans may be on the card, their results
          // not read yet: the area starts again only when none is out.
-@@ -5663,12 +6073,34 @@ impl Host {
+@@ -5663,12 +6118,34 @@ impl Host {
          unsafe {
              let fence: ID3D12Fence = self.device.CreateFence(0, D3D12_FENCE_FLAG_NONE).ok()?;
              let event = CreateEventW(None, false, false, None).ok()?;
@@ -2891,7 +4083,7 @@ index 0a6f20d4..33ab5685 100644
              })
          }
      }
-@@ -5700,6 +6132,82 @@ impl Host {
+@@ -5700,6 +6177,82 @@ impl Host {
      /// of the last flight being landed: a piece an earlier fetch on the
      /// copy queue brought down beside one of these flights is fetched
      /// whatever the compare says ([`BESIDE`]).
@@ -2974,7 +4166,7 @@ index 0a6f20d4..33ab5685 100644
      fn relay_card_back(&self, plans: &[(u64, &CardPlan)], fetch: &mut Option<RelayFetch>, behind: u64, landed: u64) {
          if inflight_fetch() {
              let only: Vec<&CardPlan> = plans.iter().map(|p| p.1).collect();
-@@ -5771,6 +6279,16 @@ impl Host {
+@@ -5771,6 +6324,16 @@ impl Host {
              }
          }
          BESIDE_STATS[0].fetch_add(again, Ordering::Relaxed);
@@ -2991,7 +4183,7 @@ index 0a6f20d4..33ab5685 100644
          if pieces.is_empty() {
              if inflight_fetch() {
                  // The next merge may be of a flight in the air now, with
-@@ -5813,6 +6331,53 @@ impl Host {
+@@ -5813,6 +6376,53 @@ impl Host {
          f.sent += 1;
          let ((allocator, list), fence, event, sent) = (f.list.clone(), f.fence.clone(), f.event, f.sent);
          let waiting = std::time::Instant::now();
@@ -3045,7 +4237,7 @@ index 0a6f20d4..33ab5685 100644
          // SAFETY: the list's last run was waited for by this thread; live
          // buffers (the copies are held by the plans); the fence and the
          // event are this thread's.
-@@ -6626,6 +7191,9 @@ impl Host {
+@@ -6626,6 +7236,9 @@ impl Host {
          // Flights in the air ([`late`]): a submission that is waited for
          // settles them first, one sent ahead only if preparing it reads
          // what they write.
@@ -3055,7 +4247,39 @@ index 0a6f20d4..33ab5685 100644
          if !late {
              self.settle(&mut submitted, WHY_SYNC);
          } else if let Some(why) = late_blocked(runs) {
-@@ -6701,7 +7269,10 @@ impl Host {
+@@ -6638,8 +7251,14 @@ impl Host {
+             }
+         }
+         // Descriptors the title copied into placed heaps directly, before
+-        // command lists that index those slots are submitted.
+-        crate::descriptor::sync_heaps();
++        // command lists that index those slots are submitted. With
++        // `VICTORY_SYNC_BESIDE` on a thread of its own while this one
++        // prepares, from after the sweep to before the lists go to the card
++        // (`crate::descriptor::sync_beside`).
++        let beside = crate::descriptor::sync_beside();
++        if !beside {
++            crate::descriptor::sync_heaps();
++        }
+         let behind = late && flying();
+         // Before this submission counts as started: what the sweep lets go
+         // of is named by no list, and nothing runs now (behind flights the
+@@ -6658,8 +7277,12 @@ impl Host {
+         }
+         let behind = late && flying();
+         // The slots that waited for a texture's host copy, before the
+-        // lists that may read them run.
+-        crate::descriptor::make_waiting();
++        // lists that may read them run (with the pass, beside, after it).
++        if beside {
++            crate::descriptor::sync_begin();
++        } else {
++            crate::descriptor::make_waiting();
++        }
+         let this_submission = STARTED.fetch_add(1, Ordering::AcqRel) + 1;
+         // The ranges shaders write are counted for it (with the relay).
+         crate::shadow::preparing(this_submission);
+@@ -6701,7 +7324,10 @@ impl Host {
              // may write too, and this submission refreshes it. The flights
              // are settled, and the asking made again: the copy-back wrote
              // title memory, which other copies of it must see.
@@ -3067,7 +4291,19 @@ index 0a6f20d4..33ab5685 100644
                  let settling = std::time::Instant::now();
                  self.settle(&mut submitted, WHY_STALE);
                  settled += settling.elapsed();
-@@ -7823,10 +8394,28 @@ impl HostList {
+@@ -6725,6 +7351,11 @@ impl Host {
+         batch.flush();
+         crate::watch::ask_once_end();
+         part = prep_part(2, part);
++        // The pass over the view heap, if it ran beside: done before any
++        // list of this submission goes to the card.
++        if beside {
++            crate::descriptor::sync_end();
++        }
+         // The snapshots of the ranges shaders may write, if they were left
+         // for now (`crate::shadow::wide_back`): the refreshes are done, the
+         // lists have not gone to the card.
+@@ -7823,10 +8454,28 @@ impl HostList {
          // (The same order in every frame, whatever order the map gives.)
          #[cfg(feature = "diagnostics")]
          leaving.sort_by_key(|l| std::sync::Arc::as_ptr(&l.0) as usize);
@@ -3097,7 +4333,7 @@ index 0a6f20d4..33ab5685 100644
              return None;
          }
          let Some((allocator, list)) = self
-@@ -7856,6 +8445,43 @@ impl HostList {
+@@ -7856,6 +8505,43 @@ impl HostList {
                  if !barriers.is_empty() {
                      list.ResourceBarrier(&barriers);
                  }
@@ -3141,7 +4377,7 @@ index 0a6f20d4..33ab5685 100644
                  if gathered {
                      // The slots must hold clamped records before a draw
                      // reads them: a prelude that cannot record the passes
-@@ -8051,6 +8677,25 @@ impl HostList {
+@@ -8051,6 +8737,25 @@ impl HostList {
          }
      }
  
@@ -3167,7 +4403,7 @@ index 0a6f20d4..33ab5685 100644
      /// With [`list_reuse`]: whether this is the first time since the reset
      /// that the list binds the host pipeline at `pipeline` (its interface
      /// pointer). The list keeps the pipeline from its first bind to its
-@@ -8217,6 +8862,15 @@ impl HostList {
+@@ -8217,6 +8922,15 @@ impl HostList {
  
      /// The bytes of scratch chunks the list holds now (after a reset:
      /// none while lists share their chunks).
@@ -3183,7 +4419,70 @@ index 0a6f20d4..33ab5685 100644
      pub(crate) fn scratch_kept(&self) -> u64 {
          let scratch = self.scratch.lock().unwrap_or_else(|e| e.into_inner());
          scratch.chunks.iter().map(|c| c.1).sum()
-@@ -8544,6 +9198,9 @@ impl HostList {
+@@ -8429,9 +9143,11 @@ impl HostList {
+     }
+ 
+     /// Runs `work` when the list is submitted, in order with its copies.
+-    /// `work` may write title memory (refreshes after it copy again).
+-    pub(crate) fn defer(&self, work: impl Fn() + Send + 'static) {
+-        self.deferred().copies.push(Step::Run(Box::new(work)));
++    /// `work` may write title memory, and only in `[at, at + len)`
++    /// (refreshes after it copy again; [`near_writes`] uses the place,
++    /// without the switch any write of title memory is assumed).
++    pub(crate) fn defer_at(&self, at: usize, len: usize, work: impl Fn() + Send + 'static) {
++        self.deferred().copies.push(Step::Run(Box::new(work), Some((at, len))));
+         self.deferred().refreshed.clear();
+         if list_reuse_set() {
+             self.deferred().filled.clear();
+@@ -8479,7 +9195,11 @@ impl HostList {
+                         add(C::Copies, 1);
+                         add(C::CopyBytes, len as u64);
+                     }
+-                    batch.title_wrote(dst, len);
++                    if near_writes() {
++                        batch.title_wrote_near(dst, len, false);
++                    } else {
++                        batch.title_wrote(dst, len);
++                    }
+                     #[cfg(feature = "diagnostics")]
+                     fill_check::copy_runs(dst, src, len);
+                     #[cfg(feature = "diagnostics")]
+@@ -8510,14 +9230,31 @@ impl HostList {
+                     batch.add(shadow, *address, *len);
+                     continue;
+                 }
+-                Step::Run(work) | Step::Host(work) => {
+-                    if matches!(step, Step::Run(_)) {
++                Step::Run(work, Some((at, len))) if near_writes() => {
++                    // Its place is known: only what it touches is brought up
++                    // to date first and checked again after it, and the
++                    // submission's one asking stands, told of the write, as
++                    // for a title buffer copy ([`near_writes`]).
++                    let written = batch.title_wrote_near(*at, *len, true);
++                    work();
++                    for &(from, to) in &written {
++                        crate::watch::wrote(from, to - from);
++                    }
++                    #[cfg(feature = "diagnostics")]
++                    {
++                        add(C::Runs, 1);
++                        add(C::RunUs, started.elapsed().as_micros() as u64);
++                    }
++                    continue;
++                }
++                Step::Run(work, _) | Step::Host(work) => {
++                    if matches!(step, Step::Run(..)) {
+                         batch.title_written();
+                     }
+                     work();
+                     // It wrote title memory, where is not known here: the
+                     // submission's one asking ends, later refreshes ask anew.
+-                    if matches!(step, Step::Run(_)) {
++                    if matches!(step, Step::Run(..)) {
+                         crate::watch::ask_once_end();
+                     }
+                     #[cfg(feature = "diagnostics")]
+@@ -8544,9 +9281,26 @@ impl HostList {
                      }
                      continue;
                  }
@@ -3192,8 +4491,322 @@ index 0a6f20d4..33ab5685 100644
 +                Step::GpuCopy(..) | Step::GpuFill(..) => continue,
                  Step::Texture(staging) => {
                      if batch.texture_due(staging) {
-                         staging.refresh();
-@@ -8978,6 +9635,13 @@ pub(crate) fn copy_mapped(dst: *mut u8, src: *const u8, len: usize, title_dst: b
+-                        staging.refresh();
++                        if near_writes() {
++                            // Where it lies, for a write of ours at a known
++                            // place to leave it checked ([`Batch::title_wrote_near`]).
++                            batch
++                                .texture_spans
++                                .insert(std::sync::Arc::as_ptr(staging) as *const () as usize, staging.memory());
++                        }
++                        if parallel_refresh() {
++                            // Checked with the others of the batch, several
++                            // at a time, before the next step that writes
++                            // title memory ([`Batch::check_textures`]).
++                            batch.due_textures.push(staging.clone());
++                        } else {
++                            staging.refresh();
++                        }
+                     }
+                     continue;
+                 }
+@@ -8670,6 +9424,14 @@ struct Batch {
+     current: std::collections::HashMap<usize, (std::sync::Arc<crate::shadow::Shadow>, usize, usize)>,
+     /// Staging buffers (by address) refreshed since the last title write.
+     textures: std::collections::HashSet<usize>,
++    /// With [`parallel_refresh`]: textures due a check, not checked yet
++    /// ([`Batch::check_textures`], before any write of ours and at every
++    /// flush).
++    due_textures: Vec<std::sync::Arc<crate::texture::Staging>>,
++    /// With [`near_writes`]: the title memory (address, bytes) of the
++    /// staging buffers in `textures`, by the same key. A texture without
++    /// an entry is checked again after any write of ours.
++    texture_spans: std::collections::HashMap<usize, (usize, usize)>,
+ }
+ 
+ impl Batch {
+@@ -8758,8 +9520,10 @@ impl Batch {
+     /// Before a step that writes title memory: pending refreshes are done
+     /// first, and textures are checked again after it.
+     fn title_written(&mut self) {
++        self.check_textures();
+         self.flush();
+         self.textures.clear();
++        self.texture_spans.clear();
+         // Where it writes is not known: no copy counts as up to date.
+         self.current.clear();
+     }
+@@ -8769,8 +9533,10 @@ impl Batch {
+     /// in this submission that holds some of those bytes, the larger part
+     /// beside them stays so.
+     fn title_wrote(&mut self, at: usize, len: usize) {
++        self.check_textures();
+         self.flush();
+         self.textures.clear();
++        self.texture_spans.clear();
+         let end = at + len;
+         self.current.retain(|_, entry| {
+             let (from, to) = (entry.1, entry.2);
+@@ -8787,7 +9553,137 @@ impl Batch {
+         });
+     }
+ 
++    /// With [`near_writes`]: a write of ours into `[at, at + len)` of title
++    /// memory (a title buffer copy, or with `run` a memory-to-memory copy).
++    /// Only the pending refreshes whose span holds written bytes are done
++    /// first, and only the textures whose memory holds them are checked
++    /// again after it; the others stay pending or checked. Where the place
++    /// is a view of the title's physical pages, every other address that
++    /// shows the same 64 KiB pages counts as written too
++    /// (`crate::inplace::pages_of`); a view write of more than
++    /// [`NEAR_VIEW_PAGES`] pages, or more than [`NEAR_PENDING`] refreshes
++    /// pending, is done as before ([`Batch::title_wrote`]). Returns the
++    /// written ranges (the place, and the other addresses of its pages).
++    fn title_wrote_near(&mut self, at: usize, len: usize, run: bool) -> Vec<(usize, usize)> {
++        // Textures due a check read title memory as it is before the write.
++        self.check_textures();
++        use std::sync::atomic::Ordering::Relaxed;
++        const K64: usize = 1 << 16;
++        let end = at.saturating_add(len);
++        let mut written = vec![(at, end)];
++        let mut whole = self.refreshes.len() > NEAR_PENDING;
++        if !whole && len > 0 && !crate::inplace::views_between(at, end).is_empty() {
++            let (first, last) = (at / K64, end.div_ceil(K64));
++            if last - first > NEAR_VIEW_PAGES {
++                whole = true;
++            } else {
++                for page in first..last {
++                    for other in crate::inplace::pages_of(page * K64) {
++                        if other != page * K64 {
++                            written.push((other, other + K64));
++                        }
++                    }
++                }
++            }
++        }
++        NEAR[usize::from(run)].fetch_add(1, Relaxed);
++        if whole {
++            NEAR[2].fetch_add(1, Relaxed);
++            self.title_wrote(at, len);
++            near_line();
++            return written;
++        }
++        let touches = |from: usize, to: usize| written.iter().any(|&(a, b)| from < b && a < to);
++        // The refreshes that hold written bytes: done now, before the write.
++        let pending = std::mem::take(&mut self.refreshes);
++        let (due, keep): (Vec<_>, Vec<_>) = pending.into_iter().partition(|r| touches(r.1, r.2));
++        NEAR[3].fetch_add(due.len() as u64, Relaxed);
++        NEAR[4].fetch_add(keep.len() as u64, Relaxed);
++        if !due.is_empty() {
++            self.refreshes = due;
++            self.flush();
++        }
++        self.refreshes = keep;
++        self.index = self
++            .refreshes
++            .iter()
++            .enumerate()
++            .map(|(i, r)| (std::sync::Arc::as_ptr(&r.0) as usize, i))
++            .collect();
++        // Textures: checked again only where the write lands.
++        let before = self.textures.len();
++        let spans = &self.texture_spans;
++        self.textures.retain(|key| spans.get(key).is_some_and(|&(a, n)| !touches(a, a.saturating_add(n))));
++        let textures = &self.textures;
++        self.texture_spans.retain(|key, _| textures.contains(key));
++        NEAR[5].fetch_add(self.textures.len() as u64, Relaxed);
++        NEAR[6].fetch_add((before - self.textures.len()) as u64, Relaxed);
++        // [`refresh_once`]'s note of what is up to date, as in `title_wrote`.
++        for &(a, b) in &written {
++            self.current.retain(|_, entry| {
++                let (from, to) = (entry.1, entry.2);
++                if b <= from || to <= a {
++                    return true;
++                }
++                let (left, right) = (a.saturating_sub(from), to.saturating_sub(b));
++                if left >= right {
++                    entry.2 = from + left;
++                } else {
++                    entry.1 = b;
++                }
++                entry.1 < entry.2
++            });
++        }
++        near_line();
++        written
++    }
++
++    /// With [`parallel_refresh`]: checks the textures due ([`Batch::due_textures`])
++    /// on the helper threads (`crate::shadow::wide_run`, the submitting
++    /// thread among them), all done before it returns. Each check takes
++    /// its texture's own lock, the journal's for its asking, the runtime's
++    /// mapping lock for reading (shared), and a buffer of its thread's own;
++    /// the hashing and detiling run side by side. "textures N ms" counts
++    /// the time it took, not the threads' sum.
++    fn check_textures(&mut self) {
++        use std::sync::atomic::Ordering::Relaxed;
++        if self.due_textures.is_empty() {
++            return;
++        }
++        let due = std::mem::take(&mut self.due_textures);
++        PARALLEL_CHECKS[0].fetch_add(1, Relaxed);
++        PARALLEL_CHECKS[1].fetch_add(due.len() as u64, Relaxed);
++        if due.len() < 2 {
++            for staging in due {
++                staging.refresh();
++            }
++            return;
++        }
++        let started = std::time::Instant::now();
++        let before = PREPARING[2].load(Relaxed);
++        let jobs: Vec<Box<dyn FnOnce() + Send>> = due
++            .into_iter()
++            .map(|staging| Box::new(move || staging.refresh()) as Box<dyn FnOnce() + Send>)
++            .collect();
++        crate::shadow::wide_run(jobs);
++        let summed = PREPARING[2].load(Relaxed).saturating_sub(before);
++        let wall = started.elapsed().as_micros() as u64;
++        PREPARING[2].fetch_sub(summed.saturating_sub(wall), Relaxed);
++        PARALLEL_CHECKS[2].fetch_add(summed, Relaxed);
++        PARALLEL_CHECKS[3].fetch_add(wall, Relaxed);
++        let batches = PARALLEL_CHECKS[0].load(Relaxed);
++        if batches.is_multiple_of(1 << 14) {
++            let [b, n, sum, w] = [0, 1, 2, 3].map(|i| PARALLEL_CHECKS[i].load(Relaxed));
++            tracing::info!(
++                "texture checks side by side (VICTORY_PARALLEL_REFRESH) so far: {b} batches, {n} textures; the threads' sum {} ms, the time taken {} ms",
++                sum / 1000,
++                w / 1000
++            );
++        }
++    }
++
+     fn flush(&mut self) {
++        self.check_textures();
+         self.index.clear();
+         // One write-watch asking for the copies that lie close together,
+         // not one per copy.
+@@ -8914,6 +9810,120 @@ fn fills_plain() -> bool {
+     }
+ }
+ 
++/// Whether a write of ours into title memory at a known place (a title
++/// buffer copy, a memory-to-memory copy of the title's) brings up to date
++/// first only the pending refreshes it touches and has only the textures
++/// it touches checked again, and lets the submission's one write-watch
++/// asking stand (`VICTORY_NEAR_WRITES=1`; off by default: every pending
++/// refresh is done and every texture checked again, and a memory-to-memory
++/// copy ends the asking, as before). `alt`: twenty seconds with, twenty
++/// without, in turn, each change said in the log.
++///
++/// Why (runs 311-316, 184 five-second world readings, fitted on draws and
++/// memory-to-memory copies a frame): the title records about 126 of those
++/// copies a frame (50 per 1,000 draws), each a [`Step::Run`] whose place
++/// was not used: a full flush, every texture hashed again, the asking
++/// ended. Per 100 such copies a frame at equal draws: the lists' steps
++/// +13.4 ms, the flush +4.9 ms (R2 0.69 / 0.23), "textures" +8.9 ms. The
++/// copies themselves take 0.2 ms a frame.
++fn near_writes() -> bool {
++    /// 0 off, 1 on, 2 in turn.
++    static MODE: OnceLock<u8> = OnceLock::new();
++    match *MODE.get_or_init(|| match std::env::var("VICTORY_NEAR_WRITES").as_deref() {
++        Ok("1") => 1,
++        Ok("alt") => 2,
++        _ => 0,
++    }) {
++        0 => false,
++        1 => true,
++        _ => {
++            static EPOCH: OnceLock<std::time::Instant> = OnceLock::new();
++            let on = (EPOCH.get_or_init(std::time::Instant::now).elapsed().as_secs() / 20) % 2 == 1;
++            static LAST: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(2);
++            if LAST.swap(u8::from(on), Ordering::Relaxed) != u8::from(on) {
++                tracing::info!(
++                    "a write of ours at a known place flushes and checks again only what it touches from now (VICTORY_NEAR_WRITES=alt): {}",
++                    if on { "ON" } else { "off, everything as usual" }
++                );
++            }
++            on
++        }
++    }
++}
++
++/// [`Batch::title_wrote_near`]: a view write over more pages than this is
++/// done the old way (each page's other addresses are looked up).
++const NEAR_VIEW_PAGES: usize = 64;
++/// [`Batch::title_wrote_near`]: more refreshes pending than this, and the
++/// write is done the old way (the partition walks them all).
++const NEAR_PENDING: usize = 4096;
++
++/// Since the start, of [`Batch::title_wrote_near`]: title buffer copies,
++/// memory-to-memory copies, of both those done the old way, refreshes done
++/// for them, refreshes left pending, textures left checked, textures to be
++/// checked again.
++static NEAR: [std::sync::atomic::AtomicU64; 7] = [const { std::sync::atomic::AtomicU64::new(0) }; 7];
++
++/// Every 16,384 near writes: [`NEAR`] in a line.
++fn near_line() {
++    let n = NEAR[0].load(Ordering::Relaxed) + NEAR[1].load(Ordering::Relaxed);
++    if n == 0 || !n.is_multiple_of(16_384) {
++        return;
++    }
++    let [copies, runs, whole, done, left, kept, again] = [0, 1, 2, 3, 4, 5, 6].map(|i| NEAR[i].load(Ordering::Relaxed));
++    tracing::info!(
++        "writes of ours at a known place so far (VICTORY_NEAR_WRITES): {copies} title buffer copies and {runs} memory-to-memory copies, \
++         {whole} of them done the old way (a view of over {NEAR_VIEW_PAGES} pages, or over {NEAR_PENDING} refreshes pending); \
++         refreshes done for them {done}, left pending {left}; textures left checked {kept}, checked again {again}"
++    );
++}
++
++/// Whether a submission's texture checks (`crate::texture::Staging::refresh`:
++/// the write watch or guards asked, then the memory hashed and detiled if
++/// it may have changed) are gathered between writes of ours and run on the
++/// helper threads side by side (`VICTORY_PARALLEL_REFRESH=1`; off by
++/// default: one after the other where each texture's step stands; `alt`:
++/// twenty seconds with, twenty without, in turn, each change said in the
++/// log). Pair with `VICTORY_WIDE_REFRESH` for the host copies of buffers.
++///
++/// Why: "textures N ms" is 11-12 ms of a boat frame's preparing (runs
++/// 319-321, 28-30 MB hashed a frame), all on the submitting thread. The
++/// checks touch different textures; what they share is the journal's lock
++/// for the asking (short for write-watched memory, a guard walk for view
++/// memory), so the hashing and detiling are what goes side by side.
++///
++/// What changes: a texture's check moves from its step to the next write
++/// of ours or flush, so it reads title memory a little later in the
++/// preparing, and never after a write of ours that its lists come before.
++fn parallel_refresh() -> bool {
++    /// 0 off, 1 on, 2 in turn.
++    static MODE: OnceLock<u8> = OnceLock::new();
++    match *MODE.get_or_init(|| match std::env::var("VICTORY_PARALLEL_REFRESH").as_deref() {
++        Ok("1") => 1,
++        Ok("alt") => 2,
++        _ => 0,
++    }) {
++        0 => false,
++        1 => true,
++        _ => {
++            static EPOCH: OnceLock<std::time::Instant> = OnceLock::new();
++            let on = (EPOCH.get_or_init(std::time::Instant::now).elapsed().as_secs() / 20) % 2 == 1;
++            static LAST: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(2);
++            if LAST.swap(u8::from(on), Ordering::Relaxed) != u8::from(on) {
++                tracing::info!(
++                    "a submission's texture checks run side by side from now (VICTORY_PARALLEL_REFRESH=alt): {}",
++                    if on { "ON" } else { "off, one after the other as usual" }
++                );
++            }
++            on
++        }
++    }
++}
++
++/// Since the start, of [`Batch::check_textures`]: batches, textures, the
++/// threads' summed microseconds, the microseconds taken.
++static PARALLEL_CHECKS: [std::sync::atomic::AtomicU64; 4] = [const { std::sync::atomic::AtomicU64::new(0) }; 4];
++
+ /// A fill's copy ([`Step::Fill`]): title memory at `src` into upload memory
+ /// at `dst`. In place if it is short and [`fills_plain`] says so, else (and
+ /// if a source page was not there) as every copy ([`copy_mapped`]).
+@@ -8978,6 +9988,13 @@ pub(crate) fn copy_mapped(dst: *mut u8, src: *const u8, len: usize, title_dst: b
      if ask_first && !crate::texture::committed(dst, len) {
          return;
      }
@@ -3207,7 +4820,7 @@ index 0a6f20d4..33ab5685 100644
      if title_dst {
          // The kernel writes the destination: it must not be guarded.
          crate::watch::writing(dst as usize, len);
-@@ -9014,6 +9678,7 @@ pub(crate) fn copy_mapped(dst: *mut u8, src: *const u8, len: usize, title_dst: b
+@@ -9014,6 +10031,7 @@ pub(crate) fn copy_mapped(dst: *mut u8, src: *const u8, len: usize, title_dst: b
  /// After a failed bulk read into host memory, skip contiguous holes. Never
  /// cache the query across copies: the title may remap the same address.
  fn read_sparse(src: *const u8, dst: *mut u8, len: usize) {
@@ -3215,7 +4828,7 @@ index 0a6f20d4..33ab5685 100644
      use windows_sys::Win32::System::Memory::{
          MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_NOACCESS, VirtualQuery,
      };
-@@ -9045,6 +9710,7 @@ fn read_sparse(src: *const u8, dst: *mut u8, len: usize) {
+@@ -9045,6 +10063,7 @@ fn read_sparse(src: *const u8, dst: *mut u8, len: usize) {
  }
  
  fn read_pieces(src: *const u8, dst: *mut u8, len: usize) {
@@ -3223,7 +4836,7 @@ index 0a6f20d4..33ab5685 100644
      // Something is unmapped: page by page (64 KiB, then 4 KiB in a piece
      // that fails), zeros for what cannot be read.
      for_pieces(src as usize, len, 64 << 10, |at, n| {
-@@ -9066,6 +9732,7 @@ fn read_pieces(src: *const u8, dst: *mut u8, len: usize) {
+@@ -9066,6 +10085,7 @@ fn read_pieces(src: *const u8, dst: *mut u8, len: usize) {
  /// Reads title memory at `src` into `dst`; false if a page of it is not
  /// readable.
  pub(crate) fn read_into(src: *const u8, dst: &mut [u8]) -> bool {
@@ -3231,7 +4844,7 @@ index 0a6f20d4..33ab5685 100644
      #[cfg(feature = "diagnostics")]
      crate::backreads::touched(src as usize, dst.len(), false);
      // In place first, if asked for (`crate::plaincopy`): the destination is
-@@ -9112,6 +9779,7 @@ fn direct_writes() -> bool {
+@@ -9112,6 +10132,7 @@ fn direct_writes() -> bool {
  /// Copies host memory into title memory after a submission (what shaders
  /// wrote), leaving pages that are not mapped alone.
  pub(crate) fn write_mapped(dst: *mut u8, src: *const u8, len: usize) {
@@ -3239,7 +4852,7 @@ index 0a6f20d4..33ab5685 100644
      use windows_sys::Win32::System::Diagnostics::Debug::WriteProcessMemory;
      use windows_sys::Win32::System::Threading::GetCurrentProcess;
      #[cfg(feature = "diagnostics")]
-@@ -9280,6 +9948,8 @@ struct Presenter {
+@@ -9280,6 +10301,8 @@ struct Presenter {
      ahead: Vec<(HostList, u64)>,
      hwnd: HWND,
      meter: Meter,
@@ -3248,7 +4861,21 @@ index 0a6f20d4..33ab5685 100644
  }
  
  /// The frame rate, shown in the window's caption every second and logged
-@@ -9355,6 +10025,15 @@ impl Meter {
+@@ -9347,7 +10370,12 @@ impl Meter {
+         let mesh_largest = MESH_GROUPS[0].swap(0, Ordering::Relaxed);
+         let mesh_groups = MESH_GROUPS[1].swap(0, Ordering::Relaxed) as f64 / frames;
+         tracing::info!(
+-            "indirect mesh dispatches: the largest group count asked for {mesh_largest} (run: at most 65535), {mesh_groups:.0} groups asked per frame"
++            "indirect mesh and compute dispatches: the largest group count asked for {mesh_largest} (run: at most 65535 a dimension), {mesh_groups:.0} groups asked per frame"
++        );
++        let [spread_direct, spread_indirect] =
++            [0, 1].map(|i| crate::draw::SPREAD[i].swap(0, Ordering::Relaxed) as f64 / frames);
++        tracing::info!(
++            "dispatches spread across z past 65,535 groups in x (USER_DISPATCH_SPREAD), per frame: {spread_direct:.2} direct, {spread_indirect:.2} indirect run through the spread signature (programs that read no group id x, and the builder's stages, are not spread)"
+         );
+         // (Run 200 counted indirect compute records asking for 77,000 to
+         // 98,000 groups in x, 0.2 to 0.8 a frame, cut to the 65,535 one
+@@ -9355,6 +10383,15 @@ impl Meter {
          // the card's memory.)
          {
              let [texture_us, slots] = [0, 1].map(|i| crate::draw::HEAP_PASS_PARTS[i].swap(0, Ordering::Relaxed));
@@ -3264,7 +4891,7 @@ index 0a6f20d4..33ab5685 100644
              tracing::info!(
                  "the pass over the heap per frame (the frame line's \"heap buffers ... ms\" is both parts): {:.1} ms in its                  pass over textures picked by index; {:.0} buffer slots looked at by its pass over buffer views",
                  texture_us as f64 / 1e3 / frames,
-@@ -9403,6 +10082,47 @@ impl Meter {
+@@ -9403,6 +10440,47 @@ impl Meter {
                       hold still (the runtime remapping it); the rest is reading, hashing and detiling"
                  );
              }
@@ -3312,7 +4939,7 @@ index 0a6f20d4..33ab5685 100644
              let [through, left] = [0, 1].map(|i| crate::texture::UNLOCKED[i].swap(0, Ordering::Relaxed) as f64 / frames);
              if through + left > 0.0 {
                  tracing::info!(
-@@ -9622,7 +10342,10 @@ impl Host {
+@@ -9622,7 +10700,10 @@ impl Host {
              tracing::warn!(format = desc.Format.0, "cannot present this format");
              return None;
          };
@@ -3324,7 +4951,7 @@ index 0a6f20d4..33ab5685 100644
          let mut presenter = self.presenter.lock().unwrap_or_else(|e| e.into_inner());
          if presenter.is_none() {
              *presenter = match self.presenter(width, height, format) {
-@@ -9691,6 +10414,26 @@ impl Host {
+@@ -9691,6 +10772,26 @@ impl Host {
              };
              copy.reset();
              let list = &copy.list;
@@ -3351,7 +4978,7 @@ index 0a6f20d4..33ab5685 100644
              list.ResourceBarrier(&[
                  transition(texture, state, D3D12_RESOURCE_STATE_COPY_SOURCE),
                  transition(
-@@ -9792,6 +10535,7 @@ impl Host {
+@@ -9792,6 +10893,7 @@ impl Host {
                  ahead: Vec::new(),
                  hwnd,
                  meter: Meter::new(),
@@ -3359,7 +4986,7 @@ index 0a6f20d4..33ab5685 100644
              })
          }
      }
-@@ -10457,6 +11201,95 @@ mod batch {   // Batch::texture_due lives here; `mod tests` is already taken at
+@@ -10457,6 +11559,95 @@ mod batch {   // Batch::texture_due lives here; `mod tests` is already taken at
      }
  }
  
@@ -3455,6 +5082,305 @@ index 0a6f20d4..33ab5685 100644
  /// The host's own paths for a copy in the card's memory, end to end, on
  /// the software adapter only: the title's bytes go up, a shader reads them
  /// and writes, and what it wrote comes back into title memory. Run it with
+diff --git a/crates/victory-gpu/src/indirect.rs b/crates/victory-gpu/src/indirect.rs
+index 343ce0b2..d6f3ff79 100644
+--- a/crates/victory-gpu/src/indirect.rs
++++ b/crates/victory-gpu/src/indirect.rs
+@@ -48,6 +48,9 @@ cbuffer Record : register(b0) {
+     // run is left empty and costs nothing. Bit 2: the records are gathered
+     // (`gather`): record i lies in the source where word i of the table
+     // behind `count_buf` says (from `count_offset` on), and goes to slot i.
++    // Bit 3: dispatch records spread across z past 65,535 groups in x
++    // (`crate::draw`'s spread command signature): record i goes to byte
++    // 20 * i as [row, asked x, x, y, z], row 0 when not spread.
+     uint has_count;
+     uint count_offset;
+ };
+@@ -92,6 +95,12 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
+         src_at = count_buf.Load(count_offset + id.x * 4u);
+     }
+     uint dst_at = id.x * stride;
++    bool spread = (has_count & 8u) != 0;
++    uint row = 0;
++    uint asked_x = 0;
++    if (spread) {
++        dst_at = id.x * 20u;
++    }
+     uint cost = 0;
+     uint asked = 0;
+     uint2 draw_counts = uint2(0, 0);
+@@ -126,7 +135,28 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
+         }
+         draw_counts = uint2(count, instances);
+     } else if (active && kind == 2) {
+-        uint3 g = min(src_args.Load3(src_at), uint3(65535u, 65535u, 65535u));
++        uint3 raw = src_args.Load3(src_at);
++        // Diagnostics: what the record asked for before the clamp (one
++        // dispatch runs at most 65,535 groups a dimension; run 200 saw
++        // compute records ask 77,000 to 98,000 in x). A record ahead of
++        // its dispatch the title has not filled is not counted.
++        asked = max(raw.x, max(raw.y, raw.z));
++        if (ahead && asked > (1u << 24)) {
++            asked = 0;
++        }
++        uint3 g;
++        asked_x = raw.x;
++        // Past 65,535 groups in x (one row): spread across z, the program
++        // takes (x + z * row, y, 0) and leaves past `asked_x` (after
++        // upstream VIctory pull request #2312).
++        if (spread && raw.x > 65535u && raw.y >= 1u && raw.y <= 65535u && raw.z == 1u
++            && !(ahead && raw.x > (1u << 24))) {
++            uint rows = (raw.x + 65534u) / 65535u;
++            row = (raw.x + rows - 1u) / rows;
++            g = uint3(row, raw.y, rows);
++        } else {
++            g = min(raw, uint3(65535u, 65535u, 65535u));
++        }
+         // x * y fits 32 bits; the whole count may not.
+         if (g.z != 0 && g.x * g.y > GROUPS / g.z) {
+             g = uint3(0, 0, 0);
+@@ -149,10 +179,10 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
+     }
+     costs[gi] = cost;
+     GroupMemoryBarrierWithGroupSync();
+-    if (active && kind > 2) {
++    if (active && kind >= 2) {
+         // Diagnostics, in the budget buffer's next words (below): the
+-        // largest group count a mesh record asked for, and the groups
+-        // asked in all.
++        // largest group count a mesh or compute record asked for, and the
++        // groups asked in all.
+         uint was;
+         InterlockedMax(largest_asked, asked, was);
+         InterlockedAdd(all_asked, min(asked, 1u << 24), was);
+@@ -195,7 +225,7 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
+         }
+     }
+     GroupMemoryBarrierWithGroupSync();
+-    if (gi == 0 && kind > 2 && n > 0) {
++    if (gi == 0 && kind >= 2 && n > 0) {
+         uint was;
+         budget.InterlockedMax(4, largest_asked, was);
+         budget.InterlockedAdd(8, all_asked, was);
+@@ -216,9 +246,14 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
+         if (over) {
+             groups = uint3(0, 0, 0);
+         }
+-        dst_args.Store3(dst_at, groups);
+-        for (uint off = 12; off < stride; off += 4) {
+-            dst_args.Store(dst_at + off, src_args.Load(src_at + off));
++        if (spread) {
++            dst_args.Store2(dst_at, uint2(row, asked_x));
++            dst_args.Store3(dst_at + 8u, groups);
++        } else {
++            dst_args.Store3(dst_at, groups);
++            for (uint off = 12; off < stride; off += 4) {
++                dst_args.Store(dst_at + off, src_args.Load(src_at + off));
++            }
+         }
+     }
+ }
+@@ -348,10 +383,13 @@ pub(crate) fn bound(
+     src: (&ID3D12Resource, u64),
+     count: Option<(&ID3D12Resource, u64)>,
+     spec: (u32, u32, u32),
++    spread: bool,
+ ) -> Option<ID3D12Resource> {
+     let bytes = validate_layout(spec, src.1, count.map(|(_, off)| off))?;
++    // Spread dispatch records are 20 bytes each ([row, asked x, x, y, z]).
++    let bytes = if spread { bytes.max(20 * u64::from(spec.2)) } else { bytes };
+     let (c, budget, dst) = (clamp()?, list.budget()?, list.indirect_scratch(bytes)?);
+-    clamp_into(list, c, &dst, budget, src, count, spec, false).then_some(dst)
++    clamp_into(list, c, &dst, budget, src, count, spec, false, spread).then_some(dst)
+ }
+ 
+ /// [`bound`] for a window of records clamped ahead of the draws that will
+@@ -371,7 +409,7 @@ pub(crate) fn bound_ahead(
+ ) -> Option<ID3D12Resource> {
+     let bytes = validate_layout(spec, src.1, None)?;
+     let (c, budget, dst) = (clamp()?, list.budget()?, list.indirect_scratch(bytes)?);
+-    clamp_into(list, c, &dst, budget, src, None, spec, true).then_some(dst)
++    clamp_into(list, c, &dst, budget, src, None, spec, true, false).then_some(dst)
+ }
+ 
+ /// [`record_clamp_as`] into `list`'s scratch buffer `dst`, from the state
+@@ -387,9 +425,10 @@ fn clamp_into(
+     count: Option<(&ID3D12Resource, u64)>,
+     spec: (u32, u32, u32),
+     ahead: bool,
++    spread: bool,
+ ) -> bool {
+     let before = list.indirect_state(dst);
+-    let recorded = record_clamp_as(c, &list.list, (dst, before), budget, src, count, spec, ahead);
++    let recorded = record_clamp_with(c, &list.list, (dst, before), budget, src, count, spec, ahead, spread);
+     if recorded {
+         list.indirect_readable(dst);
+     }
+@@ -403,6 +442,23 @@ fn clamp_into(
+ /// layout or the addresses do not fit the clamp.
+ #[allow(clippy::too_many_arguments)]
+ fn record_clamp_as(
++    c: &Clamp,
++    l: &ID3D12GraphicsCommandList,
++    dst: (&ID3D12Resource, D3D12_RESOURCE_STATES),
++    budget: u64,
++    src: (&ID3D12Resource, u64),
++    count: Option<(&ID3D12Resource, u64)>,
++    spec: (u32, u32, u32),
++    ahead: bool,
++) -> bool {
++    record_clamp_with(c, l, dst, budget, src, count, spec, ahead, false)
++}
++
++/// [`record_clamp_as`]; `spread`: dispatch records past 65,535 groups in x
++/// are spread across z, every record written as [row, asked x, x, y, z]
++/// (20 bytes) for `crate::draw`'s spread command signature.
++#[allow(clippy::too_many_arguments)]
++fn record_clamp_with(
+     c: &Clamp,
+     l: &ID3D12GraphicsCommandList,
+     (dst, before): (&ID3D12Resource, D3D12_RESOURCE_STATES),
+@@ -411,6 +467,7 @@ fn record_clamp_as(
+     count: Option<(&ID3D12Resource, u64)>,
+     (kind, stride, records): (u32, u32, u32),
+     ahead: bool,
++    spread: bool,
+ ) -> bool {
+     let Some(bytes) = validate_layout(
+         (kind, stride, records),
+@@ -455,7 +512,14 @@ fn record_clamp_as(
+         }
+         None => (src_gpu, 0u32, 0u32),
+     };
+-    let constants = [kind, stride, records, args_offset, has_count | (u32::from(ahead) << 1), count_offset];
++    let constants = [
++        kind,
++        stride,
++        records,
++        args_offset,
++        has_count | (u32::from(ahead) << 1) | (u32::from(spread && kind == 2) << 3),
++        count_offset,
++    ];
+     // SAFETY: an open list; our root signature and pipeline; live source,
+     // count, scratch destination, and budget buffers. `src` and `count` stay
+     // in `COMMON` / `GENERIC_READ` via implicit buffer promotion while `dst`
+@@ -1484,6 +1548,62 @@ void main() {
+         assert_eq!(validate_layout((1, 20, u32::MAX), 0, None), None);
+     }
+ 
++    /// Dispatch records spread across z (bit 3, `crate::draw`'s spread
++    /// signature): every record is written as [row, asked x, x, y, z], 20
++    /// bytes apart; one over 65,535 groups in x with z 1 is spread (115,200
++    /// as asked by the title in run 319: rows of 57,600, two of them), one
++    /// within the limit is not (row 0). (After upstream VIctory pull request
++    /// #2312's test.)
++    #[test]
++    fn warp_spread_records_split_large_x_and_keep_small_unspread() {
++        let Some(mut warp) = WarpHarness::new() else {
++            return;
++        };
++        const KIND_DISPATCH: u32 = 2;
++        const STRIDE: u32 = 12;
++        let records: [[u32; 3]; 3] = [[115_200, 1, 1], [100, 2, 1], [65_537, 1, 1]];
++        let (src_buf, src_ptr, _) = warp.shared_buffer(256);
++        let (_budget_buf, budget_ptr, budget_gpu) = warp.shared_buffer(256);
++        let (readback_buf, readback_ptr, _) = warp.shared_buffer(256);
++        let dst_buf = warp.default_uav(256);
++        // SAFETY: buffers mapped with the capacities above.
++        unsafe {
++            for (i, r) in records.iter().enumerate() {
++                for (w, v) in r.iter().enumerate() {
++                    (src_ptr as *mut u32).add(i * 3 + w).write_volatile(*v);
++                }
++            }
++            std::ptr::write_bytes(budget_ptr, 0, 256);
++            std::ptr::write_bytes(readback_ptr, 0, 256);
++        }
++        assert!(record_clamp_with(
++            &warp.clamp,
++            &warp.list,
++            (&dst_buf, D3D12_RESOURCE_STATE_COMMON),
++            budget_gpu,
++            (&src_buf, 0),
++            None,
++            (KIND_DISPATCH, STRIDE, records.len() as u32),
++            false,
++            true,
++        ));
++        // SAFETY: open command list; the clamp left `dst_buf` in `INDIRECT_ARGUMENT`.
++        unsafe {
++            warp.list.ResourceBarrier(&[transition(
++                &dst_buf,
++                D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT,
++                D3D12_RESOURCE_STATE_COPY_SOURCE,
++            )]);
++            warp.list.CopyBufferRegion(&readback_buf, 0, &dst_buf, 0, 60);
++        }
++        warp.submit_and_wait();
++        // SAFETY: the work is done; a mapped buffer.
++        let out: Vec<u32> = unsafe { std::slice::from_raw_parts(readback_ptr.cast::<u32>().cast_const(), 15).to_vec() };
++        assert_eq!(&out[0..5], &[57_600, 115_200, 57_600, 1, 2], "115,200 x 1 x 1: spread");
++        assert_eq!(&out[5..10], &[0, 100, 100, 2, 1], "100 x 2 x 1: not spread");
++        assert_eq!(&out[10..15], &[32_769, 65_537, 32_769, 1, 2], "65,537 x 1 x 1: spread");
++    }
++
+     /// WARP D3D12 execution test proving:
+     /// (a) `countBuffer` with a small count (`3`) and `4,093` garbage tail slots
+     ///     (`max = 4096`) does NOT blow `BUDGET` or zero valid dispatches in
+@@ -2013,13 +2133,13 @@ void main() {
+         // First two calls fit inside the initial 64 KiB scratch buffer and
+         // must reuse the exact same `ID3D12Resource`, which stays readable
+         // as arguments between them.
+-        let b1 = bound(&list, (&src_buf, 0), Some((&count_buf, 0)), (0, 16, 64)).unwrap();
++        let b1 = bound(&list, (&src_buf, 0), Some((&count_buf, 0)), (0, 16, 64), false).unwrap();
+         assert_eq!(
+             list.indirect_state(&b1),
+             args,
+             "a clamp leaves the scratch readable as arguments"
+         );
+-        let b2 = bound(&list, (&src_buf, 64), Some((&count_buf, 0)), (1, 20, 128)).unwrap();
++        let b2 = bound(&list, (&src_buf, 64), Some((&count_buf, 0)), (1, 20, 128), false).unwrap();
+         assert_eq!(
+             b1.as_raw(),
+             b2.as_raw(),
+@@ -2035,7 +2155,7 @@ void main() {
+             D3D12_RESOURCE_STATE_COMMON,
+             "a new scratch buffer is common"
+         );
+-        let b3 = bound(&list, (&src_buf, 0), Some((&count_buf, 0)), (1, 20, 5000)).unwrap();
++        let b3 = bound(&list, (&src_buf, 0), Some((&count_buf, 0)), (1, 20, 5000), false).unwrap();
+         assert_eq!(b3.as_raw(), grown.as_raw());
+         assert_ne!(
+             b3.as_raw(),
+@@ -2065,7 +2185,7 @@ void main() {
+             D3D12_RESOURCE_STATE_COMMON,
+             "a reset list starts with a common scratch buffer"
+         );
+-        let b4 = bound(&list, (&src_buf, 0), Some((&count_buf, 0)), (1, 20, 4096)).unwrap();
++        let b4 = bound(&list, (&src_buf, 0), Some((&count_buf, 0)), (1, 20, 4096), false).unwrap();
+         assert_eq!(
+             b4.as_raw(),
+             b3.as_raw(),
+@@ -2207,8 +2327,8 @@ void main() {
+         let hits_gpu = unsafe { hits_buf.GetGPUVirtualAddress() };
+         for round in 0..2 {
+             // Spends the budget (clamped, not executed), then one group.
+-            bound(&list, (&big, 0), None, (KIND_DISPATCH, STRIDE, 3)).unwrap();
+-            let scratch = bound(&list, (&small, 0), None, (KIND_DISPATCH, STRIDE, 1)).unwrap();
++            bound(&list, (&big, 0), None, (KIND_DISPATCH, STRIDE, 3), false).unwrap();
++            let scratch = bound(&list, (&small, 0), None, (KIND_DISPATCH, STRIDE, 1), false).unwrap();
+             // SAFETY: an open list; the worker's root signature and
+             // pipeline; buffers the test holds until the list has run.
+             unsafe {
+@@ -2229,7 +2349,7 @@ void main() {
+         }
+         // A recording with only the small record: the budget is empty
+         // again, so it runs.
+-        let scratch = bound(&list, (&small, 0), None, (KIND_DISPATCH, STRIDE, 1)).unwrap();
++        let scratch = bound(&list, (&small, 0), None, (KIND_DISPATCH, STRIDE, 1), false).unwrap();
+         // SAFETY: as above.
+         unsafe {
+             list.list.SetComputeRootSignature(&worker.root);
 diff --git a/crates/victory-gpu/src/inplace.rs b/crates/victory-gpu/src/inplace.rs
 index 44f646fc..8bafec19 100644
 --- a/crates/victory-gpu/src/inplace.rs
@@ -3988,7 +5914,7 @@ index 00b7eb68..c829cbcc 100644
      writing as kernel_will_write,
  };
 diff --git a/crates/victory-gpu/src/list.rs b/crates/victory-gpu/src/list.rs
-index 5a31c2ad..538e2dac 100644
+index 5a31c2ad..ddc7c08d 100644
 --- a/crates/victory-gpu/src/list.rs
 +++ b/crates/victory-gpu/src/list.rs
 @@ -787,6 +787,52 @@ extern "system" fn barrier(this: This, count: u32, barriers: *const Barrier) ->
@@ -4044,8 +5970,19 @@ index 5a31c2ad..538e2dac 100644
  /// Moves a title texture's host copy to `state` in the list, if needed.
  #[cfg(windows)]
  pub(crate) fn ensure_state(list: &crate::host::HostList, resource: This, state: u32) {
+@@ -1361,7 +1407,9 @@ extern "system" fn copy_memory(this: This, dst: u64, src: u64, len: u64, _flags:
+         && src != 0
+     {
+         let len = len as usize;
+-        list.defer(move || {
++        // Its place is known: `VICTORY_NEAR_WRITES` uses it (without the
++        // switch the step is the same as `defer`'s).
++        list.defer_at(dst as usize, len, move || {
+             if crate::texture::committed(src as *const u8, len)
+                 && crate::texture::committed(dst as *const u8, len)
+             {
 diff --git a/crates/victory-gpu/src/pipeline.rs b/crates/victory-gpu/src/pipeline.rs
-index 42efbc67..78ea7438 100644
+index 42efbc67..072f31b1 100644
 --- a/crates/victory-gpu/src/pipeline.rs
 +++ b/crates/victory-gpu/src/pipeline.rs
 @@ -61,6 +61,9 @@ pub(crate) struct Shader {
@@ -4067,7 +6004,17 @@ index 42efbc67..78ea7438 100644
                  translated: OnceLock::new(),
                  #[cfg(windows)]
                  walks: OnceLock::new(),
-@@ -443,6 +448,23 @@ struct Pipeline {
+@@ -384,6 +389,9 @@ pub(crate) fn builder_runs() -> bool {
+     let missing = b.pipelines.iter().filter(|p| !make::now(p)).count();
+     if missing > 0 {
+         b.off = true;
++        for p in b.pipelines.iter().filter(|p| !make::now(p)) {
++            tracing::warn!(shaders = ?make::shaders(p), "a builder pipeline with no host pipeline");
++        }
+         tracing::warn!(
+             missing,
+             of = b.pipelines.len(),
+@@ -443,6 +451,23 @@ struct Pipeline {
      /// One of the ray-tracing structure builder's ([`Builder`]).
      #[cfg(windows)]
      builder: bool,
@@ -4091,7 +6038,17 @@ index 42efbc67..78ea7438 100644
  }
  const _: () = assert!(offset_of!(Pipeline, packet) == 0x10);
  
-@@ -628,10 +650,263 @@ fn hand_out(
+@@ -618,6 +643,9 @@ fn hand_out(
+         let mut b = BUILDER.lock().unwrap_or_else(|e| e.into_inner());
+         b.pipelines.push(host.clone());
+         b.whole = false;
++        // Named once each (gfx41): which programs are the builder's, to
++        // match against the refused and untranslated ones.
++        tracing::info!(n = b.pipelines.len(), ?shaders, "a pipeline of the ray-tracing structure builder");
+     }
+     let pipeline = Box::new(Pipeline {
+         object: Object::new(&FUNCTIONS),
+@@ -628,10 +656,263 @@ fn hand_out(
          builder,
          shaders,
          bound: std::sync::atomic::AtomicBool::new(false),
@@ -4717,10 +6674,62 @@ index 5f0f8d78..2d00730b 100644
 +    }
  }
 diff --git a/crates/victory-gpu/src/pipeline/make.rs b/crates/victory-gpu/src/pipeline/make.rs
-index 5e05762f..f4ed05f7 100644
+index 5e05762f..3549b01b 100644
 --- a/crates/victory-gpu/src/pipeline/make.rs
 +++ b/crates/victory-gpu/src/pipeline/make.rs
-@@ -223,6 +223,12 @@ pub(crate) fn early(p: &Arc<Pending>) {
+@@ -23,6 +23,35 @@ use std::time::{Duration, Instant};
+ use super::Shader;
+ use super::host::{GraphicsState, HostPipeline, TargetFormats};
+ 
++/// `VICTORY_DENY_PIPELINES=<16-hex shader hash>,...` (off unless set): the
++/// hash of a shader of `shaders` that is listed there. Such a pipeline is
++/// never built (no driver compile) and counts as refused, so its draws and
++/// dispatches are dropped: a test of whether building a pipeline, rather
++/// than running it, is what loses the card (runs 281 and 318: the removal
++/// 32 and 81 ms after the 3-second build of `CS_RaytracingResolve` of the
++/// two-layer vehicle wheel material, 57a3fad03cac36af and d5b9c94a30d7cf28;
++/// gfx41). Unlike `VICTORY_SKIP_PIPELINES`, in release builds too.
++fn denied(shaders: &[Arc<Shader>]) -> Option<&str> {
++    static LIST: OnceLock<Vec<String>> = OnceLock::new();
++    let list = LIST.get_or_init(|| {
++        std::env::var("VICTORY_DENY_PIPELINES")
++            .unwrap_or_default()
++            .split(',')
++            .map(|h| h.trim().to_ascii_lowercase())
++            .filter(|h| h.len() == 16 && h.bytes().all(|b| b.is_ascii_hexdigit()))
++            .collect()
++    });
++    if list.is_empty() {
++        return None;
++    }
++    shaders.iter().find(|s| list.contains(&s.hash)).map(|s| s.hash.as_str())
++}
++
++/// The shaders of `p` (for logs).
++pub(crate) fn shaders(p: &Pending) -> &[Arc<Shader>] {
++    &p.shaders
++}
++
+ /// What a host pipeline is made from, and the host pipeline once made.
+ pub(crate) struct Pending {
+     shaders: Vec<Arc<Shader>>,
+@@ -73,8 +102,13 @@ impl Pending {
+     }
+ 
+     fn make(&self) {
+-        self.made
+-            .get_or_init(|| HostPipeline::new(&self.shaders, self.graphics.as_deref()));
++        self.made.get_or_init(|| {
++            if let Some(hash) = denied(&self.shaders) {
++                tracing::warn!(hash, shaders = ?self.shaders, "pipeline not built: its shader is in VICTORY_DENY_PIPELINES");
++                return None;
++            }
++            HostPipeline::new(&self.shaders, self.graphics.as_deref())
++        });
+         let (lock, done) = &DONE;
+         let _held = lock.lock().unwrap_or_else(|e| e.into_inner());
+         done.notify_all();
+@@ -223,6 +257,12 @@ pub(crate) fn early(p: &Arc<Pending>) {
      }
  }
  
@@ -4733,6 +6742,56 @@ index 5e05762f..f4ed05f7 100644
  /// Whether the frame's budget is one for all threads together: a thread
  /// that waits takes what is left of it and gives back what it did not
  /// use. Counted only when a wait had ended, the budget was one per thread:
+diff --git a/crates/victory-gpu/src/plaincopy.rs b/crates/victory-gpu/src/plaincopy.rs
+index 6d7e86b0..34d8fa92 100644
+--- a/crates/victory-gpu/src/plaincopy.rs
++++ b/crates/victory-gpu/src/plaincopy.rs
+@@ -358,6 +358,45 @@ mod tests {
+     }
+ 
+     /// Many threads at once, half of them faulting: each gets its own answer.
++    /// HybridGt: what one short copy costs on this machine, each way
++    /// (`cargo test --release -p victory-gpu plaincopy::tests::short_copy_costs -- --ignored --nocapture`).
++    #[test]
++    #[ignore]
++    fn short_copy_costs() {
++        use windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory;
++        use windows_sys::Win32::System::Threading::GetCurrentProcess;
++        let base = unsafe { VirtualAlloc(std::ptr::null(), 2 * PAGE, MEM_RESERVE, PAGE_NOACCESS) } as *mut u8;
++        assert!(!unsafe { VirtualAlloc(base.cast(), PAGE, MEM_COMMIT, PAGE_READWRITE) }.is_null());
++        let mut to = [0u8; 256];
++        const N: u32 = 200_000;
++        for len in [8usize, 64, 255] {
++            let t = std::time::Instant::now();
++            for _ in 0..N {
++                let mut done = 0usize;
++                unsafe { ReadProcessMemory(GetCurrentProcess(), base.cast(), to.as_mut_ptr().cast(), len, &mut done) };
++            }
++            let kernel = t.elapsed().as_nanos() as f64 / f64::from(N);
++            let t = std::time::Instant::now();
++            for _ in 0..N {
++                assert!(guarded(to.as_mut_ptr(), base, len));
++            }
++            let plain = t.elapsed().as_nanos() as f64 / f64::from(N);
++            let t = std::time::Instant::now();
++            for _ in 0..N / 100 {
++                assert!(!guarded(to.as_mut_ptr(), base.wrapping_add(PAGE), len));
++            }
++            let fault = t.elapsed().as_nanos() as f64 / f64::from(N / 100);
++            let t = std::time::Instant::now();
++            for _ in 0..N / 100 {
++                let mut done = 0usize;
++                unsafe { ReadProcessMemory(GetCurrentProcess(), base.wrapping_add(PAGE).cast(), to.as_mut_ptr().cast(), len, &mut done) };
++            }
++            let kernel_gone = t.elapsed().as_nanos() as f64 / f64::from(N / 100);
++            println!("{len:4} bytes: kernel {kernel:7.0} ns, in place {plain:5.0} ns, in place on a hole (fault) {fault:7.0} ns, kernel on a hole {kernel_gone:7.0} ns");
++        }
++        unsafe { VirtualFree(base.cast(), 0, MEM_RELEASE) };
++    }
++
+     #[test]
+     fn threads_fault_and_copy_side_by_side() {
+         // SAFETY: memory of the test's own.
 diff --git a/crates/victory-gpu/src/queue.rs b/crates/victory-gpu/src/queue.rs
 index c0adc57c..88f9e4a8 100644
 --- a/crates/victory-gpu/src/queue.rs
@@ -5037,7 +7096,7 @@ index c5365c4c..a9c36ee5 100644
                  table_slot: 1,
                  constant_slot: 2,
 diff --git a/crates/victory-gpu/src/shadow.rs b/crates/victory-gpu/src/shadow.rs
-index 61a70b69..79550e76 100644
+index 61a70b69..a969662d 100644
 --- a/crates/victory-gpu/src/shadow.rs
 +++ b/crates/victory-gpu/src/shadow.rs
 @@ -104,6 +104,9 @@ struct Card {
@@ -5219,7 +7278,24 @@ index 61a70b69..79550e76 100644
  /// Takes a copy's changed offsets for the send numbered `sent_as`
  /// ([`card_dirty`]); with [`relay`] they are noted as sent, and the notes of
  /// sends that every fetch still to be merged came after (`fetched`) go.
-@@ -2760,6 +2925,13 @@ impl Shadow {
+@@ -1390,6 +1555,16 @@ fn give_back(v: Vec<u8>) {
+ 
+ const NOT_WATCHED: u8 = 2;
+ 
++/// [`Shadow::update_free`]'s counter (fps41 round 8): refreshes that copied
++/// nothing are also looked at for being known unchanged before asking
++/// (`VICTORY_REFRESH_COUNT=1`; off by default: the look takes the
++/// journal's and the guards' locks once more a refresh).
++#[cfg(feature = "diagnostics")]
++fn refresh_count() -> bool {
++    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *ON.get_or_init(|| std::env::var_os("VICTORY_REFRESH_COUNT").is_some_and(|v| v == "1"))
++}
++
+ // Fixed-size equality compiles to two SIMD comparisons on Windows x64.
+ // Only the first or last unequal chunk needs a byte-wise search.
+ const DIFF_CHUNK: usize = 32;
+@@ -2760,6 +2935,13 @@ impl Shadow {
      }
  
      /// The title memory the copy is of: its start and length.
@@ -5233,7 +7309,7 @@ index 61a70b69..79550e76 100644
      pub(crate) fn span(&self) -> (u64, u64) {
          (self.start, self.len)
      }
-@@ -3508,17 +3680,32 @@ impl Shadow {
+@@ -3508,17 +3690,32 @@ impl Shadow {
                      // SAFETY: inside the mapping of the copy's CPU side,
                      // which only the submitting thread writes.
                      let held = unsafe { std::slice::from_raw_parts_mut(self.data.add(at), n) };
@@ -5277,7 +7353,58 @@ index 61a70b69..79550e76 100644
                      }
                  } else {
                      let Some(snapshot) = before.as_mut() else {
-@@ -4020,6 +4207,11 @@ impl Shadow {
+@@ -3612,9 +3809,31 @@ impl Shadow {
+                 }
+                 return 0;
+             }
++            // The counter of fps41 round 8: copied nothing or something,
++            // and (with `VICTORY_REFRESH_COUNT=1`) whether it was known
++            // unchanged before asking. Looked at before the asking, which
++            // changes the guards and the journal.
++            #[cfg(feature = "diagnostics")]
++            let (asking, known) = (std::time::Instant::now(), refresh_count() && self.unchanged_known(from, to));
+             if let Some((now, written)) = crate::watch::writes(from, to, true) {
+                 self.watched.store(1, Ordering::Relaxed);
+                 let copied = self.copy_stale(from, to, now, &written);
++                #[cfg(feature = "diagnostics")]
++                {
++                    use crate::copystat::{C, add};
++                    let us = asking.elapsed().as_micros() as u64;
++                    if copied == 0 {
++                        add(C::RefreshNone, 1);
++                        add(C::RefreshNoneUs, us);
++                        if known {
++                            add(C::RefreshKnown, 1);
++                            add(C::RefreshKnownUs, us);
++                        }
++                    } else {
++                        add(C::RefreshSome, 1);
++                        add(C::RefreshSomeUs, us);
++                    }
++                }
+                 self.refresh_check(from, to);
+                 #[cfg(feature = "diagnostics")]
+                 {
+@@ -3636,6 +3855,18 @@ impl Shadow {
+         to - from
+     }
+ 
++    /// Whether a refresh of `[from, to)` would copy nothing, known before
++    /// asking (`crate::watch::unchanged_known`); `false` for a copy not
++    /// known to be watched yet.
++    #[cfg_attr(not(feature = "diagnostics"), allow(dead_code))]
++    fn unchanged_known(&self, from: usize, to: usize) -> bool {
++        if self.watched.load(Ordering::Relaxed) != 1 {
++            return false;
++        }
++        let copied = self.copied.lock().unwrap_or_else(|e| e.into_inner());
++        crate::watch::unchanged_known(from, to, self.start as usize / PAGE, &copied)
++    }
++
+     /// Whether [`Shadow::update_free`] of `[from, to)` would copy nothing,
+     /// known without asking the kernel or the guards
+     /// (`crate::watch::nothing_new`): the memory is watched, every page of
+@@ -4020,6 +4251,11 @@ impl Shadow {
      /// a copy has no other use for), as [`Shadow::merge_under_writes`].
      /// `title` is scratch memory. Returns the bytes written to title
      /// memory.
@@ -5289,7 +7416,7 @@ index 61a70b69..79550e76 100644
      pub(crate) fn card_merge_relay(&self, at: usize, gpu: &[u8], fetched_after: u64, title: &mut Vec<u8>) -> usize {
          let start = self.start as usize;
          let Some(card) = &self.card else {
-@@ -4043,15 +4235,19 @@ impl Shadow {
+@@ -4043,15 +4279,19 @@ impl Shadow {
          let skip: Vec<(usize, usize)> = {
              let dirty = card.dirty.lock().unwrap_or_else(|e| e.into_inner());
              let sent = card.sent.lock().unwrap_or_else(|e| e.into_inner());
@@ -5309,7 +7436,7 @@ index 61a70b69..79550e76 100644
          // Who touched the page since its last store is looked at before our
          // own read of it (`VICTORY_BACK_READS`): counted only.
          #[cfg(feature = "diagnostics")]
-@@ -4081,6 +4277,7 @@ impl Shadow {
+@@ -4081,6 +4321,7 @@ impl Shadow {
          crate::watch::writing(start + at, n);
          merge_race(as_read.as_deref(), (self.start, self.len), start + at, &title[..], "card relay");
          crate::host::write_mapped((start + at) as *mut u8, title.as_ptr(), n);
@@ -5317,7 +7444,7 @@ index 61a70b69..79550e76 100644
          #[cfg(feature = "diagnostics")]
          crate::backreads::stored(self.id, (self.start, self.len), start + at, n, false);
          n
-@@ -4426,6 +4623,7 @@ fn lookup_tables(address: u64, len: u64, any: bool) -> Option<Arc<Shadow>> {
+@@ -4426,6 +4667,7 @@ fn lookup_tables(address: u64, len: u64, any: bool) -> Option<Arc<Shadow>> {
                      before: Mutex::default(),
                      dirty: Mutex::default(),
                      sent: Mutex::default(),
@@ -5325,7 +7452,7 @@ index 61a70b69..79550e76 100644
                      size,
                      me: std::sync::OnceLock::new(),
                  };
-@@ -4661,6 +4859,7 @@ fn loose(address: u64, end: u64, unsized_ask: bool, any: bool) -> Option<Arc<Sha
+@@ -4661,6 +4903,7 @@ fn loose(address: u64, end: u64, unsized_ask: bool, any: bool) -> Option<Arc<Sha
                  before: Mutex::default(),
                  dirty: Mutex::default(),
                  sent: Mutex::default(),
@@ -5333,7 +7460,7 @@ index 61a70b69..79550e76 100644
                  size: len,
                  me: std::sync::OnceLock::new(),
              };
-@@ -4943,6 +5142,7 @@ mod card_merge_tests {
+@@ -4943,6 +5186,7 @@ mod card_merge_tests {
                  before: Mutex::new(None),
                  dirty: Mutex::default(),
                  sent: Mutex::new(vec![(title_byte, title_byte + 1, 7)]),
@@ -5341,7 +7468,7 @@ index 61a70b69..79550e76 100644
                  // 0: no card bytes counted (`Drop` takes them off again).
                  size: 0,
                  me: std::sync::OnceLock::new(),
-@@ -5000,3 +5200,46 @@ pub(crate) fn near(va: u64) -> String {
+@@ -5000,3 +5244,46 @@ pub(crate) fn near(va: u64) -> String {
      }
      text
  }
@@ -5753,8 +7880,26 @@ index 02e03354..8d587a03 100644
 +        }
 +    }
  }
+diff --git a/crates/victory-gpu/src/tiles.rs b/crates/victory-gpu/src/tiles.rs
+index 09318269..727a2644 100644
+--- a/crates/victory-gpu/src/tiles.rs
++++ b/crates/victory-gpu/src/tiles.rs
+@@ -671,6 +671,13 @@ impl Tiled {
+         old != shown
+     }
+ 
++    /// The levels held at the last upload, a bit a level (0 before the
++    /// first): for the slot census (`HostHeap::placed_slot_census`).
++    #[cfg(feature = "diagnostics")]
++    pub(crate) fn held_now(&self) -> u32 {
++        self.held.load(Ordering::Relaxed)
++    }
++
+     /// The first level a view of the texture may show; `None` while no
+     /// level is both held and given (the views are then as the title made
+     /// them, and read zeros).
 diff --git a/crates/victory-gpu/src/watch.rs b/crates/victory-gpu/src/watch.rs
-index 0750e8cb..f96e0175 100644
+index 0750e8cb..2050d666 100644
 --- a/crates/victory-gpu/src/watch.rs
 +++ b/crates/victory-gpu/src/watch.rs
 @@ -31,6 +31,7 @@
@@ -5765,7 +7910,77 @@ index 0750e8cb..f96e0175 100644
  
  /// The unit tracked and copied: 64 KiB, the console's page (the kernel's
  /// 4 KiB pages fold into it). Finer units made the checks of the world's
-@@ -1450,6 +1451,7 @@ fn protect_alias(g: &mut Guards, block: usize) {
+@@ -511,6 +512,15 @@ fn writes_as(start: usize, end: usize, guarded: bool, light: u8) -> Option<(u64,
+         add(C::Watches, 1);
+         add(C::WatchUs, started.elapsed().as_micros() as u64);
+         slow(started.elapsed().as_micros() as u64);
++        // What one failed asking costs, against one the guards answer
++        // without the kernel (fps41 round 7: the cost of `VICTORY_VIEW_KNOWN`'s
++        // case was known only from runs 222/225).
++        if failed {
++            add(
++                if known_view { C::WatchKnownUs } else { C::WatchFailedUs },
++                started.elapsed().as_micros() as u64,
++            );
++        }
+     }
+     j.asked += 1;
+     let now = j.asked;
+@@ -1144,6 +1154,53 @@ fn nothing_noted(start: usize, end: usize, base: usize, copied: &[u64]) -> bool
+     same
+ }
+ 
++/// Whether a refresh of `[start, end)` by a copy whose note of taken pages
++/// is `copied` (from page `base` on, as for [`nothing_new`]) would copy
++/// nothing, known before asking and whatever the light refresh says:
++/// every page of the range was taken, the journal notes no write of a page
++/// after the copy took it, and either the range lies in a standing asking
++/// ahead (the journal is then the whole answer, as [`writes`] gives it) or
++/// every 64 KiB block of it is read-only by our hand and clean (no write
++/// opened its guard since a copy took it: the guard fault handler, our own
++/// writes through the kernel ([`writing`]), DirectStorage's writes through
++/// the runtime's views ([`title_memory_written`]) and a remapping
++/// ([`title_memory_remapped`]) all open or forget the block first).
++///
++/// What it cannot see is what the guards cannot see either: a write
++/// through another view of the same physical page where the two were not
++/// guarded together, and a write into private memory that no asking has
++/// reported yet (such a range is answered here only inside a standing
++/// asking, where [`writes`] would answer from the journal too). So where
++/// this says yes, [`writes`] would say the same (fps41 round 8).
++#[cfg_attr(not(feature = "diagnostics"), allow(dead_code))]
++pub(crate) fn unchanged_known(start: usize, end: usize, base: usize, copied: &[u64]) -> bool {
++    if start >= end {
++        return false;
++    }
++    let (first, last) = (start / PAGE, end.div_ceil(PAGE));
++    let Some(taken) = first.checked_sub(base).and_then(|from| copied.get(from..last - base)) else {
++        return false;
++    };
++    if taken.contains(&0) {
++        return false;
++    }
++    let ahead = {
++        let j = JOURNAL.lock().unwrap_or_else(|e| e.into_inner());
++        if !j.written.range(first..last).all(|(&page, &write)| write <= taken[page - first]) {
++            return false;
++        }
++        j.ahead.iter().any(|&(a, b)| a <= first && last <= b)
++    };
++    if ahead {
++        return true;
++    }
++    // (The journal's lock is let go first: `writes_as` takes it, then the
++    // guards'.)
++    let g = guards();
++    let blocks = last - first;
++    g.protected.range(first..last).count() == blocks && g.clean.range(first..last).count() == blocks
++}
++
+ /// `VICTORY_ABSENT_ONCE`: 0 off, 1 on, 2 in turn ([`absent_once`]).
+ fn absent_mode() -> u8 {
+     static MODE: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
+@@ -1450,6 +1507,7 @@ fn protect_alias(g: &mut Guards, block: usize) {
      let mut old = 0;
      // SAFETY: title view memory; only its protection changes.
      if unsafe { VirtualProtect((block * BLOCK) as *const _, BLOCK, PAGE_READONLY, &mut old) } != 0 {
@@ -5773,7 +7988,7 @@ index 0750e8cb..f96e0175 100644
          g.protected.insert(block);
          if view_known() {
              g.viewed.insert(block);
-@@ -1480,11 +1482,13 @@ fn protect_here(g: &mut Guards, from: usize, to: usize) {
+@@ -1480,11 +1538,13 @@ fn protect_here(g: &mut Guards, from: usize, to: usize) {
          }
      };
      if set(from, to) {
@@ -5787,7 +8002,7 @@ index 0750e8cb..f96e0175 100644
              note(g, block, block + 1);
          } else {
              #[cfg(feature = "diagnostics")]
-@@ -1574,6 +1578,7 @@ fn open_here(g: &mut Guards, start: usize, end: usize) -> bool {
+@@ -1574,6 +1634,7 @@ fn open_here(g: &mut Guards, start: usize, end: usize) -> bool {
          let mut old = 0;
          // SAFETY: a block we made read-only.
          unsafe { VirtualProtect((block * BLOCK) as *const _, BLOCK, PAGE_READWRITE, &mut old) };
@@ -5795,7 +8010,7 @@ index 0750e8cb..f96e0175 100644
      }
      !blocks.is_empty()
  }
-@@ -1717,21 +1722,47 @@ pub struct Remapping(#[allow(dead_code)] std::sync::RwLockWriteGuard<'static, ()
+@@ -1717,21 +1778,47 @@ pub struct Remapping(#[allow(dead_code)] std::sync::RwLockWriteGuard<'static, ()
  
  impl Drop for Remapping {
      fn drop(&mut self) {
@@ -5846,7 +8061,7 @@ index 0750e8cb..f96e0175 100644
  }
  
  /// What a read of title memory in place holds ([`title_memory_reading`]).
-@@ -1782,6 +1813,7 @@ pub fn title_memory_committed(at: usize, len: usize) {
+@@ -1782,6 +1869,7 @@ pub fn title_memory_committed(at: usize, len: usize) {
  /// shows is new and read-write, so it is no longer guarded (nor known
  /// unmapped).
  pub fn title_memory_remapped(at: usize, len: usize) {
@@ -9766,12 +11981,168 @@ index abda4a65..ff2f7b3a 100644
      #[cfg(windows)]
      victory_gpu::on_failure(host_gpu_failed);
      device::create(adapter, parameters, iid, out)
+diff --git a/crates/victory-hle/src/modules/dstorage.rs b/crates/victory-hle/src/modules/dstorage.rs
+index 5fe9aba9..66b0db13 100644
+--- a/crates/victory-hle/src/modules/dstorage.rs
++++ b/crates/victory-hle/src/modules/dstorage.rs
+@@ -358,6 +358,20 @@ struct Lanes {
+     /// BCPack bytes written and time spent on them.
+     bcpack: (u64, std::time::Duration),
+     since: Option<std::time::Instant>,
++    /// Reads held back for the title's Submit when a half-full queue
++    /// submitted itself, since the last line: Submits that released some,
++    /// entries released, and the wait (sum, most) from the first hold to
++    /// that Submit (µs); when the last line was written. (A lead for the
++    /// stand-in models and the haze: a batch of streamed data waits here
++    /// for one call of the title's; gfx41.)
++    held_waits: (u64, u64, u64, u64),
++    held_line: Option<std::time::Instant>,
++    /// Since the last 5 s line: the slowest request run (ms, destination
++    /// bytes, options), and requests over 250 ms and over 1 s, plain and
++    /// BCPack apart (gfx41: BCPack decodes at about 12 MB/s a worker in run
++    /// 327, and a status waits for every earlier request of its queue).
++    slowest: (u64, u32, u64),
++    slow: [u64; 4],
+ }
+ 
+ /// A queue's requests in the scheduler.
+@@ -371,6 +385,8 @@ struct Lane {
+     /// Left out when the queue submitted itself, until the title's Submit:
+     /// reads into physical pages and the status entries behind them.
+     held: Vec<Command>,
++    /// When the first of `held` was left out (for the held-wait line).
++    held_since: Option<std::time::Instant>,
+     /// Submitted, by sequence number: reads not started, status entries
+     /// not written, reads running, and failures not yet reported.
+     reads: VecDeque<(u64, Request)>,
+@@ -418,6 +434,10 @@ fn scheduler() -> Option<&'static Scheduler> {
+                     refused: 0,
+                     bcpack: Default::default(),
+                     since: None,
++                    held_waits: Default::default(),
++                    held_line: None,
++                    slowest: (0, 0, 0),
++                    slow: [0; 4],
+                 }),
+                 work: Condvar::new(),
+                 finished: Condvar::new(),
+@@ -541,6 +561,17 @@ impl Lanes {
+             self.bcpack.0 += u64::from(job.request.destination_size);
+             self.bcpack.1 += started.elapsed();
+         }
++        let ms = started.elapsed().as_millis() as u64;
++        let bc = job.request.options & BCPACK != 0;
++        if ms > self.slowest.0 {
++            self.slowest = (ms, job.request.destination_size, job.request.options);
++        }
++        if ms >= 250 {
++            self.slow[usize::from(bc) * 2] += 1;
++        }
++        if ms >= 1000 {
++            self.slow[usize::from(bc) * 2 + 1] += 1;
++        }
+         let since = *self.since.get_or_insert(started);
+         let elapsed = since.elapsed();
+         if elapsed.as_secs() >= 5 {
+@@ -558,6 +589,18 @@ impl Lanes {
+                 "dstorage: last {:.1} s",
+                 elapsed.as_secs_f64()
+             );
++            let (ms, bytes, options) = std::mem::take(&mut self.slowest);
++            let slow = std::mem::take(&mut self.slow);
++            tracing::info!(
++                "dstorage, slowest request in the last {:.1} s: {ms} ms for {:.1} MB (options {options:#x}{}); requests over                  250 ms: {} plain, {} BCPack; over 1 s: {} plain, {} BCPack (a status behind such a request on its queue                  waits that long)",
++                elapsed.as_secs_f64(),
++                f64::from(bytes) / 1e6,
++                if options & BCPACK != 0 { ", BCPack" } else { "" },
++                slow[0],
++                slow[2],
++                slow[1],
++                slow[3],
++            );
+             self.done = Default::default();
+             self.bcpack = Default::default();
+             self.since = None;
+@@ -641,6 +684,15 @@ impl Lanes {
+         if lane.reads.is_empty() {
+             lane.clock = lane.clock.max(self.lane_now[class]);
+         }
++        let now = std::time::Instant::now();
++        // The title's Submit releases what a self-submit held: how long it waited.
++        let released = if explicit && !lane.held.is_empty() {
++            lane.held_since
++                .take()
++                .map(|since| (lane.held.len() as u64, now.saturating_duration_since(since).as_micros() as u64))
++        } else {
++            None
++        };
+         let mut commands = if explicit { std::mem::take(&mut lane.held) } else { Vec::new() };
+         commands.append(&mut lane.unsubmitted);
+         for command in commands {
+@@ -660,7 +712,38 @@ impl Lanes {
+                 Command::Status(status) => lane.statuses.push_back((seq, status)),
+             }
+         }
++        if !lane.held.is_empty() && lane.held_since.is_none() {
++            lane.held_since = Some(now);
++        }
+         lane.flush();
++        if let Some((entries, us)) = released {
++            let w = &mut self.held_waits;
++            w.0 += 1;
++            w.1 += entries;
++            w.2 += us;
++            w.3 = w.3.max(us);
++        }
++        self.held_line(now);
++    }
++
++    /// Every 5 s while it has something: [`Lanes::held_waits`] as one line.
++    fn held_line(&mut self, now: std::time::Instant) {
++        let since = *self.held_line.get_or_insert(now);
++        let secs = now.saturating_duration_since(since).as_secs_f64();
++        if secs < 5.0 {
++            return;
++        }
++        self.held_line = Some(now);
++        let (releases, entries, sum, most) = std::mem::take(&mut self.held_waits);
++        let held_now: usize = self.lanes.values().map(|l| l.held.len()).sum();
++        if releases == 0 && held_now == 0 {
++            return;
++        }
++        tracing::info!(
++            "dstorage reads held for the title's Submit after a queue submitted itself, last {secs:.1} s: {releases} Submits released {entries} entries, waited {:.1} ms on average, {:.1} ms at most; held now {held_now}",
++            sum as f64 / releases.max(1) as f64 / 1e3,
++            most as f64 / 1e3,
++        );
+     }
+ }
+ 
+@@ -672,6 +755,7 @@ impl Lane {
+             clock: 0,
+             unsubmitted: Vec::new(),
+             held: Vec::new(),
++            held_since: None,
+             reads: VecDeque::new(),
+             statuses: VecDeque::new(),
+             running: BTreeSet::new(),
+@@ -1518,6 +1602,10 @@ mod tests {
+             refused: 0,
+             bcpack: Default::default(),
+             since: None,
++            held_waits: Default::default(),
++            held_line: None,
++            slowest: (0, 0, 0),
++            slow: [0; 4],
+         }
+     }
+ 
 diff --git a/crates/victory-hle/src/modules/ffx.rs b/crates/victory-hle/src/modules/ffx.rs
 new file mode 100644
-index 00000000..8e822a89
+index 00000000..56e16faa
 --- /dev/null
 +++ b/crates/victory-hle/src/modules/ffx.rs
-@@ -0,0 +1,381 @@
+@@ -0,0 +1,544 @@
 +//! HybridGt: AMD FidelityFX (`amd_fidelityfx_upscaler_xbox.dll`), the
 +//! upscaler the title loads in its Series S configuration.
 +//!
@@ -9823,6 +12194,104 @@ index 00000000..8e822a89
 +const BACKEND_DX12: u64 = 0x2;
 +/// `FFX_API_DISPATCH_DESC_TYPE_UPSCALE`.
 +const DISPATCH_UPSCALE: u64 = 0x1_0001;
++/// `FFX_API_QUERY_DESC_TYPE_GET_VERSIONS`, `FFX_API_DESC_TYPE_OVERRIDE_VERSION`,
++/// `FFX_API_QUERY_DESC_TYPE_GET_PROVIDER_VERSION` (`ffx_api.h`).
++const QUERY_VERSIONS: u64 = 4;
++const OVERRIDE_VERSION: u64 = 5;
++const QUERY_PROVIDER_VERSION: u64 = 6;
++
++/// `ffxQueryDescGetVersions`.
++#[repr(C)]
++struct QueryVersions {
++    header: Header,
++    create_desc_type: u64,
++    device: *mut c_void,
++    output_count: *mut u64,
++    version_ids: *mut u64,
++    version_names: *mut *const std::ffi::c_char,
++}
++
++/// `ffxOverrideVersion`.
++#[repr(C)]
++struct OverrideVersion {
++    header: Header,
++    version_id: u64,
++}
++
++/// `ffxQueryGetProviderVersion`.
++#[repr(C)]
++struct ProviderVersion {
++    header: Header,
++    version_id: u64,
++    version_name: *const std::ffi::c_char,
++}
++
++/// HybridGt: the upscale providers AMD's PC DLLs offer on `device` (id,
++/// name; e.g. "FSR 3.1.x" and, on cards that run it, "FSR 4.x").
++fn versions(pc: &Pc, device: *mut c_void) -> Vec<(u64, String)> {
++    let mut count = 0u64;
++    let mut q = QueryVersions {
++        header: Header { ty: QUERY_VERSIONS, next: std::ptr::null_mut() },
++        create_desc_type: CREATE_UPSCALE,
++        device,
++        output_count: &raw mut count,
++        version_ids: std::ptr::null_mut(),
++        version_names: std::ptr::null_mut(),
++    };
++    // SAFETY: a query of counts only, with no context.
++    if unsafe { (pc.query)(std::ptr::null_mut(), &raw mut q.header) } != OK || count == 0 || count > 64 {
++        return Vec::new();
++    }
++    let mut ids = vec![0u64; count as usize];
++    let mut names: Vec<*const std::ffi::c_char> = vec![std::ptr::null(); count as usize];
++    q.version_ids = ids.as_mut_ptr();
++    q.version_names = names.as_mut_ptr();
++    // SAFETY: arrays of `count` entries.
++    if unsafe { (pc.query)(std::ptr::null_mut(), &raw mut q.header) } != OK {
++        return Vec::new();
++    }
++    ids.into_iter()
++        .zip(names)
++        .take(count as usize)
++        .map(|(id, name)| {
++            let name = if name.is_null() {
++                String::new()
++            } else {
++                // SAFETY: a nul-terminated name the DLL keeps.
++                unsafe { std::ffi::CStr::from_ptr(name) }.to_string_lossy().into_owned()
++            };
++            (id, name)
++        })
++        .collect()
++}
++
++/// HybridGt: the provider of a context, as the PC DLL names it.
++fn provider(pc: &Pc, context: *mut c_void) -> Option<String> {
++    let mut q = ProviderVersion {
++        header: Header { ty: QUERY_PROVIDER_VERSION, next: std::ptr::null_mut() },
++        version_id: 0,
++        version_name: std::ptr::null(),
++    };
++    let mut context = context;
++    // SAFETY: a context the PC DLL made.
++    if unsafe { (pc.query)(&raw mut context, &raw mut q.header) } != OK || q.version_name.is_null() {
++        return None;
++    }
++    // SAFETY: a nul-terminated name the DLL keeps.
++    Some(unsafe { std::ffi::CStr::from_ptr(q.version_name) }.to_string_lossy().into_owned())
++}
++
++/// HybridGt: `VICTORY_FFX_VERSION=<part of a name>` picks the provider whose
++/// name holds it (e.g. `3.1`); unset: the DLL's own choice (the newest the
++/// card runs).
++fn chosen(offered: &[(u64, String)]) -> Option<u64> {
++    let want = std::env::var("VICTORY_FFX_VERSION").ok().filter(|w| !w.is_empty())?;
++    let found = offered.iter().find(|(_, name)| name.contains(&want)).map(|(id, _)| *id);
++    if found.is_none() {
++        tracing::warn!(want, ?offered, "FidelityFX: no upscale provider with that name (VICTORY_FFX_VERSION); the DLL's own choice is used");
++    }
++    found
++}
 +
 +/// `ffxApiHeader`.
 +#[repr(C)]
@@ -10011,9 +12480,32 @@ index 00000000..8e822a89
 +        if !kept.iter().any(|k| u64::from_le_bytes(k[..8].try_into().unwrap_or_default()) == CREATE_UPSCALE) {
 +            return Err(NO_PROVIDER);
 +        }
++        // HybridGt: the version of the API the title was built against, the
++        // providers on offer and the one asked for.
++        if let Some(v) = kept.iter().find(|k| u64::from_le_bytes(k[..8].try_into().unwrap_or_default()) == CREATE_UPSCALE_VERSION) {
++            let asked = u32::from_le_bytes(v[16..20].try_into().unwrap_or_default());
++            tracing::info!(
++                "FidelityFX: the title asks for upscaler API {}.{}.{}",
++                asked >> 22,
++                (asked >> 12) & 0x3ff,
++                asked & 0xfff
++            );
++        }
++        let offered = versions(pc, device as *mut c_void);
++        tracing::info!(?offered, "FidelityFX: upscale providers AMD's PC DLLs offer on this card");
++        let mut chosen_link = chosen(&offered).map(|id| OverrideVersion {
++            header: Header { ty: OVERRIDE_VERSION, next: std::ptr::null_mut() },
++            version_id: id,
++        });
 +        let mut backend = BackendDx12 { header: Header { ty: BACKEND_DX12, next: std::ptr::null_mut() }, device };
++        if let Some(o) = chosen_link.as_mut() {
++            o.header.next = &raw mut backend.header;
++        }
 +        // Link: kept[0] -> kept[1] -> ... -> backend.
-+        let mut next: *mut Header = &raw mut backend.header;
++        let mut next: *mut Header = match chosen_link.as_mut() {
++            Some(o) => &raw mut o.header,
++            None => &raw mut backend.header,
++        };
 +        for k in kept.iter_mut().rev() {
 +            let h = k.as_mut_ptr().cast::<Header>();
 +            // SAFETY: our own copy of a link.
@@ -10029,7 +12521,10 @@ index 00000000..8e822a89
 +        }
 +        // SAFETY: the title's out pointer.
 +        unsafe { context.write(made) };
-+        tracing::info!("FidelityFX: upscale context made on the host device");
++        tracing::info!(
++            provider = provider(pc, made).as_deref().unwrap_or("not said"),
++            "FidelityFX: upscale context made on the host device"
++        );
 +        Ok(())
 +    })();
 +    let code = answer.err().unwrap_or(OK);
@@ -10151,6 +12646,45 @@ index 00000000..8e822a89
 +            hle_export!(ffxQuery),
 +            hle_export!(ffxDispatch),
 +        ],
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    /// HybridGt: the providers AMD's PC DLLs offer on this machine's card,
++    /// and a context made through the title's entry point for 1280x720 to
++    /// 1920x1080, with the one `VICTORY_FFX_VERSION` names (`VICTORY_FFX_DIR`
++    /// set; `cargo test --release -p victory-hle ffx::tests -- --ignored --nocapture`).
++    #[test]
++    #[ignore]
++    fn providers_on_this_card() {
++        let pc = pc().expect("VICTORY_FFX_DIR with amd_fidelityfx_loader_dx12.dll");
++        let device = victory_gpu::list::host_device().expect("a host device");
++        let offered = versions(pc, device);
++        println!("offered: {offered:?}");
++        assert!(!offered.is_empty());
++        #[repr(C)]
++        struct CreateUpscale {
++            header: Header,
++            flags: u32,
++            max_render: [u32; 2],
++            max_upscale: [u32; 2],
++            message: *const c_void,
++        }
++        let mut desc = CreateUpscale {
++            header: Header { ty: CREATE_UPSCALE, next: std::ptr::null_mut() },
++            flags: 0,
++            max_render: [1280, 720],
++            max_upscale: [1920, 1080],
++            message: std::ptr::null(),
++        };
++        let mut context: *mut c_void = std::ptr::null_mut();
++        let code = ffxCreateContext(&raw mut context, &raw mut desc.header, std::ptr::null());
++        assert_eq!(code, OK);
++        println!("provider: {:?}", provider(pc, context));
++        assert_eq!(ffxDestroyContext(&raw mut context, std::ptr::null()), OK);
 +    }
 +}
 diff --git a/crates/victory-hle/src/modules/gameinput.rs b/crates/victory-hle/src/modules/gameinput.rs
@@ -11516,7 +14050,7 @@ index 84e5b330..0ed5b66d 100644
      if let Ok(mut v) = validator::Validator::load(validator::Validator::default_path().as_deref()) {
          let mut copy = shader.dxil.clone();
 diff --git a/crates/victory-shader/src/emit/lower.rs b/crates/victory-shader/src/emit/lower.rs
-index 3eff07d8..4f19602a 100644
+index 3eff07d8..08ec746c 100644
 --- a/crates/victory-shader/src/emit/lower.rs
 +++ b/crates/victory-shader/src/emit/lower.rs
 @@ -17,9 +17,15 @@ use crate::gfx10::{Dpp, Fields, NULL, Operand};
@@ -12003,7 +14537,26 @@ index 3eff07d8..4f19602a 100644
              halves,
              wave_base: None,
              flat: None,
-@@ -2298,6 +2639,7 @@ impl<'a> Lower<'a> {
+@@ -2224,6 +2565,18 @@ impl<'a> Lower<'a> {
+         self.cur = self.s.entry;
+         self.find_sections();
+         self.inputs()?;
++        // A compute program that reads its group id x may run spread across
++        // z (`USER_DISPATCH_SPREAD`). Not a spilled one (the builder's
++        // stages, near the root signature's 64 dwords), nor one whose first
++        // block is a loop header (its counter sits in the entry block).
++        if self.x.native.stage == HwStage::Cs
++            && self.user_first() == 0
++            && !self.counters.contains_key(&order[0])
++            && self.x.io.inputs.iter().any(|&(_, i)| i == Input::GroupId(0))
++        {
++            self.cs_spread_prologue();
++            self.block[order[0]] = Some(self.cur);
++        }
+         if let Some(mesh) = self.s.mesh {
+             self.mesh_prologue(mesh).map_err(|w| unsupported(0, w))?;
+             self.block[order[0]] = Some(self.cur);
+@@ -2298,6 +2651,7 @@ impl<'a> Lower<'a> {
              dxil: self.s.finish(),
              user_data,
              samplers: self.samplers,
@@ -12011,7 +14564,7 @@ index 3eff07d8..4f19602a 100644
          })
      }
  
-@@ -2313,6 +2655,20 @@ impl<'a> Lower<'a> {
+@@ -2313,6 +2667,20 @@ impl<'a> Lower<'a> {
      /// Values of the program's input registers.
      fn inputs(&mut self) -> Result<(), Stop> {
          let io_inputs: HashMap<Value, Input> = self.x.io.inputs.iter().copied().collect();
@@ -12032,7 +14585,7 @@ index 3eff07d8..4f19602a 100644
          for &(reg, v) in &self.x.p.inputs {
              let val = match reg {
                  Reg::S(_) if self.params.contains_key(&v) => continue, // loaded on first use
-@@ -2335,6 +2691,14 @@ impl<'a> Lower<'a> {
+@@ -2335,6 +2703,14 @@ impl<'a> Lower<'a> {
                      // paths only seem to allow it before any save: the lane of a VGPR
                      // nobody wrote, and VGPRs nobody set read as zero.
                      None if n >= crate::ir::PARKED => Val::I32(self.s.m.i32(0)),
@@ -12047,7 +14600,58 @@ index 3eff07d8..4f19602a 100644
                      None => Val::Missing("a hardware SGPR input"),
                  },
                  Reg::Scc => Val::Missing("SCC on entry"),
-@@ -3187,6 +3551,9 @@ impl<'a> Lower<'a> {
+@@ -2433,6 +2809,50 @@ impl<'a> Lower<'a> {
+     }
+ 
+     /// A component of a compute thread or group id, read in the entry block.
++    /// A dispatch the host spread across z (`USER_DISPATCH_SPREAD`): the
++    /// group id as the title asked it, `(x + z * row, y, 0)`, for every input
++    /// that reads it, and the groups past the asked count leave before the
++    /// body (whole groups: no barrier is split). `row` 0: as dispatched.
++    /// The entry block ends here; the first block's code goes to the next.
++    /// (After upstream VIctory pull request #2312.)
++    fn cs_spread_prologue(&mut self) {
++        use super::shader::USER_DISPATCH_SPREAD;
++        let row = self.host_word(RootType::Other(USER_DISPATCH_SPREAD), 0, 0);
++        let asked = self.host_word(RootType::Other(USER_DISPATCH_SPREAD), 0, 1);
++        let Val::I32(gx) = self.compute_id("groupId.i32", 94, 0) else {
++            unreachable!()
++        };
++        let Val::I32(gz) = self.compute_id("groupId.i32", 94, 2) else {
++            unreachable!()
++        };
++        let e = self.s.entry;
++        let zero = self.s.m.i32(0);
++        let unspread = self.s.m.cmp(e, pred::EQ, row, zero);
++        let mul = self.s.m.bin(e, Bin::Mul, gz, row);
++        let spread_x = self.s.m.bin(e, Bin::Add, gx, mul);
++        let eff_x = self.s.m.select(e, unspread, gx, spread_x);
++        let eff_z = self.s.m.select(e, unspread, gz, zero);
++        let in_x = self.s.m.cmp(e, pred::IULT, eff_x, asked);
++        let keep = self.s.m.bin(e, Bin::Or, unspread, in_x);
++        let io_inputs: HashMap<Value, Input> = self.x.io.inputs.iter().copied().collect();
++        for (&v, &inp) in &io_inputs {
++            match inp {
++                Input::GroupId(0) => {
++                    self.vals.insert(v, Val::I32(eff_x));
++                }
++                Input::GroupId(2) => {
++                    self.vals.insert(v, Val::I32(eff_z));
++                }
++                _ => {}
++            }
++        }
++        let body = self.s.m.new_block();
++        let ret = self.s.m.new_block();
++        self.s.m.terminate(ret, Term::Ret);
++        self.s.m.terminate(e, Term::CondBr(keep, body, ret));
++        self.cur = body;
++    }
++
+     fn compute_id(&mut self, name: &str, opcode: u32, c: u8) -> Val {
+         let (entry, c) = (self.s.entry, self.s.m.i32(u32::from(c)));
+         Val::I32(
+@@ -3187,6 +3607,9 @@ impl<'a> Lower<'a> {
                  let v = inst.read(Reg::V(reg)).ok_or("an unread operand")?;
                  self.i32_of(v)
              }
@@ -12057,7 +14661,7 @@ index 3eff07d8..4f19602a 100644
              Operand::Const(c) => crate::resource::inline(c)
                  .map(|x| self.s.m.i32(x))
                  .ok_or("a special operand (vccz, execz, scc, lds_direct)"),
-@@ -3526,18 +3893,42 @@ impl<'a> Lower<'a> {
+@@ -3526,18 +3949,42 @@ impl<'a> Lower<'a> {
          self.s.m.select(c, exact, zero, r)
      }
  
@@ -12110,7 +14714,7 @@ index 3eff07d8..4f19602a 100644
      }
  
      /// `0 × anything = 0`, as in D3D9.
-@@ -3551,6 +3942,243 @@ impl<'a> Lower<'a> {
+@@ -3551,6 +3998,243 @@ impl<'a> Lower<'a> {
          self.s.m.select(c, z, zero, m)
      }
  
@@ -12354,7 +14958,7 @@ index 3eff07d8..4f19602a 100644
      /// Flushes f32 subnormals to signed zero, keeping all other values and
      /// the sign of zero intact.
      fn ftz(&mut self, x: V) -> V {
-@@ -3653,6 +4281,12 @@ impl<'a> Lower<'a> {
+@@ -3653,6 +4337,12 @@ impl<'a> Lower<'a> {
              Atom::Quad(_) => Ok(self.s.m.bool(true)),
              // With console lanes, a mask held as a number is the console's:
              // the lane tests its own bit.
@@ -12367,7 +14971,7 @@ index 3eff07d8..4f19602a 100644
              Atom::Opaque(v) if self.console_lanes => {
                  let hi = match self.pair_high(v) {
                      Some(h) => Some(self.get(h)?),
-@@ -4465,14 +5099,73 @@ impl<'a> Lower<'a> {
+@@ -4465,14 +5155,73 @@ impl<'a> Lower<'a> {
              // the title's checkerboard shadow-mask generators read their
              // neighbours' samples with it; without them every shadowed light
              // was multiplied by an empty mask.)
@@ -12448,7 +15052,7 @@ index 3eff07d8..4f19602a 100644
              }
              let at = self.vgprs(inst, addr.as_ref().ok_or("a permute address")?, 1)?[0];
              let x = self.vgprs(inst, data.first().ok_or("a permute source")?, 1)?[0];
-@@ -4494,6 +5187,97 @@ impl<'a> Lower<'a> {
+@@ -4494,6 +5243,97 @@ impl<'a> Lower<'a> {
              self.write(inst, Reg::V(reg), r, guard);
              return Ok(());
          }
@@ -12546,7 +15150,7 @@ index 3eff07d8..4f19602a 100644
          if self.s.lds_dwords == 0 {
              return Err("LDS the program does not allocate");
          }
-@@ -4854,6 +5638,7 @@ impl<'a> Lower<'a> {
+@@ -4854,6 +5694,7 @@ impl<'a> Lower<'a> {
                      .op(self.cur, "barrier", Attr::NoDuplicate, void, 80, &[mode]);
                  Ok(())
              }
@@ -12554,7 +15158,7 @@ index 3eff07d8..4f19602a 100644
              Fields::Sopp { .. } => Ok(()),
              Fields::Smem { .. } => self.smem(inst, (b, i)),
              Fields::Valu(_) if name.starts_with("v_interp_") => self.interp(inst, (b, i)),
-@@ -5133,6 +5918,20 @@ impl<'a> Lower<'a> {
+@@ -5133,6 +5974,20 @@ impl<'a> Lower<'a> {
                  l.s.m.cmp(c, pred::NE, o, z)
              };
              return match name {
@@ -12575,7 +15179,7 @@ index 3eff07d8..4f19602a 100644
                  "s_bcnt1_i32_b64" => {
                      let (a, b) = (half(self, 0, 0)?, half(self, 0, 1)?);
                      let i32t = self.s.t.i32;
-@@ -5258,6 +6057,10 @@ impl<'a> Lower<'a> {
+@@ -5258,6 +6113,10 @@ impl<'a> Lower<'a> {
          let (r, carry): (V, Option<V>) = match name {
              "s_mov_b32" => (src32(self, 0)?, None),
              "s_movk_i32" => (sext16(self), None),
@@ -12586,7 +15190,7 @@ index 3eff07d8..4f19602a 100644
              "s_cselect_b32" => {
                  let cond = self.scc_in(inst)?;
                  let (a, b) = (src32(self, 0)?, src32(self, 1)?);
-@@ -5451,6 +6254,30 @@ impl<'a> Lower<'a> {
+@@ -5451,6 +6310,30 @@ impl<'a> Lower<'a> {
          Ok(())
      }
  
@@ -12617,7 +15221,7 @@ index 3eff07d8..4f19602a 100644
      /// `a + b (+ cin)` or `a - b (- cin)` with the carry (borrow) out, as the
      /// scalar and vector add-with-carry instructions set it.
      fn add_sub_carry(&mut self, c: usize, add: bool, a: V, b: V, cin: Option<V>) -> (V, V) {
-@@ -5542,6 +6369,9 @@ impl<'a> Lower<'a> {
+@@ -5542,6 +6425,9 @@ impl<'a> Lower<'a> {
          if self.scalar.get(&site).is_some_and(|a| a.param == MEMORY) {
              return self.memory_smem(inst);
          }
@@ -12627,7 +15231,7 @@ index 3eff07d8..4f19602a 100644
          let Some(rest) = name.strip_prefix("s_buffer_load_dword") else {
              return self.descriptor_data(inst, site);
          };
-@@ -6104,6 +6934,31 @@ impl<'a> Lower<'a> {
+@@ -6104,6 +6990,31 @@ impl<'a> Lower<'a> {
          Ok(())
      }
  
@@ -12659,7 +15263,7 @@ index 3eff07d8..4f19602a 100644
      /// The dword at a computed byte address of a constant buffer.
      fn cbuffer_dword(&mut self, h: V, a: V) -> V {
          let c = self.cur;
-@@ -6469,7 +7324,7 @@ impl<'a> Lower<'a> {
+@@ -6469,7 +7380,7 @@ impl<'a> Lower<'a> {
              if self.block[q].is_none() {
                  continue;
              }
@@ -12668,7 +15272,7 @@ index 3eff07d8..4f19602a 100644
              let at = self.edges.get(&(q, block)).copied().unwrap_or(tail);
              let index = match arg {
                  Source::Loaded { load, first } => {
-@@ -6481,7 +7336,32 @@ impl<'a> Lower<'a> {
+@@ -6481,7 +7392,32 @@ impl<'a> Lower<'a> {
                  Source::Phi { block: inner, args: inner_args } if depth > 0 => {
                      self.descriptor_phi(*inner, inner_args, sampler, depth - 1)?
                  }
@@ -12702,7 +15306,7 @@ index 3eff07d8..4f19602a 100644
              };
              incoming.push((index, at));
          }
-@@ -6865,28 +7745,37 @@ impl<'a> Lower<'a> {
+@@ -6865,28 +7801,37 @@ impl<'a> Lower<'a> {
          if let Some(op) = name.strip_prefix("v_pk_") {
              return self.packed16(inst, op, guard);
          }
@@ -12747,7 +15351,7 @@ index 3eff07d8..4f19602a 100644
                      self.lane_bits.insert(w, carry);
                  }
                  for &(_, w) in &inst.writes {
-@@ -7307,6 +8196,63 @@ impl<'a> Lower<'a> {
+@@ -7307,6 +8252,63 @@ impl<'a> Lower<'a> {
                  };
                  float(self, r)
              }
@@ -12811,7 +15415,7 @@ index 3eff07d8..4f19602a 100644
              "v_cvt_i32_f32" | "v_cvt_u32_f32" | "v_cvt_flr_i32_f32" | "v_cvt_rpi_i32_f32" => {
                  let mut a = f(self, 0)?;
                  if name == "v_cvt_rpi_i32_f32" {
-@@ -7427,22 +8373,10 @@ impl<'a> Lower<'a> {
+@@ -7427,22 +8429,10 @@ impl<'a> Lower<'a> {
                  let Some(Operand::Vector { reg, .. }) = v.dst else {
                      return Err("a mixed-precision result");
                  };
@@ -12835,7 +15439,7 @@ index 3eff07d8..4f19602a 100644
                  self.write(inst, Reg::V(reg), x, guard);
                  Ok(())
              }
-@@ -7747,8 +8681,16 @@ impl<'a> Lower<'a> {
+@@ -7747,8 +8737,16 @@ impl<'a> Lower<'a> {
                  let x = crate::resource::inline(k).ok_or("a special operand")?;
                  Ok(self.s.m.int_const(i64t, i64::from(x as i32)))
              }
@@ -12853,7 +15457,7 @@ index 3eff07d8..4f19602a 100644
                  let x = self.operand(inst, &op)?;
                  Ok(self.s.m.cast(c, Cast::ZExt, x, i64t))
              }
-@@ -8044,6 +8986,28 @@ impl<'a> Lower<'a> {
+@@ -8044,6 +9042,28 @@ impl<'a> Lower<'a> {
          Ok(f)
      }
  
@@ -12882,7 +15486,7 @@ index 3eff07d8..4f19602a 100644
      /// Writes a 16-bit result (low bits of `x`) into the destination's low
      /// half, or its high half with op_sel bit 3 (or an SDWA WORD_1 select);
      /// the other half is kept (GFX10).
-@@ -8067,22 +9031,7 @@ impl<'a> Lower<'a> {
+@@ -8067,22 +9087,7 @@ impl<'a> Lower<'a> {
                  _ => return Err("an SDWA destination of a 16-bit operation"),
              }
          }
@@ -12906,7 +15510,7 @@ index 3eff07d8..4f19602a 100644
          self.write_placed(inst, Reg::V(reg), r, guard);
          Ok(())
      }
-@@ -8470,6 +9419,35 @@ impl<'a> Lower<'a> {
+@@ -8470,6 +9475,35 @@ impl<'a> Lower<'a> {
          Ok(self.s.m.bin(c, Bin::And, x, m))
      }
  
@@ -12942,7 +15546,7 @@ index 3eff07d8..4f19602a 100644
      /// Packed 16-bit operations (`v_pk_*`): each half computed as the
      /// 16-bit operation does, f16 through f32 as in [`Self::valu16`].
      fn packed16(&mut self, inst: &Inst, op: &str, guard: Option<V>) -> Result<(), Why> {
-@@ -8478,7 +9456,7 @@ impl<'a> Lower<'a> {
+@@ -8478,7 +9512,7 @@ impl<'a> Lower<'a> {
          };
          let float = op.ends_with("_f16");
          let n = match op {
@@ -12951,7 +15555,7 @@ index 3eff07d8..4f19602a 100644
              "add_f16" | "mul_f16" | "min_f16" | "max_f16" | "add_u16" | "sub_u16" | "add_i16"
              | "sub_i16" | "mul_lo_u16" | "lshlrev_b16" | "lshrrev_b16" | "ashrrev_i16"
              | "max_u16" | "min_u16" | "max_i16" | "min_i16" => 2,
-@@ -8487,13 +9465,22 @@ impl<'a> Lower<'a> {
+@@ -8487,13 +9521,22 @@ impl<'a> Lower<'a> {
          if v.omod != 0 || !float && (v.clamp || v.neg != 0 || v.neg_hi != 0) {
              return Err("modifiers on a packed integer operation");
          }
@@ -12975,7 +15579,7 @@ index 3eff07d8..4f19602a 100644
                  if float {
                      let mut f = self
                          .s
-@@ -8591,7 +9578,7 @@ impl<'a> Lower<'a> {
+@@ -8591,7 +9634,7 @@ impl<'a> Lower<'a> {
          };
          Ok(match name {
              "v_and_b32" | "v_or_b32" | "v_xor_b32" | "v_add_nc_u32" | "v_sub_nc_u32"
@@ -12984,7 +15588,7 @@ index 3eff07d8..4f19602a 100644
                  let (a, b) = (s(self, 0)?, s(self, 1)?);
                  let (op, a, b) = match name {
                      "v_and_b32" => (Bin::And, a, b),
-@@ -8701,6 +9688,131 @@ impl<'a> Lower<'a> {
+@@ -8701,6 +9744,131 @@ impl<'a> Lower<'a> {
                  let (a, b) = (s(self, 0)?, s(self, 1)?);
                  self.mul_hi(a, b, name == "v_mul_hi_i32")
              }
@@ -13116,7 +15720,7 @@ index 3eff07d8..4f19602a 100644
              "v_alignbit_b32" | "v_alignbyte_b32" => {
                  // The low dword of {a, b} >> shift.
                  let (a, b, sh) = (s(self, 0)?, s(self, 1)?, s(self, 2)?);
-@@ -9451,15 +10563,7 @@ impl<'a> Lower<'a> {
+@@ -9451,15 +10619,7 @@ impl<'a> Lower<'a> {
      /// `x` (an f16 in the low bits) as the low half of VGPR `reg`: 16-bit
      /// results keep the register's high half (GFX10).
      fn low_half(&mut self, inst: &Inst, reg: u8, x: V) -> V {
@@ -13133,7 +15737,7 @@ index 3eff07d8..4f19602a 100644
      }
  
      fn image(&mut self, inst: &Inst, b: usize, i: usize) -> Result<(), Why> {
-@@ -9800,7 +10904,10 @@ impl<'a> Lower<'a> {
+@@ -9800,7 +10960,10 @@ impl<'a> Lower<'a> {
              if kind == 5 && (*unorm || op == 81) {
                  return Err("a cube sample with texel coordinates or a level query");
              }
@@ -13145,7 +15749,7 @@ index 3eff07d8..4f19602a 100644
                  let x = addr_packed(self, coord_base, k)?;
                  *slot = to_float(self, x);
              }
-@@ -11649,6 +12756,44 @@ mod tests {
+@@ -11649,6 +12812,44 @@ mod tests {
          }
      }
  
@@ -13190,7 +15794,7 @@ index 3eff07d8..4f19602a 100644
      fn perm_features(selector: u32) -> u64 {
          // Synthetic compute shader:
          // v0 is the thread ID and can supply a dynamic selector.
-@@ -11986,4 +13131,19 @@ mod tests {
+@@ -11986,4 +13187,19 @@ mod tests {
          // A 16-bit float is a half already, sign included.
          assert_eq!(half(0xBC00 << half_shift(16)), -1.0);
      }
@@ -13478,7 +16082,7 @@ index 00000000..9d471a69
 +    }
 +}
 diff --git a/crates/victory-shader/src/emit/mod.rs b/crates/victory-shader/src/emit/mod.rs
-index 7d83ad52..0dbb6e92 100644
+index 7d83ad52..4c2d85f3 100644
 --- a/crates/victory-shader/src/emit/mod.rs
 +++ b/crates/victory-shader/src/emit/mod.rs
 @@ -91,6 +91,8 @@ pub mod host;
@@ -13490,7 +16094,7 @@ index 7d83ad52..0dbb6e92 100644
  mod sampler;
  mod shader;
  mod threading;
-@@ -111,7 +113,10 @@ use crate::{ShaderError, io, ir, resource, structure};
+@@ -111,10 +113,13 @@ use crate::{ShaderError, io, ir, resource, structure};
  pub use bitcode::census;
  pub use sampler::StaticSampler;
  pub use lower::set_host_max_wave;
@@ -13500,7 +16104,11 @@ index 7d83ad52..0dbb6e92 100644
 +pub use refusal::refusal_sources;
  pub use shader::{
      MEMORY_FAULTS, MEMORY_PAGES, ROOT_CBV_SPACE, SAMPLER_SPACE, SLOT_FAULTS, SLOT_MEMORY, SLOT_STRIDES,
-     SLOT_STRIDES_COUNT, USER_DATA_SPACE, USER_MEMORY_BASE, USER_VIEW_ADDRESS, USER_VIEW_BIAS,
+-    SLOT_STRIDES_COUNT, USER_DATA_SPACE, USER_MEMORY_BASE, USER_VIEW_ADDRESS, USER_VIEW_BIAS,
++    SLOT_STRIDES_COUNT, USER_DATA_SPACE, USER_DISPATCH_SPREAD, USER_MEMORY_BASE, USER_VIEW_ADDRESS, USER_VIEW_BIAS,
+     set_view_heap_limit, view_heap_limit,
+ };
+ 
 @@ -268,6 +273,10 @@ pub struct HostShader {
      pub root_uavs: Vec<u8>,
      /// Heap descriptors that can be selected from root state at bind time.
@@ -13512,7 +16120,29 @@ index 7d83ad52..0dbb6e92 100644
  }
  
  impl HostShader {
-@@ -320,18 +329,19 @@ fn translate_plain(container: &[u8]) -> Result<HostShader, ShaderError> {
+@@ -284,6 +293,21 @@ impl HostShader {
+     }
+ }
+ 
++/// A dispatch of `(x, y, z)` groups as the host runs it: `(row, asked x, gx,
++/// gy, gz)`. Spread across z when `can_spread`, `x` > 65,535 and `z` == 1
++/// ([`USER_DISPATCH_SPREAD`]); else `row` 0 and the counts as asked (upstream
++/// VIctory pull request #2312's `spread_groups`).
++pub fn spread_groups(x: u32, y: u32, z: u32, can_spread: bool) -> (u32, u32, u32, u32, u32) {
++    if can_spread && x > 65_535 && z == 1 {
++        let rows = x.div_ceil(65_535);
++        if rows <= 65_535 {
++            let row = x.div_ceil(rows);
++            return (row, x, row, y, rows);
++        }
++    }
++    (0, x, x, y, z)
++}
++
+ /// One dword of user data and the root parameter that fills it.
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ pub struct UserData {
+@@ -320,18 +344,19 @@ fn translate_plain(container: &[u8]) -> Result<HostShader, ShaderError> {
      let dxil = c
          .part(FourCC::DXIL)
          .ok_or(ShaderError::Malformed("no DXIL part"))?;
@@ -13541,7 +16171,7 @@ index 7d83ad52..0dbb6e92 100644
      let p = crate::spill::build(&native)?;
      // Structurisation first: tracing per-lane descriptors needs it (its
      // failure is reported after the earlier stages').
-@@ -399,12 +409,18 @@ pub fn emit(
+@@ -399,12 +424,18 @@ pub fn emit(
          // The program in two other forms: without its early-outs, and
          // without any branch that only skips code no lane is left for.
          let form = |p: Option<ir::Program>| {
@@ -13566,7 +16196,7 @@ index 7d83ad52..0dbb6e92 100644
          };
          let forms = [
              ("without early-outs", form(ir::without_early_outs(p))),
-@@ -659,6 +675,18 @@ fn emit_program(
+@@ -659,6 +690,18 @@ fn emit_program(
              _ => 0,
          };
      }
@@ -13585,7 +16215,7 @@ index 7d83ad52..0dbb6e92 100644
      // With a conservative depth output (SV_DepthLessEqual, GreaterEqual) DXIL
      // wants the position centroid (or per sample), as DXC declares it then.
      if pixel && outputs.iter().any(|e| matches!(e.kind, 18 | 19)) {
-@@ -724,6 +752,7 @@ fn emit_program(
+@@ -724,6 +767,7 @@ fn emit_program(
          root_srvs: l.root_srvs,
          root_uavs: l.root_uavs,
          root_indexed_views: res.root_indexed_views.clone(),
@@ -13593,7 +16223,7 @@ index 7d83ad52..0dbb6e92 100644
      };
      Ok((shader, wave_size))
  }
-@@ -1035,6 +1064,241 @@ mod tests {
+@@ -1035,6 +1079,241 @@ mod tests {
          stores_v1(&[0x7E04_028B, 0xDACC_0000, 0x0100_0200]).unwrap();
      }
  
@@ -13835,7 +16465,7 @@ index 7d83ad52..0dbb6e92 100644
      /// A carry-in reading a join of compares after a divergent branch. A
      /// lane that skipped the inner compare has VCC clear there (VOPC clears
      /// inactive lanes), not the first compare's bit, so the join is no
-@@ -1101,6 +1365,7 @@ mod tests {
+@@ -1101,6 +1380,7 @@ mod tests {
              root_srvs: Vec::new(),
              root_uavs: Vec::new(),
              root_indexed_views: Vec::new(),
@@ -13843,7 +16473,7 @@ index 7d83ad52..0dbb6e92 100644
          };
          let file = |var: &str, stage| {
              std::env::var(var).ok().map(|p| super::HostShader {
-@@ -1113,6 +1378,7 @@ mod tests {
+@@ -1113,6 +1393,7 @@ mod tests {
                  root_srvs: Vec::new(),
                  root_uavs: Vec::new(),
                  root_indexed_views: Vec::new(),
@@ -13851,7 +16481,7 @@ index 7d83ad52..0dbb6e92 100644
              })
          };
          let ps = file("VICTORY_REF_PS", crate::HwStage::Ps).unwrap_or(ps);
-@@ -1399,6 +1665,7 @@ mod tests {
+@@ -1399,6 +1680,7 @@ mod tests {
              root_srvs: l.root_srvs,
              root_uavs: l.root_uavs,
              root_indexed_views: Vec::new(),
@@ -13859,7 +16489,7 @@ index 7d83ad52..0dbb6e92 100644
          };
          let (root, pso) = host.compute_pipeline(&cs).unwrap();
          // Twelve dwords: the loads below run across the view's end.
-@@ -1552,6 +1819,7 @@ mod tests {
+@@ -1552,6 +1834,7 @@ mod tests {
                  root_srvs: l.root_srvs,
                  root_uavs: l.root_uavs,
                  root_indexed_views: Vec::new(),
@@ -13867,7 +16497,7 @@ index 7d83ad52..0dbb6e92 100644
              };
              let (root, pso) = host.compute_pipeline(&cs).unwrap();
              let inputs: Vec<u32> = [
-@@ -1842,6 +2110,24 @@ mod barycentric_tests {
+@@ -1842,6 +2125,24 @@ mod barycentric_tests {
          validate(&shader);
      }
  
@@ -13892,7 +16522,7 @@ index 7d83ad52..0dbb6e92 100644
      /// Both: the attribute is interpolated and J is used as a value.
      #[test]
      fn interpolation_and_a_barycentric_value_together() {
-@@ -1958,4 +2244,192 @@ mod barycentric_tests {
+@@ -1958,4 +2259,192 @@ mod barycentric_tests {
          let words = [0xC812_0000, e0, e1, S_ENDPGM];
          assert!(pixel(&words, PERSP_CENTER).is_err());
      }
@@ -14295,10 +16925,26 @@ index 00000000..8ff60cfa
 +    }
 +}
 diff --git a/crates/victory-shader/src/emit/shader.rs b/crates/victory-shader/src/emit/shader.rs
-index 28a36f1b..af70b9f4 100644
+index 28a36f1b..526a8eb7 100644
 --- a/crates/victory-shader/src/emit/shader.rs
 +++ b/crates/victory-shader/src/emit/shader.rs
-@@ -444,13 +444,17 @@ impl Shader {
+@@ -69,6 +69,15 @@ pub const USER_VIEW_ADDRESS: u32 = 0x101;
+ /// view. Asked for every root UAV, and for the root SRVs of programs with
+ /// a spilled user-data table.
+ pub const USER_VIEW_BIAS: u32 = 0x103;
++/// `RootType::Other` code of a user-data dword the host computes, for a
++/// compute program that reads its group id x: dword 0 the groups per row of
++/// a dispatch spread across z (0: not spread), dword 1 the x group count
++/// the title asked for. A dispatch of more than 65,535 groups in x (the
++/// most Direct3D 12 runs) runs as `(row, y, rows)`; the program takes group
++/// `(x + z * row, y, 0)` and leaves at once past the asked count. (After
++/// upstream VIctory pull request #2312, Xvania7; run 319 measured indirect
++/// compute records asking 115,200 groups, clamped to 65,535 before.)
++pub const USER_DISPATCH_SPREAD: u32 = 0x104;
+ 
+ /// `ShaderFlags` bits (metadata) and their `SFI0` feature bits.
+ pub(crate) mod flags {
+@@ -444,13 +453,17 @@ impl Shader {
      }
  
      /// The finished container.
@@ -14318,7 +16964,7 @@ index 28a36f1b..af70b9f4 100644
          if passes != 0 {
              self.m.optimise(passes);
              let used = self.m.usage();
-@@ -888,3 +892,120 @@ impl Shader {
+@@ -888,3 +901,120 @@ impl Shader {
          Some(self.m.md_node(list))
      }
  }
@@ -14440,7 +17086,7 @@ index 28a36f1b..af70b9f4 100644
 +    }
 +}
 diff --git a/crates/victory-shader/src/emit/valu_tests.rs b/crates/victory-shader/src/emit/valu_tests.rs
-index 6a4b3b84..6bcb5769 100644
+index 6a4b3b84..3ca24170 100644
 --- a/crates/victory-shader/src/emit/valu_tests.rs
 +++ b/crates/victory-shader/src/emit/valu_tests.rs
 @@ -47,6 +47,14 @@ const fn vop3(op: u16, vdst: u8, src0: u16, src1: u16, src2: u16) -> [u32; 2] {
@@ -15350,6 +17996,133 @@ index 6a4b3b84..6bcb5769 100644
  /// `v_mad_legacy_f32` as RDNA 2 runs it: fused (`v_fma_legacy_f32`), with
  /// flushed subnormal sources and the legacy zero-factor rule.
  #[test]
+@@ -1654,3 +2519,126 @@ fn legacy_mad_fuses_its_product_and_flushes_its_sources() {
+         assert_eq!(got, want[i], "{backend}: case {i}");
+     });
+ }
++
++/// A dispatch spread across z past 65,535 groups in x
++/// (`USER_DISPATCH_SPREAD`): the program sees the group id the title asked
++/// for, `(x + z * row)`, and the groups past the asked count do nothing.
++/// One thread a group stores 1 at dword `group id x` of a raw UAV. Run
++/// unspread (10 groups), spread with surplus (10 asked as 4 x 1 x 3) and
++/// spread exactly (10 asked as 5 x 1 x 2), on the hardware adapter and
++/// WARP. (After upstream VIctory pull request #2312.)
++#[test]
++fn a_spread_dispatch_runs_each_asked_group_once() {
++    use crate::native::{ComputeIo, HwStage, NativeProgram, ResourceType, RootParam, RootType, StageIo, UsedResource};
++    let words: Vec<u32> = [
++        vec![s_mov_b32(5, 0x80)], // s5 = 0: the table address's high half
++        s_load_dwordx4(8, 4).to_vec(), // s[8:11] = table entry 0 (raw UAV)
++        vec![
++            vop1(0x001, 1, sgpr(6)),  // v_mov_b32 v1, s6 (group id x)
++            0x3404_0282,              // v_lshlrev_b32 v2, 2, v1
++            vop1(0x001, 3, 129),      // v_mov_b32 v3, 1
++            0xBF8C_C07F,              // s_waitcnt lgkmcnt(0)
++            0x38 << 26 | 0x1C << 18 | 1 << 12, // buffer_store_dword v3, v2, s[8:11], 0 offen
++            0x80 << 24 | (8 >> 2) << 16 | 3 << 8 | 2,
++            S_ENDPGM,
++        ],
++    ]
++    .concat();
++    let code: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
++    let native = NativeProgram {
++        stage: HwStage::Cs,
++        wave64: false,
++        vgprs: 8,
++        layout: vec![RootParam {
++            root: RootType::Table,
++            table_offset_dwords: 0,
++            sgprs: 1,
++            base_register: 0,
++            user_data: 4,
++            slot: 0,
++        }],
++        used: vec![UsedResource {
++            kind: ResourceType::Uav,
++            root: RootType::Table,
++            table_offset_dwords: 0,
++            lower_bound: 0,
++            stride: 0,
++            dwords: 4,
++            user_data: 4,
++            slot: 0,
++        }],
++        // 6 user SGPRs (s0..s5), then the group id x in s6 (TGID_X_EN).
++        io: StageIo::Cs(ComputeIo { rsrc2: (6 << 1) | (1 << 7), threads: [1, 1, 1] }),
++        code,
++    };
++    let p = ir::build(&native.code, native.wave64, native.vgprs).expect("ir::build");
++    let st = structure::structure(&p).expect("structure");
++    let res = resource::track(&p, &native.layout, native.stage, Some(&st)).expect("resource::track");
++    let io = io::raise(&p, &native).expect("io::raise");
++    let lowered = lower::lower(&lower::Parts {
++        native: &native,
++        p: &p,
++        st: &st,
++        io: &io,
++        res: &res,
++        inputs: Vec::new(),
++        outputs: Vec::new(),
++        prims: Vec::new(),
++        mesh_stride: 0,
++    })
++    .expect("lower");
++    let shader = HostShader {
++        stage: HwStage::Cs,
++        dxil: lowered.dxil,
++        user_data: lowered.user_data,
++        samplers: lowered.samplers,
++        static_samplers: Vec::new(),
++        root_cbvs: lowered.root_cbvs,
++        root_srvs: lowered.root_srvs,
++        root_uavs: lowered.root_uavs,
++        root_indexed_views: res.root_indexed_views,
++    };
++    if let Ok(mut v) = validator::Validator::load(validator::Validator::default_path().as_deref()) {
++        let mut copy = shader.dxil.clone();
++        v.validate(&mut copy).expect("DXIL validation failed");
++    }
++    let spread = RootType::Other(super::USER_DISPATCH_SPREAD);
++    let row_at = shader.user_data.iter().find(|u| u.root == spread && u.dword == 0).expect("the row word").index;
++    let asked_at = shader.user_data.iter().find(|u| u.root == spread && u.dword == 1).expect("the asked word").index;
++    assert_eq!(asked_at, row_at + 1, "the two words are adjacent (one root-constant argument sets both)");
++    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
++    let mut ran = Vec::new();
++    for (backend, warp) in [("hardware", false), ("warp", true)] {
++        let host = match Host::new(warp) {
++            Ok(host) => host,
++            Err(e) => {
++                eprintln!("no SM 6.6 {backend} device ({e}); skipped");
++                continue;
++            }
++        };
++        ran.push(backend);
++        let (root, pso) = host.compute_pipeline(&shader).unwrap_or_else(|e| panic!("{backend}: {e}"));
++        // (row, asked, groups): unspread, spread with surplus, spread exactly.
++        for (row, asked, groups) in [(0u32, 10u32, [10u32, 1, 1]), (4, 10, [4, 1, 3]), (5, 10, [5, 1, 2])] {
++            let mut ud = vec![0u32; shader.user_data_dwords().max(1) as usize];
++            ud[row_at as usize] = row;
++            ud[asked_at as usize] = if row == 0 { 0 } else { asked };
++            let out = host
++                .dispatch(
++                    &root,
++                    &pso,
++                    &Dispatch {
++                        roots: vec![(0, Root::Constants(ud))],
++                        views: &[View::RawUav(16)],
++                        samplers: &[],
++                        groups,
++                    },
++                )
++                .unwrap_or_else(|e| panic!("{backend} row {row}: {e}"));
++            let want: Vec<u32> = (0..16).map(|i| u32::from(i < asked)).collect();
++            assert_eq!(out[0], want, "{backend}: row {row}, groups {groups:?}");
++        }
++    }
++    eprintln!("ran on {ran:?}");
++    assert!(!ran.is_empty(), "no device ran the test");
++}
 diff --git a/crates/victory-shader/src/emit/waterfall_tests.rs b/crates/victory-shader/src/emit/waterfall_tests.rs
 index 18425e06..099b046c 100644
 --- a/crates/victory-shader/src/emit/waterfall_tests.rs

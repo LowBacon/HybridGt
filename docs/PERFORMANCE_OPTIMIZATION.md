@@ -694,3 +694,35 @@ route as `play-tex`:
 
 About 1 fps for interiors that are no longer black. On in `play-fast.cmd`; delete the line to get
 the frame back.
+
+### FSR 3.1 verified on the card, without the game (2026-11-26)
+
+The runtime now logs the upscaler API version the title asks for, the providers AMD's PC DLLs offer,
+and the provider a context runs (`VICTORY_FFX_VERSION=<part of a name>` picks one). An ignored
+test makes a context through the title's own entry point (1280x720 to 1920x1080) on the host device:
+
+```
+offered: [(…, "3.1.6"), (…, "2.3.4")]      # FidelityFX SDK DLLs: loader 2.3.0, upscaler 4.1.2
+provider: Some("3.1.6")
+```
+
+On the RTX 4070 Ti the upscaler that runs is **FSR 3.1.6**. FSR 4 is not offered here (it needs
+an RDNA 4 card).
+
+### What a short copy of title memory costs on this PC (2026-11-26, benchmark, no game)
+
+| 64-byte copy | ns |
+|---|---|
+| kernel (`ReadProcessMemory`) | 447 |
+| in place (`rep movsb`, guarded) | 6 |
+| in place on a page that is not there (fault and handler) | 1,740 |
+| kernel on a page that is not there | 1,914 |
+
+The ~4,200 copies under 256 bytes a frame that go to the kernel cost about 2 ms in all: not where
+the 52 ms of a frame's copies goes. Finding that needs the sampling profiler in a game run.
+
+### fxceless ceb9e1f7 merged (2026-11-26)
+
+Its `VICTORY_SETTLE_ROOM=1`, `VICTORY_PARALLEL_REFRESH=1` and `VICTORY_LOOKUP_CACHE=1` were measured
+by fxceless at 11.5, 9 and 14 ms less a frame on an RTX 4070. Not yet measured here: both test
+runs ended when the game window was closed. `play-room.cmd` has the three.

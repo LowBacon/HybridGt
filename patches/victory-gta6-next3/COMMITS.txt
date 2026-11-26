@@ -1,3 +1,5 @@
+4b0eb312 FidelityFX: the API version the title asks for, the providers on offer and the one a context runs are logged; VICTORY_FFX_VERSION picks one (RTX 4070 Ti: 3.1.6 and 2.3.4 offered, 3.1.6 runs).
+1cfbf816 Merge fxceless/victory-gta6 ceb9e1f7 (more room for flights, texture checks on helper threads, dispatch spread)
 77ba056d The stand-in for the indirect light can bound what the air scatters (VICTORY_AMBIENT_AIR, off)
 17857394 A stand-in for the title's traced indirect light (VICTORY_AMBIENT, off): estimated from the light visible surfaces send out
 9acd8b3e Shader trace: indirect dispatches and draws too, with their arguments; words shown raw and as floats
