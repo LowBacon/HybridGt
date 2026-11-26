@@ -25,7 +25,7 @@ game**.
 | Lag spikes | `●●○○○` ② | Worst frames 1.3-2.8 s, when textures and pipelines arrive |
 | Ray-traced shadow programs (5) | `●●○○○` ② | A descriptor read as plain data |
 | Ped tint cut-out pixel shaders (10) | `●●○○○` ② | A hardware input NVIDIA does not have (pixel ordering) |
-| Mouth animation | `●○○○○` ① | Mouths don't move when characters talk; cause not found |
+| Mouth animation | `●●○○○` ② | The face shaders all translate and run, among them a small network's output stage (`CS_BlendshapeTranslationsHSSGraphOutputExtract`). Traced over ~1,500 frames of talking cutscenes, its output (the face's blend-shape values) stayed the same: the network's input never changes, or its results do not come back. Next: trace the network's inputs |
 
 ## Frame rate
 

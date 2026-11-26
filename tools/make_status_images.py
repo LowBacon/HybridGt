@@ -36,7 +36,7 @@ AREAS = [
     ('Real ray tracing', 60.0, 'runs, title crashes'),
     ('Walls and surfaces textured', 60.0, '15 % fewer textures waiting'),
     ('Clothes changes (bakes)', 60.0, 'bake sources first, not seen yet'),
-    ('Mouth animation', 20.0, 'cause not found'),
+    ('Mouth animation', 40.0, 'face network output frozen'),
 ]
 
 

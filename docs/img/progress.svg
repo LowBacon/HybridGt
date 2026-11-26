@@ -84,7 +84,7 @@
 <text x="686" y="511" class="n">bake sources first, not seen yet</text>
 <text x="16" y="540">Mouth animation</text>
 <rect class="bg" x="250" y="528" width="380" height="16" rx="4" fill="#eaeef2"/>
-<rect x="250" y="528" width="76.0" height="16" rx="4" fill="#c0392b"/>
-<text x="640" y="541" class="p">20 %</text>
-<text x="686" y="541" class="n">cause not found</text>
+<rect x="250" y="528" width="152.0" height="16" rx="4" fill="#d9822b"/>
+<text x="640" y="541" class="p">40 %</text>
+<text x="686" y="541" class="n">face network output frozen</text>
 </svg>
