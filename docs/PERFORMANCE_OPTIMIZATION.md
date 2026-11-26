@@ -636,3 +636,33 @@ stencil operations among it). `play-fast.cmd` now has `VICTORY_NATIVE_GRAPHICS=0
 stays in the tree behind the switch for later work.
 Memory while playing: VRAM 9.0-9.1 of 10.3 GB, RAM 23-24 GB with 0.7-4.5 GB free; the log notes the
 card without room for new textures, which is where late textures come from next.
+
+### Late textures: more card memory for textures (2026-11-26)
+
+`VICTORY_CARD_WINDOWS_MB=1024` (was 2048) and `VICTORY_TEXTURE_ROOM_PERCENT=96`: the card keeps
+less room for copy windows and gives it to textures. Same new game, same route: the log's
+"no room for new textures" lines went from 60 to 20 per run at the same fps (7.7 median).
+Adopted in `play-fast.cmd` (`tools/play-fast.example.cmd`).
+
+### AMD FSR 3.x through the game's own calls: `--console series-s` (2026-11-26)
+
+With `--console series-s` the title believes it runs on a Series S and calls FidelityFX
+upscaling itself. The runtime sends those calls to AMD's PC DLL (`VICTORY_FFX_DIR`, the
+FidelityFX SDK's `amd_fidelityfx_loader_dx12.dll`). The log of `play-seriess.cmd`
+(`tools/play-seriess-fsr.example.cmd`):
+
+- "FidelityFX: AMD's PC upscaler loaded"
+- "upscale context made on the host device"
+- "first upscale dispatch render=[1280, 720] upscale=[1920, 1080]"
+
+World frame lines (3,000+ draws), both with the texture setting above:
+
+| Run | fps median | p10 | best | frame ms median / p90 / worst |
+|---|---|---|---|---|
+| Series X (`play-tex`) | 7.7 | 5.6 | 8.8 | 129 / 179 / 2803 |
+| Series S + FSR (`play-seriess`) | 7.4 | 4.6 | 9.3 | 135 / 216 / 1285 |
+
+FSR works: no crash, and the prologue renders with whole characters through it. It is not
+faster, because the time is CPU-side (the title's command lists), not pixels. In the screenshots,
+one cutscene frame shows a character with a black face and one frame is all white, so it stays
+an option, not the default.
