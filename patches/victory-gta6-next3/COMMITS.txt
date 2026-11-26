@@ -1,12 +1,19 @@
+05dd46a5 Shaders: wave-wide branches in thread groups of several console waves are decided by the whole group (VICTORY_GROUP_WIDE=1, off until a game run): the last 6 compute programs NVIDIA refused f
+f3b013d0 FidelityFX: the title's upscale context flags said by name; AMD's runtime's messages go to our log (not to the title's callback); VICTORY_FFX_DEBUG=1 turns on its checks, VICTORY_FFX_ADD_FLAG
+0655a8d9 Textures on screen first (VICTORY_TEXTURE_MARKS=1, off): translated pixel and compute shaders mark the heap slots of the textures they pick in a map on the card; a copy queue of ours reads it
+58242806 Fills on the helper threads together (VICTORY_WIDE_FILLS=1, off): measured, no gain
+7a5982d8 Shaders: a wave64 mask whose two dwords are joined apart (parked in two VGPR lanes across a loop) is the join of the pair: the water volumetrics programs (CS_TransmissionVolumetrics, ...Subme
 4b0eb312 FidelityFX: the API version the title asks for, the providers on offer and the one a context runs are logged; VICTORY_FFX_VERSION picks one (RTX 4070 Ti: 3.1.6 and 2.3.4 offered, 3.1.6 runs).
 1cfbf816 Merge fxceless/victory-gta6 ceb9e1f7 (more room for flights, texture checks on helper threads, dispatch spread)
 77ba056d The stand-in for the indirect light can bound what the air scatters (VICTORY_AMBIENT_AIR, off)
 17857394 A stand-in for the title's traced indirect light (VICTORY_AMBIENT, off): estimated from the light visible surfaces send out
+af62a9d9 Merge fxceless/victory-gta6 f6a09d3b (76 commits: texture pass on its own thread, legacy mad as RDNA 2, heap locks, remap timing split, per-format host pipelines)
 9acd8b3e Shader trace: indirect dispatches and draws too, with their arguments; words shown raw and as floats
 7d07b7fb victory spilled <file>: list the programs the runtime takes for ray-tracing structure builder stages
 c49b3535 Rectangle stage for 0x1c8 pipelines behind VICTORY_NATIVE_RECTS=1 (off): the first launch with it lost the GPU 84 s in (device removed, invalid command)
 b6cab2dd 0x1c8 pipelines drawn as rectangle lists get the rectangle-completing geometry stage
 1d2a23df 0x1c8: target formats remembered across runs (console-formats.txt in the cache dir); known pipelines start being made when the title creates them
+249e647f Merge fxceless/victory-gta6 085ee7c (GPU upload heap windows VICTORY_WINDOW_UPLOAD, frame shot VICTORY_SHOT); 0x1c8 reads 16 description words
 77a0510d Device method 0x1c8: graphics pipelines from the containers of their code (VICTORY_NATIVE_GRAPHICS=1), made per bound target formats
 f0daccd4 Runtime converter translates geometry-only containers (195 GS_VoxelizeGeneric); warm-up names each container that does not translate
 7c03e967 Shader trace takes several hashes (water lookups and face shaders in one run), first 20 dispatches per shader logged
@@ -15,22 +22,23 @@ f0daccd4 Runtime converter translates geometry-only containers (195 GS_VoxelizeG
 1bfb0ec0 Shader trace (VICTORY_TRACE_SHADER=<hash>): log the ranges a traced compute shader writes and what title memory holds there
 613497ca Descriptor mirror: lock-free answer for slots already made from the same record; heap pass times mirror()
 b2d29439 victory.exe without an icon of its own (the user did not like it)
-ffc3598a Device method 0x218: compute pipelines from the containers of the code it names (VICTORY_NATIVE_PIPELINES=1, VICTORY_NATIVE_INDEX=<file> from 'victory shader-index <archive> <file>': code header -> archive record)
-f2a7d9ab Shaders: a wave64 mask restored from scalar copies is followed (from DexNom/VIctory 76749ce): PS_VoxelizeVisiblity translates and validates. Diagnostic: the first calls of device methods 0x1c8/0x218 log their description's (address, size) pairs and look for a container around them
+49ab9c54 Merge fxceless/victory-fork d510ee4 (indirect records gathered, joined parts, copy-back through our own view, in-place copies, fast cores: 10.3 fps in their first rooms)
+ffc3598a Device method 0x218: compute pipelines from the containers of the code it names (VICTORY_NATIVE_PIPELINES=1, VICTORY_NATIVE_INDEX=<file> from 'victory shader-index <archive> <file>': code hea
+f2a7d9ab Shaders: a wave64 mask restored from scalar copies is followed (from DexNom/VIctory 76749ce): PS_VoxelizeVisiblity translates and validates. Diagnostic: the first calls of device methods 0x1c
 868fbb09 Placeholder pipelines off by default: with them the title draws its frame through 0x1c8/0x218 pipelines and the screen was black (next31, ~9 draws a frame)
-cb09e4bb Device methods 0x1c8/0x218 hand out a placeholder pipeline instead of failing (VICTORY_PLACEHOLDER_PIPELINES=0: as before): every crash of next19-next30 came at the prologue cutscene's prestream while the title made thousands of pipelines through them
-c4d92a73 Lazy copy-back: a deferred piece's range is announced as written (its guarded blocks opened), as a merge does, so the other host copies of those bytes take them again through a read that brings the piece down
-b3ee189c Slot prints: a kept slot also needs the copy found at its bytes to be the one found before; opt-in (VICTORY_SLOT_PRINTS=1) after next26 crashed with them on; next27 crashed with lazy copy-back alone
-4152f567 Lazy copy-back: every kernel read of title memory (the main copy, sparse and piecewise reads) brings pending pieces down first; a block set lets reads that touch none skip the lock (next24/25: zeros where pieces were pending, and a 105-181 ms texture pass)
+cb09e4bb Device methods 0x1c8/0x218 hand out a placeholder pipeline instead of failing (VICTORY_PLACEHOLDER_PIPELINES=0: as before): every crash of next19-next30 came at the prologue cutscene's prestr
+c4d92a73 Lazy copy-back: a deferred piece's range is announced as written (its guarded blocks opened), as a merge does, so the other host copies of those bytes take them again through a read that brin
+b3ee189c Slot prints: a kept slot also needs the copy found at its bytes to be the one found before; opt-in (VICTORY_SLOT_PRINTS=1) after next26 crashed with them on; next27 crashed with lazy copy-bac
+4152f567 Lazy copy-back: every kernel read of title memory (the main copy, sparse and piecewise reads) brings pending pieces down first; a block set lets reads that touch none skip the lock (next24/25
 089d1656 Lazy copy-back: a piece is deferred only if every page of it in every view closes; pages the guards re-protect are closed again (next24 crashed on a stale read)
-70cf0379 Copy-back on first touch (VICTORY_LAZY_BACK=1): flagged pieces stay on the card, their pages no-access, fetched when the title or this runtime touches them; the heap pass skips slots whose records are unchanged (VICTORY_SLOT_PRINTS=0 off)
+70cf0379 Copy-back on first touch (VICTORY_LAZY_BACK=1): flagged pieces stay on the card, their pages no-access, fetched when the title or this runtime touches them; the heap pass skips slots whose re
 006234e1 Heap pass timed in parts: buffer slots, refreshes of the copies their views cover (HybridGt)
 2738db73 Diagnostics: VICTORY_READ_PROBE=N measures whether the title's CPU reads what the relay copies back (every Nth merged piece made no-access until touched)
-7eeb115c Page pool in place: VICTORY_POOL_COMMIT=1 makes the title's physical pages in committed sections; with VICTORY_INPLACE=2 a title buffer in one run of such a section is a buffer placed in the section's heap (no copy, refresh or copy-back). Title geometry stages behind VICTORY_TITLE_GS=1 (next19 crashed with them on, cause not yet known)
+7eeb115c Page pool in place: VICTORY_POOL_COMMIT=1 makes the title's physical pages in committed sections; with VICTORY_INPLACE=2 a title buffer in one run of such a section is a buffer placed in the 
 aafbba09 Host pipelines take a title's geometry stage (the translated legacy geometry program) beside its vertex and pixel stages
-6535505d Shaders: legacy GFX10 geometry programs as host geometry shaders (ES-GS ring reads -> loadInput per vertex, GS-VS ring writes -> outputs at GS_EMIT, GS_CUT -> cutStream, the driver's ring table read as zeros); POPS path behind VICTORY_POPS=1 (glowing eyes in next18b)
+6535505d Shaders: legacy GFX10 geometry programs as host geometry shaders (ES-GS ring reads -> loadInput per vertex, GS-VS ring writes -> outputs at GS_EMIT, GS_CUT -> cutStream, the driver's ring tab
 f582be6e Cargo.lock: embed-resource for the icon
-83a39d61 Shaders: POPS (ordered pixel shading) programs take the no-overlap path: the hardware ordering SGPR and src_pops_exiting_wave_id read as zero (after upstream 522d2bc by beloooo); the 10 ped cut-out pixel shaders translate
+83a39d61 Shaders: POPS (ordered pixel shading) programs take the no-overlap path: the hardware ordering SGPR and src_pops_exiting_wave_id read as zero (after upstream 522d2bc by beloooo); the 10 ped c
 36107f16 xmem: no split call where our own unmap left the exact placeholder, no commit call for section pages committed already (fewer system calls per remapped page)
 bee284ea FSR 1 (AMD FidelityFX, MIT, vendored unmodified) on present: VICTORY_FSR=1 upscales the title's image to VICTORY_FSR_OUTPUT (1920x1080) with EASU + RCAS; hardware test
 5b938bf4 victory.exe gets an icon of its own (original HG design, embed-resource)
@@ -46,9 +54,11 @@ c40757d8 Shaders: lower s_quadmask_b32 and s_quadmask_b64
 bd2c28b3 Shaders: fix duplicate latch folding, unreachable phi edges, and replace_const caching in DXIL bitcode
 91f96c42 Shaders: pass only spatial coordinates to DXIL calculateLOD
 661623a3 GPU: batch texture mapped_bytes probes and skip unmade slots when budget is full
+cbc8ba60 Merge fxceless/victory-fork a253706 (frame log, driver watch, self-copy fix, heap lock, draw windows 6.0 -> 8.9 fps on RTX 4070)
+712ad19c Merge fxceless/victory-gta6 f85101b (submit thread, copy queue, indirect windows, profiler) into HybridGt
 7c52922e Relay fetches on a copy queue of their own (VICTORY_FETCH_COPY_QUEUE=1, off by default): no wait behind newer flights; the merge's 'after' is the landed plans' newest send (HybridGt)
 6e7d1e01 Masked merge: timer for the merge step on the submitting thread (HybridGt)
-dc685039 Masked merge: the log keeps each send's runs in one vector, sorted once, searched by binary search (a tree insert per run cost about 35 ms a frame at 242,000 runs, run next13); merge-step timer (HybridGt)
+dc685039 Masked merge: the log keeps each send's runs in one vector, sorted once, searched by binary search (a tree insert per run cost about 35 ms a frame at 242,000 runs, run next13); merge-step tim
 87bf6c2c Masked merge on the card for the title's runs under shader writes (VICTORY_GPU_MERGE=1, off by default) (HybridGt)
 151f32dc Benchmark: kernel reads of title memory against plain copies (ignored test read_cost) (HybridGt)
 7e6cceb8 Scratch fills that would wait for flights run on the card from host copies (VICTORY_GPU_FILLS=1; scratch chunks then in shared memory) (HybridGt)
