@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="392" viewBox="0 0 860 392" role="img" aria-label="HybridGt progress">
+<style>text{font-family:Segoe UI,Helvetica,Arial,sans-serif;font-size:13px;fill:#24292f}.t{font-size:16px;font-weight:600}.n{fill:#57606a;font-size:12px}.p{font-weight:600}@media (prefers-color-scheme:dark){text{fill:#e6edf3}.n{fill:#9198a1}.bg{fill:#30363d}}</style>
+<rect width="860" height="392" rx="8" fill="none" stroke="#d0d7de"/>
+<text x="16" y="28" class="t">HybridGt progress</text>
+<text x="16" y="60">Shader programs translate</text>
+<rect class="bg" x="250" y="48" width="380" height="16" rx="4" fill="#eaeef2"/>
+<rect x="250" y="48" width="379.6" height="16" rx="4" fill="#2e9e4f"/>
+<text x="640" y="61" class="p">99.9 %</text>
+<text x="686" y="61" class="n">26,067 of 26,084</text>
+<text x="16" y="90">Ray-tracing builder translates</text>
+<rect class="bg" x="250" y="78" width="380" height="16" rx="4" fill="#eaeef2"/>
+<rect x="250" y="78" width="380.0" height="16" rx="4" fill="#2e9e4f"/>
+<text x="640" y="91" class="p">100 %</text>
+<text x="686" y="91" class="n">52 of 52 programs</text>
+<text x="16" y="120">Menus at 30 fps</text>
+<rect class="bg" x="250" y="108" width="380" height="16" rx="4" fill="#eaeef2"/>
+<rect x="250" y="108" width="380.0" height="16" rx="4" fill="#2e9e4f"/>
+<text x="640" y="121" class="p">100 %</text>
+<text x="686" y="121" class="n">30 fps</text>
+<text x="16" y="150">World frame rate (goal 30)</text>
+<rect class="bg" x="250" y="138" width="380" height="16" rx="4" fill="#eaeef2"/>
+<rect x="250" y="138" width="97.7" height="16" rx="4" fill="#c0392b"/>
+<text x="640" y="151" class="p">25.7 %</text>
+<text x="686" y="151" class="n">7.7 fps median</text>
+<text x="16" y="180">AMD FSR 3.1 upscaling</text>
+<rect class="bg" x="250" y="168" width="380" height="16" rx="4" fill="#eaeef2"/>
+<rect x="250" y="168" width="304.0" height="16" rx="4" fill="#7cb342"/>
+<text x="640" y="181" class="p">80 %</text>
+<text x="686" y="181" class="n">runs, 2 bad frames seen</text>
+<text x="16" y="210">Characters and bodies</text>
+<rect class="bg" x="250" y="198" width="380" height="16" rx="4" fill="#eaeef2"/>
+<rect x="250" y="198" width="380.0" height="16" rx="4" fill="#2e9e4f"/>
+<text x="640" y="211" class="p">100 %</text>
+<text x="686" y="211" class="n">whole in the prologue</text>
+<text x="16" y="240">Textures on time</text>
+<rect class="bg" x="250" y="228" width="380" height="16" rx="4" fill="#eaeef2"/>
+<rect x="250" y="228" width="304.0" height="16" rx="4" fill="#7cb342"/>
+<text x="640" y="241" class="p">80 %</text>
+<text x="686" y="241" class="n">some still late</text>
+<text x="16" y="270">Interior light (stand-in)</text>
+<rect class="bg" x="250" y="258" width="380" height="16" rx="4" fill="#eaeef2"/>
+<rect x="250" y="258" width="304.0" height="16" rx="4" fill="#7cb342"/>
+<text x="640" y="271" class="p">80 %</text>
+<text x="686" y="271" class="n">lit, costs ~1 fps</text>
+<text x="16" y="300">Boat mission</text>
+<rect class="bg" x="250" y="288" width="380" height="16" rx="4" fill="#eaeef2"/>
+<rect x="250" y="288" width="228.0" height="16" rx="4" fill="#7cb342"/>
+<text x="640" y="301" class="p">60 %</text>
+<text x="686" y="301" class="n">fix in, not checked</text>
+<text x="16" y="330">Real ray tracing</text>
+<rect class="bg" x="250" y="318" width="380" height="16" rx="4" fill="#eaeef2"/>
+<rect x="250" y="318" width="228.0" height="16" rx="4" fill="#7cb342"/>
+<text x="640" y="331" class="p">60 %</text>
+<text x="686" y="331" class="n">runs, title crashes</text>
+<text x="16" y="360">Mouth animation</text>
+<rect class="bg" x="250" y="348" width="380" height="16" rx="4" fill="#eaeef2"/>
+<rect x="250" y="348" width="76.0" height="16" rx="4" fill="#c0392b"/>
+<text x="640" y="361" class="p">20 %</text>
+<text x="686" y="361" class="n">cause not found</text>
+</svg>
