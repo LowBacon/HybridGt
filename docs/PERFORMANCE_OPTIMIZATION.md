@@ -587,3 +587,22 @@ launch with the D3D12 debug layer to name the command.
   among them ports of cool_fox) and iLucasRT/VInAMD (built on it, 330 own) share the fxceless base,
   but a trial merge of VIctory-7900XTX meets 328 conflict hunks in 38 files: to be ported piece by
   piece, measured on this NVIDIA card. XCL is GPL-2.0-only (not mixed into this GPL-3 tree).
+
+### cool_fox measured on this PC (RTX 4070 Ti, 32 GB), against our build (2026-11-26)
+
+cool_fox (codec-d, = VIctory-7900XTX 0a43566 + 6 commits: NVIDIA wave32 lowering, 32 GB residency
+budgets, Series S plane fix), built as is, its own launcher's switch set and `--console series-s`,
+the same new game, frame lines with 300+ draws (medians):
+
+| | frames | fps | frame | preparing (copies) | on the GPU | copy-back | draws |
+|---|---|---|---|---|---|---|---|
+| ours (`play-rects`, Series X) | 60 | **5.6** | 178 ms | 136 (70) ms | 0 | 90 ms | 4,915 |
+| cool_fox (Series S) | 63 | 2.7 | 371 ms | **64 (15)** ms | 295 ms | **49** ms | 4,439 |
+
+Its reported 15-25 fps are from an RX 7900 XTX with 64 GB RAM. On this PC its processor side is two
+to three times cheaper than ours, and something costs 295 ms a frame "on the GPU" (with its relay,
+waiting for the card counts there). Its translator leaves 229 containers untranslated (ours 47).
+Plan: cool_fox as the base, our 0x1c8 pipelines, rectangle stage, format memory, geometry and
+translator fixes and fxceless's texture thread carried onto it, then the 295 ms found.
+A straight merge of cool_fox into our tree met 347 conflict hunks (128 additions on both sides,
+219 real collisions).
