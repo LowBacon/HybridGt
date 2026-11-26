@@ -23,7 +23,8 @@ HybridGt is **not a standalone runtime**. The game runs inside
 ## Status at a glance (2026-11-26)
 
 **Not yet playable at a good frame rate.** On a new game, the intro, menus and prologue render,
-with whole characters, at **7.7 fps median** in the world (best 9.3) on an RTX 4070 Ti.
+with whole characters, at **7.7 fps median** in the world (best 9.3) on an RTX 4070 Ti, or 6.7
+with interiors lit by the ambient stand-in (the default launcher).
 Menus run at 30 fps.
 
 ### Frame rate
@@ -62,7 +63,8 @@ the game**.
 | AMD FSR 3.x upscaling | `●●●●○` ④ | Works through the game's Series S path (`--console series-s`), 720p → 1080p. No fps gain; one black face and one white frame seen |
 | Series S mode | `●●●●○` ④ | Boots and plays the prologue |
 | Boat sinks ("Cal fell off the boat") | `●●●○○` ③ | fxceless's `VICTORY_TEXTURE_BACK=1` makes boats float; not yet checked at that mission in our runs |
-| Ray tracing (indirect light, shadows) | `●●●○○` ③ | The builder now runs whole on NVIDIA, but the game crashes 11 s later. Testing VIctory-7900XTX's builder fixes |
+| Black interiors (traced indirect light) | `●●●●○` ④ | `VICTORY_AMBIENT=1` stand-in lights them (costs about 1 fps). On in `play-fast` |
+| Ray tracing (real traced light) | `●●●○○` ③ | Builder translates whole (52/52) and runs, but our build crashes 11 s later; VIctory-7900XTX's build survives it but loses the GPU after 3.5 min. Porting their 17 builder commits next |
 | 0x1c8 graphics pipelines (console path) | `●●●○○` ③ | Built, but they hide bodies (stencil not decoded). Off |
 | Lag spikes | `●●○○○` ② | Worst frames 1.3-2.8 s, when textures and pipelines arrive |
 | Underwater light volume shader | `●●○○○` ② | One shader: a lane mask read as data |

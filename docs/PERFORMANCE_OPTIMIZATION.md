@@ -666,3 +666,31 @@ FSR works: no crash, and the prologue renders with whole characters through it. 
 faster, because the time is CPU-side (the title's command lists), not pixels. In the screenshots,
 one cutscene frame shows a character with a black face and one frame is all white, so it stays
 an option, not the default.
+
+### Ray tracing on the RTX 4070 Ti: the builder, and a stand-in for its light (2026-11-26)
+
+**The builder translates whole.** All 52 programs of `XboxBvhBuilder.dll` translate in their
+exact form for 32-lane waves (none needed the approximate per-half form: `VICTORY_WAVE_WHY=1`
+printed no retry), and all 52 host pipelines are created on the card.
+
+| Run | Build | Result |
+|---|---|---|
+| `play-rt` | ours, `VICTORY_BVH_BUILDER=1` | "the ray-tracing structure builder runs ... pipelines=53", then the title crashes 11 s later (access violations in title code) |
+| `play-rtq` | ours, builder + `VICTORY_BVH_QUARANTINE=1` | same crash 6 s later (the title then gets no sizes back either: not conclusive) |
+| `play-avatar-rt` | VIctory-7900XTX main `9576c45f`, builder on | the title survives (their memory-by-address series bounds the builder's stores), but 0.2 fps and **device removed** (0x887A0004) after 3.5 minutes |
+
+So traced light is not usable on this card yet. Porting VIctory-7900XTX's 17 builder commits
+(memory by address, bounded stores, fences, wave32 prefix scans) is the way forward; the first of
+them has 14 conflicts with our tree.
+
+**The stand-in: `VICTORY_AMBIENT=1`** (VIctory-7900XTX 82ca1347 + 7da523a9, picked onto our
+branch). It estimates the traced indirect light from the light visible surfaces send out. Same
+route as `play-tex`:
+
+| Run | fps median | p10 | best | frame ms median / p90 / worst | Picture |
+|---|---|---|---|---|---|
+| `play-tex` (off) | 7.7 | 5.6 | 8.8 | 129 / 179 / 2803 | prison cell interior **black** |
+| `play-ambient` (on) | 6.7 | 3.2 | 7.5 | 150 / 309 / 481 | cell walls, bunk and posters **lit** |
+
+About 1 fps for interiors that are no longer black. On in `play-fast.cmd`; delete the line to get
+the frame back.

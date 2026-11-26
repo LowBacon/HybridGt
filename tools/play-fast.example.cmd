@@ -40,4 +40,7 @@ set VICTORY_TEXTURE_ROOM_PERCENT=96
 set VICTORY_CARD_BUFFERS_MIN_KB=64
 set VICTORY_CARD_BUFFERS_MB=1280
 set VICTORY_CARD_HASH_LEN=1
+rem stand-in for the traced indirect light (VIctory-7900XTX 82ca1347): interiors and shadowed sides lit
+rem instead of black; A/B 2026-11-26: 6.7 vs 7.7 fps median. Delete to turn off.
+set VICTORY_AMBIENT=1
 E:\GTA\HybridGt-work\victory-gta6\target\release\victory.exe run "E:\GTA\GTA6.Xbox.v1.0.2.1\game_scarlett_master.exe" --execute > "E:\GTA\HybridGt-work\logs\%~n0.log" 2>&1
