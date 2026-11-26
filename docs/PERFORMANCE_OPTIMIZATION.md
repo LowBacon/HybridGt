@@ -763,3 +763,50 @@ Kept in `play-fast.cmd`. The slowest tenth of frames is 2.6 times faster.
   pipelines: a diagnostics run names the reasons next.
 - Texture marks or rasterizer-ordered pixels turned the picture white in run all1 (the
   group-wide form alone renders right, run g1): both stay off until found.
+
+### One switch at a time (2026-11-26, night)
+
+Each run: `play-fast` plus one switch, same route, shader cache warmed offline first.
+
+| Run | Switch over `play-fast` | fps median | p10 | frame median / p90 | Result |
+|---|---|---|---|---|---|
+| x-base | none | 5.9 | 3.8 | 171 / 261 ms | reference |
+| x-pops | `VICTORY_POPS=rov` (10 ped tint shaders ordered by the card) | 5.9 | 3.4 | 171 / 292 ms | no white screen, faces and eyes right in every shot; fps the same |
+| x-hashwide | `VICTORY_CARD_HASH_WIDE=1` | 6.9 | 1.9 | 146 / 540 ms | faster median, worse spikes |
+| x-dirty4k | `VICTORY_DIRTY_4K=1` | 6.1 | 3.7 | 166 / 357 ms | within run-to-run spread |
+| x-inplace | `VICTORY_INPLACE=1` (title memory opened as the card's own) | 6.9 | 3.0 | 145 / 331 ms | busiest thread 57 % instead of 100 % in a shot |
+| x-combo | in place + wide hashing | 6.0 | 2.6 | 167 / 385 ms | together no better: list steps rose to 70-79 ms |
+
+Run-to-run spread is about one frame a second, so none of these is claimed yet: they are run
+again before any goes into `play-fast`. POPS no longer turns the picture white: run all1's white
+screen came from the texture marks.
+
+### Where a world frame goes (diagnostics run drops1, ~150 ms frames)
+
+- The title's render thread waits **110-140 ms** a frame inside its present call, for our
+  submitting thread to finish preparing the frame's lists.
+- The submitting thread works **140-160 ms**: the write-watch asking 25-42 ms, the lists' steps
+  (copies of title memory, fills) 30-80 ms, refreshes 17-24 ms, the card copies' send-and-hash
+  lists 15-18 ms.
+- What shaders wrote, **~100 MB a frame**, is copied back into title memory (on a thread of its
+  own, beside the submitting thread).
+- The card runs ~91 ms of lists a frame: 59 ms the title's own, ~31 ms our hashing and comparing
+  of copies, and stands idle ~45 ms waiting for us.
+
+So the frame is set by the copies a PC needs and a console does not (one memory there, two here).
+Taking those away is what the in-place opening does; it is the direction kept.
+
+### Mouths late against the voice
+
+The title picks a mouth shape for the voice's moment when a frame begins; the frame reaches the
+screen after the title's work, our preparing and the card's drawing: at ~150 ms a frame that is
+300-450 ms, against ~70 ms on the console. `VICTORY_AUDIO_DELAY_MS=<ms>` (new, off by default)
+puts a delay line at the end of XAudio2's mastering voice so the sound arrives as late as the
+picture. Tested on this PC's XAudio2 (the effect is taken and runs); not yet heard in game.
+
+### Blur on hair and heads
+
+The title draws the world at 2560x1440 and its own temporal upscaler takes it to 3840x2160
+(logged). Hair is drawn dithered and made smooth by that blend of frames, which expects 30 fps:
+at 6-7 fps the frames move too far apart to line up, and hair and faces smear. A higher frame
+rate is the fix.

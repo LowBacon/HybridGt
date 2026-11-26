@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="860" height="572" viewBox="0 0 860 572" role="img" aria-label="HybridGt progress">
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="602" viewBox="0 0 860 602" role="img" aria-label="HybridGt progress">
 <style>text{font-family:Segoe UI,Helvetica,Arial,sans-serif;font-size:13px;fill:#24292f}.t{font-size:16px;font-weight:600}.n{fill:#57606a;font-size:12px}.p{font-weight:600}@media (prefers-color-scheme:dark){text{fill:#e6edf3}.n{fill:#9198a1}.bg{fill:#30363d}}</style>
-<rect width="860" height="572" rx="8" fill="none" stroke="#d0d7de"/>
+<rect width="860" height="602" rx="8" fill="none" stroke="#d0d7de"/>
 <text x="16" y="28" class="t">HybridGt progress</text>
 <text x="16" y="60">Shader programs translate</text>
 <rect class="bg" x="250" y="48" width="380" height="16" rx="4" fill="#eaeef2"/>
@@ -86,5 +86,10 @@
 <rect class="bg" x="250" y="528" width="380" height="16" rx="4" fill="#eaeef2"/>
 <rect x="250" y="528" width="304.0" height="16" rx="4" fill="#7cb342"/>
 <text x="640" y="541" class="p">80 %</text>
-<text x="686" y="541" class="n">moves; choppy at low fps</text>
+<text x="686" y="541" class="n">moves; trails the voice at low fps</text>
+<text x="16" y="570">Black face / eyes (POPS)</text>
+<rect class="bg" x="250" y="558" width="380" height="16" rx="4" fill="#eaeef2"/>
+<rect x="250" y="558" width="228.0" height="16" rx="4" fill="#7cb342"/>
+<text x="640" y="571" class="p">60 %</text>
+<text x="686" y="571" class="n">right in the isolated run, not yet on</text>
 </svg>

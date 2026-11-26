@@ -31,7 +31,8 @@ five-step scale of [STATUS.md](docs/STATUS.md), 20 % a step. The images are draw
 `tools/make_status_images.py`.</sub>
 
 **Not yet playable at a good frame rate.** On a new game the intro, menus and prologue render with
-whole characters, at **7.7 fps median** in the world (6.7 with interiors lit). Menus run at 30 fps.
+whole characters, at **5.9-6.9 fps median** in the world with interiors lit (tonight's runs; best
+single run 7.7 without interior light). Menus run at 30 fps.
 
 ## Compatibility
 
@@ -44,7 +45,8 @@ whole characters, at **7.7 fps median** in the world (6.7 with interiors lit). M
 | First boat mission | Boats float with fxceless's fix; mission not yet replayed with it |
 | Ray tracing | The game's own builder runs, then the game crashes: off |
 | AMD FSR 3.1 | **FSR 3.1.6** upscales 720p → 1080p in Series S mode (`--console series-s`) |
-| Mouths | Do not move when characters talk |
+| Mouths | Move; trail the voice at low fps (`VICTORY_AUDIO_DELAY_MS` delays the sound to match, off) |
+| Hair and faces | Soft: the game's 1440p → 4K temporal upscaler needs a higher frame rate |
 
 ## Input
 

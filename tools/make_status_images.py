@@ -36,7 +36,8 @@ AREAS = [
     ('Real ray tracing', 60.0, 'runs, title crashes'),
     ('Walls and surfaces textured', 60.0, '15 % fewer textures waiting'),
     ('Clothes changes (bakes)', 60.0, 'bake sources first, not seen yet'),
-    ('Mouth animation', 80.0, 'moves; choppy at low fps'),
+    ('Mouth animation', 80.0, 'moves; trails the voice at low fps'),
+    ('Black face / eyes (POPS)', 60.0, 'right in the isolated run, not yet on'),
 ]
 
 

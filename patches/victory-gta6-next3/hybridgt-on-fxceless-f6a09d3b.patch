@@ -17961,6 +17961,597 @@ index 00000000..4e0b3d54
 +  cG=ASatH2(nG+AGtZeroH2(dit-rG)*AH2_(1.0/1023.0));
 +  cB=ASatH2(nB+AGtZeroH2(dit-rB)*AH2_(1.0/1023.0));}
 +#endif
+diff --git a/crates/victory-hle/src/audio_delay.rs b/crates/victory-hle/src/audio_delay.rs
+new file mode 100644
+index 00000000..b416fabb
+--- /dev/null
++++ b/crates/victory-hle/src/audio_delay.rs
+@@ -0,0 +1,548 @@
++//! HybridGt: `VICTORY_AUDIO_DELAY_MS=<ms>` holds back everything the title
++//! plays by that long, so speech meets the mouths that say it.
++//!
++//! The title picks a face's mouth shape for the moment its voice is at when
++//! a frame begins, and sends the voice to the speakers at once; the frame
++//! reaches the screen only after the title's own work, our preparing of its
++//! submissions and the card's drawing (three stages of ~170 ms each at the
++//! world's present frame rate, against ~33 ms on the console). The mouths
++//! then trail the words by that much. A delay line on the mastering voice
++//! (the last stage of XAudio2's graph, where the title's sound leaves) makes
++//! the sound late by the same amount instead. Off unless set; at most 2 s.
++//!
++//! The title gets XAudio2 from the host (`xaudio2_9.dll`, see
++//! [`crate::HostPolicy`]); its `XAudio2Create` import is bound to
++//! [`xaudio2_create`], which hooks `IXAudio2::CreateMasteringVoice` to add
++//! the delay effect (an `IXAPO` of ours) to the end of the voice's effect
++//! chain.
++
++use std::ffi::c_void;
++use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
++use std::sync::{Mutex, OnceLock};
++
++type HRESULT = i32;
++const S_OK: HRESULT = 0;
++const E_NOINTERFACE: HRESULT = 0x8000_4002_u32 as i32;
++const E_POINTER: HRESULT = 0x8000_4003_u32 as i32;
++const E_OUTOFMEMORY: HRESULT = 0x8007_000E_u32 as i32;
++
++/// The delay asked for, in milliseconds (0: off).
++pub(crate) fn delay_ms() -> u32 {
++    static MS: OnceLock<u32> = OnceLock::new();
++    *MS.get_or_init(|| {
++        std::env::var("VICTORY_AUDIO_DELAY_MS")
++            .ok()
++            .and_then(|v| v.trim().parse::<u32>().ok())
++            .unwrap_or(0)
++            .min(2000)
++    })
++}
++
++#[repr(C)]
++#[derive(Clone, Copy, PartialEq, Eq)]
++struct Guid(u32, u16, u16, [u8; 8]);
++
++const IID_IUNKNOWN: Guid = Guid(0, 0, 0, [0xC0, 0, 0, 0, 0, 0, 0, 0x46]);
++/// `IXAPO`, {A410B984-9839-4819-A0BE-2856AE6B3ADB}.
++const IID_IXAPO: Guid = Guid(0xA410_B984, 0x9839, 0x4819, [0xA0, 0xBE, 0x28, 0x56, 0xAE, 0x6B, 0x3A, 0xDB]);
++/// Our effect's class (made up for this layer).
++const CLSID_DELAY: Guid = Guid(0x6879_6264, 0x6164, 0x6c79, [0x48, 0x79, 0x62, 0x72, 0x69, 0x64, 0x47, 0x74]);
++
++/// `XAUDIO2_EFFECT_DESCRIPTOR` (xaudio2.h packs its structures to 1 byte).
++#[repr(C, packed)]
++#[derive(Clone, Copy)]
++struct EffectDescriptor {
++    effect: *mut c_void,
++    initial_state: i32,
++    output_channels: u32,
++}
++
++/// `XAUDIO2_EFFECT_CHAIN`.
++#[repr(C, packed)]
++struct EffectChain {
++    count: u32,
++    descriptors: *const EffectDescriptor,
++}
++
++/// `XAUDIO2_VOICE_DETAILS`.
++#[repr(C, packed)]
++#[derive(Default)]
++struct VoiceDetails {
++    creation_flags: u32,
++    active_flags: u32,
++    input_channels: u32,
++    input_sample_rate: u32,
++}
++
++/// `WAVEFORMATEX`.
++#[repr(C, packed)]
++struct WaveFormat {
++    format_tag: u16,
++    channels: u16,
++    samples_per_sec: u32,
++    avg_bytes_per_sec: u32,
++    block_align: u16,
++    bits_per_sample: u16,
++    size: u16,
++}
++
++/// `XAPO_LOCKFORPROCESS_BUFFER_PARAMETERS`.
++#[repr(C, packed)]
++struct LockParameters {
++    format: *const WaveFormat,
++    max_frame_count: u32,
++}
++
++/// `XAPO_PROCESS_BUFFER_PARAMETERS`.
++#[repr(C, packed)]
++struct ProcessParameters {
++    buffer: *mut c_void,
++    flags: u32,
++    valid_frame_count: u32,
++}
++
++const XAPO_BUFFER_SILENT: u32 = 0;
++const XAPO_BUFFER_VALID: u32 = 1;
++
++/// `XAPO_REGISTRATION_PROPERTIES`.
++#[repr(C, packed)]
++struct Registration {
++    clsid: Guid,
++    friendly_name: [u16; 256],
++    copyright: [u16; 256],
++    major: u32,
++    minor: u32,
++    flags: u32,
++    min_input_buffers: u32,
++    max_input_buffers: u32,
++    min_output_buffers: u32,
++    max_output_buffers: u32,
++}
++
++/// Channels, frame rate and bits must match; in place, one buffer each way.
++const XAPO_FLAGS: u32 = 0x1 | 0x2 | 0x4 | 0x8 | 0x10 | 0x20;
++
++#[repr(C)]
++struct ApoVtbl {
++    query_interface: unsafe extern "system" fn(*mut Apo, *const Guid, *mut *mut c_void) -> HRESULT,
++    add_ref: unsafe extern "system" fn(*mut Apo) -> u32,
++    release: unsafe extern "system" fn(*mut Apo) -> u32,
++    get_registration_properties: unsafe extern "system" fn(*mut Apo, *mut *mut Registration) -> HRESULT,
++    is_input_format_supported:
++        unsafe extern "system" fn(*mut Apo, *const WaveFormat, *const WaveFormat, *mut *mut WaveFormat) -> HRESULT,
++    is_output_format_supported:
++        unsafe extern "system" fn(*mut Apo, *const WaveFormat, *const WaveFormat, *mut *mut WaveFormat) -> HRESULT,
++    initialize: unsafe extern "system" fn(*mut Apo, *const c_void, u32) -> HRESULT,
++    reset: unsafe extern "system" fn(*mut Apo),
++    lock_for_process:
++        unsafe extern "system" fn(*mut Apo, u32, *const LockParameters, u32, *const LockParameters) -> HRESULT,
++    unlock_for_process: unsafe extern "system" fn(*mut Apo),
++    process: unsafe extern "system" fn(*mut Apo, u32, *const ProcessParameters, u32, *mut ProcessParameters, i32),
++    calc_input_frames: unsafe extern "system" fn(*mut Apo, u32) -> u32,
++    calc_output_frames: unsafe extern "system" fn(*mut Apo, u32) -> u32,
++}
++
++/// The delay line, in the samples of the locked format.
++struct Line {
++    ring: Vec<f32>,
++    at: usize,
++}
++
++impl Line {
++    /// Puts `samples` in and takes out what went in the line's length ago,
++    /// in place. With no input (`None`), silence goes in.
++    fn run(&mut self, samples: &mut [f32], silent: bool) {
++        if self.ring.is_empty() {
++            return;
++        }
++        for s in samples.iter_mut() {
++            let input = if silent { 0.0 } else { *s };
++            *s = self.ring[self.at];
++            self.ring[self.at] = input;
++            self.at += 1;
++            if self.at == self.ring.len() {
++                self.at = 0;
++            }
++        }
++    }
++}
++
++#[repr(C)]
++struct Apo {
++    vtbl: *const ApoVtbl,
++    refs: AtomicU32,
++    line: Mutex<Line>,
++}
++
++static APO_VTBL: ApoVtbl = ApoVtbl {
++    query_interface: apo_query_interface,
++    add_ref: apo_add_ref,
++    release: apo_release,
++    get_registration_properties: apo_registration,
++    is_input_format_supported: apo_format_supported,
++    is_output_format_supported: apo_format_supported,
++    initialize: apo_initialize,
++    reset: apo_reset,
++    lock_for_process: apo_lock,
++    unlock_for_process: apo_unlock,
++    process: apo_process,
++    calc_input_frames: apo_frames,
++    calc_output_frames: apo_frames,
++};
++
++fn new_apo() -> *mut Apo {
++    Box::into_raw(Box::new(Apo {
++        vtbl: &APO_VTBL,
++        refs: AtomicU32::new(1),
++        line: Mutex::new(Line { ring: Vec::new(), at: 0 }),
++    }))
++}
++
++unsafe extern "system" fn apo_query_interface(this: *mut Apo, iid: *const Guid, out: *mut *mut c_void) -> HRESULT {
++    if out.is_null() || iid.is_null() {
++        return E_POINTER;
++    }
++    // SAFETY: pointers checked; `this` is a live `Apo`.
++    unsafe {
++        let iid = *iid;
++        if iid == IID_IUNKNOWN || iid == IID_IXAPO {
++            apo_add_ref(this);
++            *out = this.cast();
++            S_OK
++        } else {
++            *out = std::ptr::null_mut();
++            E_NOINTERFACE
++        }
++    }
++}
++
++unsafe extern "system" fn apo_add_ref(this: *mut Apo) -> u32 {
++    // SAFETY: a live `Apo`.
++    unsafe { (*this).refs.fetch_add(1, Ordering::AcqRel) + 1 }
++}
++
++unsafe extern "system" fn apo_release(this: *mut Apo) -> u32 {
++    // SAFETY: a live `Apo`; the last reference frees it.
++    unsafe {
++        let left = (*this).refs.fetch_sub(1, Ordering::AcqRel) - 1;
++        if left == 0 {
++            drop(Box::from_raw(this));
++        }
++        left
++    }
++}
++
++/// `CoTaskMemAlloc`, which XAudio2 frees what the registration properties
++/// are given in with (`XAPOFree`).
++fn task_alloc(size: usize) -> *mut c_void {
++    static ALLOC: OnceLock<usize> = OnceLock::new();
++    let f = *ALLOC.get_or_init(|| crate::host::function("ole32.dll", "CoTaskMemAlloc").unwrap_or(0));
++    if f == 0 {
++        return std::ptr::null_mut();
++    }
++    // SAFETY: ole32's `CoTaskMemAlloc(SIZE_T) -> LPVOID`.
++    let alloc: unsafe extern "system" fn(usize) -> *mut c_void = unsafe { std::mem::transmute(f) };
++    unsafe { alloc(size) }
++}
++
++unsafe extern "system" fn apo_registration(_: *mut Apo, out: *mut *mut Registration) -> HRESULT {
++    if out.is_null() {
++        return E_POINTER;
++    }
++    let p = task_alloc(std::mem::size_of::<Registration>()).cast::<Registration>();
++    if p.is_null() {
++        return E_OUTOFMEMORY;
++    }
++    let mut name = [0u16; 256];
++    for (i, c) in "HybridGt audio delay".encode_utf16().enumerate() {
++        name[i] = c;
++    }
++    // SAFETY: freshly allocated, of the structure's size; `out` checked.
++    unsafe {
++        p.write_unaligned(Registration {
++            clsid: CLSID_DELAY,
++            friendly_name: name,
++            copyright: [0; 256],
++            major: 1,
++            minor: 0,
++            flags: XAPO_FLAGS,
++            min_input_buffers: 1,
++            max_input_buffers: 1,
++            min_output_buffers: 1,
++            max_output_buffers: 1,
++        });
++        *out = p;
++    }
++    S_OK
++}
++
++/// XAudio2's graph is 32-bit float throughout, and the delay takes any
++/// channel count and rate: every format offered is taken as it is.
++unsafe extern "system" fn apo_format_supported(
++    _: *mut Apo,
++    _other: *const WaveFormat,
++    _requested: *const WaveFormat,
++    _supported: *mut *mut WaveFormat,
++) -> HRESULT {
++    S_OK
++}
++
++unsafe extern "system" fn apo_initialize(_: *mut Apo, _: *const c_void, _: u32) -> HRESULT {
++    S_OK
++}
++
++unsafe extern "system" fn apo_reset(this: *mut Apo) {
++    // SAFETY: a live `Apo`.
++    let mut line = unsafe { &*this }.line.lock().unwrap_or_else(|e| e.into_inner());
++    line.ring.iter_mut().for_each(|s| *s = 0.0);
++    line.at = 0;
++}
++
++unsafe extern "system" fn apo_lock(
++    this: *mut Apo,
++    inputs: u32,
++    input: *const LockParameters,
++    _outputs: u32,
++    _output: *const LockParameters,
++) -> HRESULT {
++    if inputs != 1 || input.is_null() {
++        return E_POINTER;
++    }
++    // SAFETY: XAudio2 hands one locked input with its format.
++    let (channels, rate, bits) = unsafe {
++        let format = (*input).format;
++        if format.is_null() {
++            return E_POINTER;
++        }
++        let f = &*format;
++        ({ f.channels } as usize, { f.samples_per_sec } as usize, { f.bits_per_sample })
++    };
++    let samples = if bits == 32 { channels * rate * delay_ms() as usize / 1000 } else { 0 };
++    let mut line = unsafe { &*this }.line.lock().unwrap_or_else(|e| e.into_inner());
++    line.ring = vec![0.0; samples];
++    line.at = 0;
++    tracing::info!(channels, rate, ms = delay_ms(), "the title's sound leaves through a delay (VICTORY_AUDIO_DELAY_MS)");
++    S_OK
++}
++
++unsafe extern "system" fn apo_unlock(_: *mut Apo) {}
++
++unsafe extern "system" fn apo_process(
++    this: *mut Apo,
++    inputs: u32,
++    input: *const ProcessParameters,
++    outputs: u32,
++    output: *mut ProcessParameters,
++    enabled: i32,
++) {
++    if inputs != 1 || outputs != 1 || input.is_null() || output.is_null() {
++        return;
++    }
++    // SAFETY: in place: one input and one output buffer, the same memory, of
++    // `valid_frame_count` frames of the locked format (32-bit float).
++    unsafe {
++        let (buffer, flags, frames) = ((*input).buffer, (*input).flags, (*input).valid_frame_count);
++        (*output).valid_frame_count = frames;
++        (*output).flags = flags;
++        if enabled == 0 || buffer.is_null() {
++            return;
++        }
++        let mut line = (*this).line.lock().unwrap_or_else(|e| e.into_inner());
++        if line.ring.is_empty() {
++            return;
++        }
++        // The buffer holds `frames` frames of every channel.
++        let per_frame = SAMPLES_PER_FRAME.load(Ordering::Relaxed).max(1);
++        let samples = std::slice::from_raw_parts_mut(buffer.cast::<f32>(), frames as usize * per_frame);
++        line.run(samples, flags == XAPO_BUFFER_SILENT);
++        (*output).flags = XAPO_BUFFER_VALID;
++    }
++}
++
++unsafe extern "system" fn apo_frames(_: *mut Apo, frames: u32) -> u32 {
++    frames
++}
++
++/// Channels of the mastering voice the effect sits on (samples a frame).
++static SAMPLES_PER_FRAME: AtomicUsize = AtomicUsize::new(0);
++
++// The hooks.
++
++/// The host's `XAudio2Create`.
++static REAL_CREATE: AtomicUsize = AtomicUsize::new(0);
++/// The host's `IXAudio2::CreateMasteringVoice`.
++static REAL_MASTERING: AtomicUsize = AtomicUsize::new(0);
++
++/// What the title's `XAudio2Create` import is bound to instead of `real`
++/// (the host's), with the delay on.
++pub(crate) fn bind_create(real: usize) -> usize {
++    REAL_CREATE.store(real, Ordering::Release);
++    xaudio2_create as *const () as usize
++}
++
++type Create = unsafe extern "system" fn(*mut *mut c_void, u32, u32) -> HRESULT;
++type CreateMastering = unsafe extern "system" fn(*mut c_void, *mut *mut c_void, u32, u32, u32, *const u16, *const EffectChain, u32) -> HRESULT;
++
++/// `IXAudio2::CreateMasteringVoice` is the 8th entry of its table.
++const MASTERING_SLOT: usize = 7;
++
++unsafe extern "system" fn xaudio2_create(out: *mut *mut c_void, flags: u32, processor: u32) -> HRESULT {
++    // SAFETY: the host's `XAudio2Create`, called as the title called ours.
++    let real: Create = unsafe { std::mem::transmute(REAL_CREATE.load(Ordering::Acquire)) };
++    let hr = unsafe { real(out, flags, processor) };
++    if hr >= 0 && !out.is_null() {
++        // SAFETY: a new `IXAudio2`.
++        unsafe { hook_engine(*out) };
++    }
++    hr
++}
++
++/// Replaces `CreateMasteringVoice` in the engine's (shared) method table.
++unsafe fn hook_engine(engine: *mut c_void) {
++    use windows_sys::Win32::System::Memory::{PAGE_PROTECTION_FLAGS, PAGE_READWRITE, VirtualProtect};
++    if engine.is_null() {
++        return;
++    }
++    // SAFETY: a COM object: its first word is its method table.
++    unsafe {
++        let table = *engine.cast::<*mut usize>();
++        let slot = table.add(MASTERING_SLOT);
++        let ours = create_mastering as *const () as usize;
++        if *slot == ours {
++            return;
++        }
++        let mut old: PAGE_PROTECTION_FLAGS = 0;
++        if VirtualProtect(slot.cast(), 8, PAGE_READWRITE, &mut old) == 0 {
++            tracing::warn!("VICTORY_AUDIO_DELAY_MS: XAudio2's method table could not be changed; no delay");
++            return;
++        }
++        REAL_MASTERING.store(*slot, Ordering::Release);
++        *slot = ours;
++        let mut back = 0;
++        VirtualProtect(slot.cast(), 8, old, &mut back);
++    }
++}
++
++unsafe extern "system" fn create_mastering(
++    engine: *mut c_void,
++    voice: *mut *mut c_void,
++    channels: u32,
++    rate: u32,
++    flags: u32,
++    device: *const u16,
++    chain: *const EffectChain,
++    category: u32,
++) -> HRESULT {
++    // SAFETY: the host's method, called with the title's arguments.
++    let real: CreateMastering = unsafe { std::mem::transmute(REAL_MASTERING.load(Ordering::Acquire)) };
++    let hr = unsafe { real(engine, voice, channels, rate, flags, device, chain, category) };
++    if hr < 0 || voice.is_null() {
++        return hr;
++    }
++    // SAFETY: a new mastering voice; `chain` is the title's or null.
++    unsafe { add_delay(*voice, chain) };
++    hr
++}
++
++/// The last delay effect's fate: 1 taken, 2 refused (0: none yet).
++static ADDED: AtomicU32 = AtomicU32::new(0);
++
++/// `IXAudio2Voice` methods (no `IUnknown`): `GetVoiceDetails` is the 1st,
++/// `SetEffectChain` the 3rd.
++unsafe fn add_delay(voice: *mut c_void, chain: *const EffectChain) {
++    if voice.is_null() {
++        return;
++    }
++    // SAFETY: a live mastering voice and the title's effect chain.
++    unsafe {
++        let table = *voice.cast::<*const usize>();
++        let details: unsafe extern "system" fn(*mut c_void, *mut VoiceDetails) = std::mem::transmute(*table);
++        let set_chain: unsafe extern "system" fn(*mut c_void, *const EffectChain) -> HRESULT =
++            std::mem::transmute(*table.add(2));
++        let mut d = VoiceDetails::default();
++        details(voice, &mut d);
++        let mut descriptors: Vec<EffectDescriptor> = Vec::new();
++        if !chain.is_null() && { (*chain).count } > 0 && !{ (*chain).descriptors }.is_null() {
++            descriptors.extend_from_slice(std::slice::from_raw_parts((*chain).descriptors, (*chain).count as usize));
++        }
++        let channels = descriptors.last().map_or(d.input_channels, |e| e.output_channels);
++        SAMPLES_PER_FRAME.store(channels as usize, Ordering::Relaxed);
++        let apo = new_apo();
++        descriptors.push(EffectDescriptor {
++            effect: apo.cast(),
++            initial_state: 1,
++            output_channels: channels,
++        });
++        let ours = EffectChain {
++            count: descriptors.len() as u32,
++            descriptors: descriptors.as_ptr(),
++        };
++        let hr = set_chain(voice, &ours);
++        // The voice holds its own reference.
++        apo_release(apo);
++        ADDED.store(if hr < 0 { 2 } else { 1 }, Ordering::Release);
++        if hr < 0 {
++            tracing::warn!(hr = format!("{:#010x}", hr as u32), "VICTORY_AUDIO_DELAY_MS: the delay effect was refused");
++        } else {
++            tracing::info!(channels, rate = { d.input_sample_rate }, ms = delay_ms(), "a delay added to the title's mastering voice");
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn the_line_gives_back_what_went_in_its_length_ago() {
++        let mut line = Line { ring: vec![0.0; 3], at: 0 };
++        let mut a = [1.0, 2.0];
++        line.run(&mut a, false);
++        assert_eq!(a, [0.0, 0.0]);
++        let mut b = [3.0, 4.0, 5.0];
++        line.run(&mut b, false);
++        assert_eq!(b, [0.0, 1.0, 2.0]);
++        let mut c = [9.0, 9.0, 9.0];
++        line.run(&mut c, true);
++        assert_eq!(c, [3.0, 4.0, 5.0]);
++    }
++
++    /// On this PC's XAudio2: the hooked engine makes a mastering voice that
++    /// takes the delay effect, and the voice is released cleanly.
++    #[test]
++    #[ignore = "needs an audio device"]
++    fn a_mastering_voice_takes_the_delay() {
++        // SAFETY: the host's XAudio2, used as its header documents.
++        unsafe {
++            std::env::set_var("VICTORY_AUDIO_DELAY_MS", "200");
++            let real = crate::host::function("xaudio2_9.dll", "XAudio2Create").expect("xaudio2_9.dll");
++            let create: Create = std::mem::transmute(bind_create(real));
++            let mut engine = std::ptr::null_mut();
++            assert_eq!(create(&mut engine, 0, 1), S_OK);
++            let table = *engine.cast::<*const usize>();
++            let mastering: CreateMastering = std::mem::transmute(*table.add(MASTERING_SLOT));
++            let mut voice = std::ptr::null_mut();
++            let hr = mastering(engine, &mut voice, 0, 0, 0, std::ptr::null(), std::ptr::null(), 6);
++            assert!(hr >= 0, "no mastering voice: {:#010x}", hr as u32);
++            assert_eq!(ADDED.load(Ordering::Acquire), 1, "the delay effect was refused");
++            // Let the engine run the effect a little.
++            std::thread::sleep(std::time::Duration::from_millis(300));
++            let vt = *voice.cast::<*const usize>();
++            let destroy: unsafe extern "system" fn(*mut c_void) = std::mem::transmute(*vt.add(18));
++            destroy(voice);
++            let release: unsafe extern "system" fn(*mut c_void) -> u32 = std::mem::transmute(*table.add(2));
++            release(engine);
++        }
++    }
++
++    #[test]
++    fn the_structures_have_xaudio2s_sizes() {
++        assert_eq!(std::mem::size_of::<EffectDescriptor>(), 16);
++        assert_eq!(std::mem::size_of::<EffectChain>(), 12);
++        assert_eq!(std::mem::size_of::<VoiceDetails>(), 16);
++        assert_eq!(std::mem::size_of::<WaveFormat>(), 18);
++        assert_eq!(std::mem::size_of::<LockParameters>(), 12);
++        assert_eq!(std::mem::size_of::<ProcessParameters>(), 16);
++        assert_eq!(std::mem::size_of::<Registration>(), 16 + 1024 + 28);
++    }
++}
+diff --git a/crates/victory-hle/src/host.rs b/crates/victory-hle/src/host.rs
+index 8a2a8750..b8872b38 100644
+--- a/crates/victory-hle/src/host.rs
++++ b/crates/victory-hle/src/host.rs
+@@ -78,7 +78,18 @@ impl HostPolicy {
+         if !self.allows(dll) {
+             return None;
+         }
+-        imp::resolve(dll, symbol)
++        let found = imp::resolve(dll, symbol)?;
++        // HybridGt: the title's sound held back to meet the frames
++        // (`crate::audio_delay`), with VICTORY_AUDIO_DELAY_MS.
++        #[cfg(windows)]
++        if crate::audio_delay::delay_ms() > 0
++            && dll.eq_ignore_ascii_case("xaudio2_9.dll")
++            && (matches!(symbol, ImportSymbol::Ordinal(1))
++                || matches!(symbol, ImportSymbol::Name { name, .. } if name == "XAudio2Create"))
++        {
++            return Some(crate::audio_delay::bind_create(found));
++        }
++        Some(found)
+     }
+ }
+ 
+diff --git a/crates/victory-hle/src/lib.rs b/crates/victory-hle/src/lib.rs
+index ed5b6321..a6b4c41d 100644
+--- a/crates/victory-hle/src/lib.rs
++++ b/crates/victory-hle/src/lib.rs
+@@ -11,6 +11,8 @@
+ //! Resolution order for every import: an implementation in [`modules`],
+ //! then the host if [`HostPolicy`] allows that DLL, then `Missing`.
+ 
++#[cfg(windows)]
++mod audio_delay;
+ mod host;
+ pub mod modules;
+ mod registry;
 diff --git a/crates/victory-hle/src/modules/d3d12x.rs b/crates/victory-hle/src/modules/d3d12x.rs
 index abda4a65..ff2f7b3a 100644
 --- a/crates/victory-hle/src/modules/d3d12x.rs
