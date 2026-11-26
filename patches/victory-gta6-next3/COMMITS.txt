@@ -1,3 +1,6 @@
+041be1b9 Repository policy: FSR 1 headers as .hlsli; host.rs and lower.rs under the 512 KiB limit (frame meter, presenting and card-copy methods to host/extra.rs; lowering analyses, signature layout a
+0d9d5f68 Shaders: mask operations on a joined number, read as data, are its number
+04533f0a Shaders and GPU: the address of a view picked at a computed index comes from the host's table after the strides (after VIctory-7900XTX 027e367a, reimplemented on this tree): 4 of the 5 ray-tr
 9a60506d Shaders: pixel shaders that order their pixels themselves (POPS) get rasterizer-ordered views for their writable textures (VICTORY_POPS=rov, off): the 10 ped tint cut-out shaders validate and
 05dd46a5 Shaders: wave-wide branches in thread groups of several console waves are decided by the whole group (VICTORY_GROUP_WIDE=1, off until a game run): the last 6 compute programs NVIDIA refused f
 f3b013d0 FidelityFX: the title's upscale context flags said by name; AMD's runtime's messages go to our log (not to the title's callback); VICTORY_FFX_DEBUG=1 turns on its checks, VICTORY_FFX_ADD_FLAG

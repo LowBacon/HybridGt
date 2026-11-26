@@ -23,7 +23,7 @@ game**.
 | Walls and surfaces missing or low quality | `●●●○○` ③ | The card is at its memory line (10.5 of 10.75 GB): 18,000-25,000 textures wait for room, so some surfaces are drawn untextured or at low detail. Textures are never let go while the game's texture table points at them. `VICTORY_CARD_WINDOWS_MB=512` (on): textures waiting 12,000 -> 10,200, 800 MB more free on the card, fps the same. Next: free idle textures safely. Textures on screen first (`VICTORY_TEXTURE_MARKS=1`, built and tested on the card, off): shaders mark the texture slots they sample, a copy queue reads the map back every half second in 2.4 ms, and marked textures are uploaded first. Its first game try read the map through the bus and stalled loading; fixed, not yet run in game again |
 | Lucia's clothes don't change | `●●●○○` ③ | Characters' skins and clothes are "baked" by the game from source textures; the bakes run while those sources still wait for upload, so a bake can keep the old look. `VICTORY_BAKE_SOURCES=full` (on): each bake's sources are uploaded first (40 textures, 48 MB, in the test run; none skipped). Not yet seen in game at an outfit change |
 | Lag spikes | `●●○○○` ② | Worst frames 1.3-2.8 s, when textures and pipelines arrive |
-| Ray-traced shadow programs (5) | `●●○○○` ② | A descriptor read as plain data |
+| Ray-traced shadow programs (5) | `●●●○○` ③ | All 5 translate, validate and get pipelines: the address of a view picked at a computed index comes from a host table (after VIctory-7900XTX 027e367a, reimplemented), and mask operations on a joined number read as data (VIctory-7900XTX d1f883ec). Not yet seen in game |
 | Ped tint cut-out pixel shaders (10) | `●●●○○` ③ | They order overlapping pixels themselves (POPS). `VICTORY_POPS=rov` (off until seen in game) translates them with rasterizer-ordered views, so the card keeps that order: all 10 validate and get pipelines on the RTX 4070 Ti. `VICTORY_POPS=1` (no order) made characters' eyes glow |
 | Mouth animation | `●●○○○` ② | The head's GPU programs (`ped_standard_head_cs`) all translate; four run in game (sticky lips, blend-shape mappings, the network's output extract, normals). No GPU program evaluates the face network: the game's CPU code does, and the extract's result stayed the same over ~1,500 frames of talking. So the cause is on the CPU side: the face animation is not advancing (speech timing or facial animation data). Next: trace what the CPU writes before the extract |
 
@@ -35,3 +35,10 @@ World median on the RTX 4070 Ti, each step measured:
 
 More: [KNOWN_FAILURES.md](KNOWN_FAILURES.md) · [MASTER_STATUS.md](MASTER_STATUS.md) ·
 [ROOT_CAUSE_ANALYSIS.md](ROOT_CAUSE_ANALYSIS.md)
+
+## Tests
+
+Every test of the runtime's workspace passes (673, 0 failed; the GPU tests on the RTX 4070 Ti), and so does the
+repository's asset policy (`cargo xtask policy`). A full translation of the title's 26,084 shader programs
+with validation and pipeline creation on the card: all translate; compute 2,682 of 2,682 pipelines; no
+program lost a pipeline or its validation against the run before.
