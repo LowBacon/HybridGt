@@ -94,6 +94,47 @@ def chart(areas):
     return '\n'.join(out)
 
 
+# World frame rate, median of a run's world frames (3,000+ draws), RTX 4070 Ti, in the order measured.
+# (label under the point, fps). Measured runs only: see docs/PERFORMANCE_OPTIMIZATION.md.
+FPS_HISTORY = [
+    ('start', 3.0),
+    ('GPU copies', 3.7),
+    ('remap locks', 4.8),
+    ('lock-free', 5.8),
+    ('fxceless', 6.7),
+    ('0x1c8 off', 7.7),
+    ('wave-wide', 6.8),
+    ('asset room', 6.7),
+]
+
+
+def fps_chart(points, goals=(10, 30)):
+    w, h, left, bottom, top = 860, 300, 56, 40, 30
+    plot_w, plot_h = w - left - 30, h - top - bottom
+    most = max(goals[-1], max(p[1] for p in points))
+    x = lambda i: left + plot_w * i / max(1, len(points) - 1)
+    y = lambda v: top + plot_h * (1 - v / most)
+    out = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}" role="img" aria-label="World frame rate over time">',
+           '<style>text{font-family:Segoe UI,Helvetica,Arial,sans-serif;font-size:12px;fill:#24292f}.t{font-size:16px;font-weight:600}'
+           '.n{fill:#57606a;font-size:11px}@media (prefers-color-scheme:dark){text{fill:#e6edf3}.n{fill:#9198a1}}</style>',
+           f'<rect width="{w}" height="{h}" rx="8" fill="none" stroke="#d0d7de"/>',
+           '<text x="16" y="22" class="t">World frame rate (median fps, RTX 4070 Ti)</text>']
+    for g in goals:
+        out.append(f'<line x1="{left}" x2="{left + plot_w}" y1="{y(g):.1f}" y2="{y(g):.1f}" stroke="#d9822b" stroke-dasharray="6 4"/>')
+        out.append(f'<text x="{left + plot_w - 70}" y="{y(g) - 5:.1f}" class="n">goal {g} fps</text>')
+    for v in range(0, int(most) + 1, 5):
+        out.append(f'<text x="{left - 28}" y="{y(v) + 4:.1f}" class="n">{v}</text>')
+        out.append(f'<line x1="{left}" x2="{left + plot_w}" y1="{y(v):.1f}" y2="{y(v):.1f}" stroke="#d0d7de" stroke-opacity=".5"/>')
+    path = ' '.join(f'{"M" if i == 0 else "L"}{x(i):.1f},{y(v):.1f}' for i, (_, v) in enumerate(points))
+    out.append(f'<path d="{path}" fill="none" stroke="#2e9e4f" stroke-width="2.5"/>')
+    for i, (label, v) in enumerate(points):
+        out.append(f'<circle cx="{x(i):.1f}" cy="{y(v):.1f}" r="4" fill="#2e9e4f"/>')
+        out.append(f'<text x="{x(i) - 10:.1f}" y="{y(v) - 9:.1f}">{v}</text>')
+        out.append(f'<text x="{x(i) - 22:.1f}" y="{h - 14}" class="n">{label}</text>')
+    out.append('</svg>\n')
+    return '\n'.join(out)
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     for name, label, value, colour in BADGES:
@@ -101,7 +142,9 @@ def main():
             f.write(badge(label, value, colour))
     with open(os.path.join(OUT, 'progress.svg'), 'w', encoding='utf8') as f:
         f.write(chart(AREAS))
-    print('wrote', len(BADGES), 'badges and progress.svg to', os.path.normpath(OUT))
+    with open(os.path.join(OUT, 'fps-history.svg'), 'w', encoding='utf8') as f:
+        f.write(fps_chart(FPS_HISTORY))
+    print('wrote', len(BADGES), 'badges, progress.svg and fps-history.svg to', os.path.normpath(OUT))
 
 
 main()

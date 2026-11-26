@@ -23,6 +23,8 @@ virtual machine. HybridGt carries the patch on top of that fork, plus its own di
 
 [![progress](docs/img/progress.svg)](docs/STATUS.md)
 
+[![world frame rate over time](docs/img/fps-history.svg)](docs/PERFORMANCE_OPTIMIZATION.md)
+
 <sub>* Measured on one PC (Windows 11, RTX 4070 Ti 12 GB, Ryzen 7 5800X3D, 32 GB RAM). Percentages
 are measured ratios where one exists (programs translated, frames a second); otherwise the
 five-step scale of [STATUS.md](docs/STATUS.md), 20 % a step. The images are drawn by

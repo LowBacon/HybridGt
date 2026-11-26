@@ -1392,7 +1392,7 @@ index 2a51ff09..bd5273dd 100644
  
  /// Whether [`sync_heaps`] hands a changed page's records to the host heap
 diff --git a/crates/victory-gpu/src/descriptor/host.rs b/crates/victory-gpu/src/descriptor/host.rs
-index 991c399c..0e34b7cd 100644
+index 991c399c..03e11120 100644
 --- a/crates/victory-gpu/src/descriptor/host.rs
 +++ b/crates/victory-gpu/src/descriptor/host.rs
 @@ -763,6 +763,14 @@ impl TextureQueue {
@@ -1447,18 +1447,22 @@ index 991c399c..0e34b7cd 100644
          // SAFETY: a live shader-visible heap.
          let gpu = unsafe { heap.GetGPUDescriptorHandleForHeapStart().ptr };
          GPU_RANGES.lock().unwrap_or_else(|e| e.into_inner()).push((
-@@ -1147,7 +1166,9 @@ impl HostHeap {
+@@ -1147,7 +1166,13 @@ impl HostHeap {
          ));
          let strides = (!sampler)
              .then(|| {
 -                let bytes = u64::from(victory_shader::emit::SLOT_STRIDES_COUNT) * 4;
 +                // The strides, then the views' title addresses
 +                // (`victory_shader::emit::VIEW_ADDRESSES`).
-+                let bytes = u64::from(victory_shader::emit::SLOT_STRIDES_BYTES);
++                let bytes = if victory_shader::emit::view_addresses() {
++                    u64::from(victory_shader::emit::SLOT_STRIDES_BYTES)
++                } else {
++                    u64::from(victory_shader::emit::SLOT_STRIDES_COUNT) * 4
++                };
                  let (buffer, data) = host.upload_buffer(bytes)?;
                  // SAFETY: the buffer's whole mapping; a live buffer.
                  let gpu = unsafe {
-@@ -1537,6 +1558,15 @@ impl HostHeap {
+@@ -1537,6 +1562,15 @@ impl HostHeap {
      /// has at `handle` now. Its host texture then exists (a slot keeps what
      /// it views), so bringing that texture up to date takes no memory of
      /// the card.
@@ -1474,7 +1478,7 @@ index 991c399c..0e34b7cd 100644
      pub(crate) fn texture_slot_made_from(&self, index: u32, handle: u64) -> bool {
          if index >= self.count {
              return false;
-@@ -1619,6 +1649,122 @@ impl HostHeap {
+@@ -1619,6 +1653,122 @@ impl HostHeap {
          slots.len()
      }
  
@@ -1597,7 +1601,7 @@ index 991c399c..0e34b7cd 100644
      /// Textures a pass asks again for their levels
      /// ([`HostHeap::texture_slots_waiting`]): the first ones given tiles
      /// may take the room the others were asked for, and an upload that
-@@ -1891,6 +2037,7 @@ impl HostHeap {
+@@ -1891,6 +2041,7 @@ impl HostHeap {
              // SAFETY: inside the mapping; shaders read it while we write (a
              // dword, either value is one the slot had).
              unsafe { (*data as *mut u32).add(index as usize).write_volatile(stride.unwrap_or(0)) };
@@ -1605,7 +1609,7 @@ index 991c399c..0e34b7cd 100644
          }
          let mut buffers = self.buffers.lock().unwrap_or_else(|e| e.into_inner());
          let was = if stride.is_some() {
-@@ -2246,7 +2393,13 @@ impl HostHeap {
+@@ -2246,7 +2397,13 @@ impl HostHeap {
          }
          let making = std::time::Instant::now();
          for &(index, handle) in &due {
@@ -1619,7 +1623,7 @@ index 991c399c..0e34b7cd 100644
          }
          super::SYNC_PARTS[2].fetch_add((making - walking).as_micros() as u64, std::sync::atomic::Ordering::Relaxed);
          super::SYNC_PARTS[3].fetch_add(making.elapsed().as_micros() as u64, std::sync::atomic::Ordering::Relaxed);
-@@ -2301,6 +2454,8 @@ impl HostHeap {
+@@ -2301,6 +2458,8 @@ impl HostHeap {
              && self.made_now[index as usize].load(std::sync::atomic::Ordering::Acquire) == key
              && let Some(view) = view_at(i, generation)
          {
@@ -1628,7 +1632,7 @@ index 991c399c..0e34b7cd 100644
              return Some(view);
          }
          let mut made = locked(&self.made, 4);
-@@ -2310,6 +2465,8 @@ impl HostHeap {
+@@ -2310,6 +2469,8 @@ impl HostHeap {
          let Some(view) = view else {
              // Not a view of ours (never written, or of a resource the
              // title released): nothing to read.
@@ -1637,7 +1641,7 @@ index 991c399c..0e34b7cd 100644
              if made[index as usize] != 0 {
                  #[cfg(feature = "diagnostics")]
                  held.slot_changed();
-@@ -2332,11 +2489,17 @@ impl HostHeap {
+@@ -2332,11 +2493,17 @@ impl HostHeap {
              // Views of other textures in the memory this one describes
              // are stale: their host slots read nothing from here on, and
              // let go of the host copies they held.
@@ -1655,7 +1659,7 @@ index 991c399c..0e34b7cd 100644
              // A view of a texture object that has no host copy yet waits
              // for it, as buffer views wait for a draw: the slot is made
              // when the texture is first used (`super::make_waiting`), or
-@@ -2359,11 +2522,17 @@ impl HostHeap {
+@@ -2359,11 +2526,17 @@ impl HostHeap {
                      .is_some_and(|old| same_placed_texture(&old, &view))
              {
                  KEPT_VIEWS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1673,7 +1677,7 @@ index 991c399c..0e34b7cd 100644
              let kept = if later {
                  None
              } else {
-@@ -2372,11 +2541,21 @@ impl HostHeap {
+@@ -2372,11 +2545,21 @@ impl HostHeap {
              if kept.is_none() && !self.sampler {
                  null_for(&view, self.cpu(index));
              }
@@ -1695,7 +1699,7 @@ index 991c399c..0e34b7cd 100644
          Some(view)
      }
  
-@@ -2463,7 +2642,7 @@ impl HostHeap {
+@@ -2463,7 +2646,7 @@ impl HostHeap {
                  })
                  .collect()
          };
@@ -1704,7 +1708,7 @@ index 991c399c..0e34b7cd 100644
          let mut forgotten = 0u64;
          for (i, &(slot, start)) in slots.iter().enumerate() {
              c[0] += 1;
-@@ -2485,10 +2664,21 @@ impl HostHeap {
+@@ -2485,10 +2668,21 @@ impl HostHeap {
                          View::Shader(texture, _) => Some(texture as crate::object::This),
                          _ => None,
                      })
@@ -1729,7 +1733,7 @@ index 991c399c..0e34b7cd 100644
                  continue;
              }
              if key != 0 {
-@@ -2513,7 +2703,8 @@ impl HostHeap {
+@@ -2513,7 +2707,8 @@ impl HostHeap {
               {} shown from a copy made level by level that has no level with tiles (reads zeros); {} made but null (the host \
               could not make the view); null: {} held for room, {} waiting for their memory, {} in the queue otherwise, {} in no \
               queue (about {} of those with their first page mapped now); the census took {} ms; placed views the host could \
@@ -1739,7 +1743,7 @@ index 991c399c..0e34b7cd 100644
              c[0],
              c[1],
              c[2],
-@@ -2526,6 +2717,9 @@ impl HostHeap {
+@@ -2526,6 +2721,9 @@ impl HostHeap {
              began.elapsed().as_millis(),
              PLACED_NOT_MADE[0].load(Relaxed),
              PLACED_NOT_MADE[1].load(Relaxed),
@@ -1749,7 +1753,7 @@ index 991c399c..0e34b7cd 100644
          );
      }
  
-@@ -2617,6 +2811,36 @@ fn element_size(desc: &D3D12_SHADER_RESOURCE_VIEW_DESC) -> u64 {
+@@ -2617,6 +2815,36 @@ fn element_size(desc: &D3D12_SHADER_RESOURCE_VIEW_DESC) -> u64 {
  
  /// The title memory a buffer shader or unordered access view reads: its
  /// address and length.
@@ -1770,7 +1774,7 @@ index 991c399c..0e34b7cd 100644
 +/// (`victory_shader::emit::VIEW_ADDRESSES`).
 +fn write_view_address(data: usize, index: u32, view: Option<&View>) {
 +    use victory_shader::emit::{SLOT_STRIDES_COUNT, VIEW_ADDRESSES};
-+    if index >= SLOT_STRIDES_COUNT {
++    if index >= SLOT_STRIDES_COUNT || !victory_shader::emit::view_addresses() {
 +        return;
 +    }
 +    let address = view.and_then(view_address).unwrap_or(0);
@@ -1786,7 +1790,7 @@ index 991c399c..0e34b7cd 100644
  pub(crate) fn buffer_range(view: &View) -> Option<(u64, u64)> {
      let (base, words): (u64, &[u32; 10]) = match view {
          View::Shader(r, Some(desc)) => (
-@@ -2746,11 +2970,71 @@ fn sync_tables() -> bool {
+@@ -2746,11 +2974,71 @@ fn sync_tables() -> bool {
  /// [`HostHeap::mirror_copied`] left to their draws (tables' slots).
  pub(crate) static COPIED_TABLED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
  
@@ -1859,7 +1863,7 @@ index 991c399c..0e34b7cd 100644
      const K: u64 = 0x9e37_79b9_7f4a_7c15;
      let mut h = K ^ record.len() as u64;
      let mut words = record.chunks_exact(8);
-@@ -4348,3 +4632,68 @@ mod own_copy_tests {
+@@ -4348,3 +4636,68 @@ mod own_copy_tests {
          assert_eq!(own_bytes_if(false, 8, base, 2, 4, 32, 32, true), None);
      }
  }
@@ -16338,7 +16342,7 @@ index 84e5b330..ded81190 100644
 +    }
 +}
 diff --git a/crates/victory-shader/src/emit/lower.rs b/crates/victory-shader/src/emit/lower.rs
-index 3eff07d8..384ca6a2 100644
+index 3eff07d8..3133358e 100644
 --- a/crates/victory-shader/src/emit/lower.rs
 +++ b/crates/victory-shader/src/emit/lower.rs
 @@ -17,9 +17,21 @@ use crate::gfx10::{Dpp, Fields, NULL, Operand};
@@ -17387,7 +17391,7 @@ index 3eff07d8..384ca6a2 100644
      fn compute_id(&mut self, name: &str, opcode: u32, c: u8) -> Val {
          let (entry, c) = (self.s.entry, self.s.m.i32(u32::from(c)));
          Val::I32(
-@@ -2775,6 +2271,45 @@ impl<'a> Lower<'a> {
+@@ -2775,6 +2271,48 @@ impl<'a> Lower<'a> {
          Some((lo, hi))
      }
  
@@ -17400,6 +17404,9 @@ index 3eff07d8..384ca6a2 100644
 +    // taken as whole descriptors (32-byte multiples), as `heap_index` does.
 +    fn heap_view_address(&mut self, site: Site) -> Result<Option<(V, V)>, Why> {
 +        use super::shader::{SLOT_STRIDES, SLOT_STRIDES_COUNT, VIEW_ADDRESSES};
++        if !super::shader::view_addresses() {
++            return Ok(None);
++        }
 +        let Some(a) = self.scalar.get(&site).copied() else {
 +            return Ok(None);
 +        };
@@ -17433,7 +17440,7 @@ index 3eff07d8..384ca6a2 100644
      /// `lo`, `hi` plus the instruction's byte offset `off`, with the carry.
      fn address_plus(&mut self, lo: V, hi: V, off: i32) -> (V, V) {
          if off == 0 {
-@@ -3112,9 +2647,96 @@ impl<'a> Lower<'a> {
+@@ -3112,9 +2650,96 @@ impl<'a> Lower<'a> {
          Ok(())
      }
  
@@ -17530,7 +17537,7 @@ index 3eff07d8..384ca6a2 100644
          let (lo, high) = match self.x.st.highs.get(&v) {
              Some(&lo) => (lo, true),
              None => (v, false),
-@@ -3126,6 +2748,16 @@ impl<'a> Lower<'a> {
+@@ -3126,6 +2751,16 @@ impl<'a> Lower<'a> {
          let made = self.def_block.get(&lo).copied();
          let whole = self.exchange.is_some() && !self.local && made.is_none_or(|b| self.all_lanes(b));
          if !self.x.st.active.contains(&lo) && !whole {
@@ -17547,7 +17554,7 @@ index 3eff07d8..384ca6a2 100644
              if self.exchange.is_some() && !self.local {
                  need(made.unwrap_or(0));
              }
-@@ -3187,6 +2819,9 @@ impl<'a> Lower<'a> {
+@@ -3187,6 +2822,9 @@ impl<'a> Lower<'a> {
                  let v = inst.read(Reg::V(reg)).ok_or("an unread operand")?;
                  self.i32_of(v)
              }
@@ -17557,7 +17564,7 @@ index 3eff07d8..384ca6a2 100644
              Operand::Const(c) => crate::resource::inline(c)
                  .map(|x| self.s.m.i32(x))
                  .ok_or("a special operand (vccz, execz, scc, lds_direct)"),
-@@ -3526,18 +3161,42 @@ impl<'a> Lower<'a> {
+@@ -3526,18 +3164,42 @@ impl<'a> Lower<'a> {
          self.s.m.select(c, exact, zero, r)
      }
  
@@ -17610,7 +17617,7 @@ index 3eff07d8..384ca6a2 100644
      }
  
      /// `0 × anything = 0`, as in D3D9.
-@@ -3551,6 +3210,243 @@ impl<'a> Lower<'a> {
+@@ -3551,6 +3213,243 @@ impl<'a> Lower<'a> {
          self.s.m.select(c, z, zero, m)
      }
  
@@ -17854,7 +17861,7 @@ index 3eff07d8..384ca6a2 100644
      /// Flushes f32 subnormals to signed zero, keeping all other values and
      /// the sign of zero intact.
      fn ftz(&mut self, x: V) -> V {
-@@ -3653,6 +3549,12 @@ impl<'a> Lower<'a> {
+@@ -3653,6 +3552,12 @@ impl<'a> Lower<'a> {
              Atom::Quad(_) => Ok(self.s.m.bool(true)),
              // With console lanes, a mask held as a number is the console's:
              // the lane tests its own bit.
@@ -17867,7 +17874,7 @@ index 3eff07d8..384ca6a2 100644
              Atom::Opaque(v) if self.console_lanes => {
                  let hi = match self.pair_high(v) {
                      Some(h) => Some(self.get(h)?),
-@@ -3789,6 +3691,36 @@ impl<'a> Lower<'a> {
+@@ -3789,6 +3694,36 @@ impl<'a> Lower<'a> {
          (lo, hi)
      }
  
@@ -17904,7 +17911,7 @@ index 3eff07d8..384ca6a2 100644
      /// The first of the two exchange dwords of this thread's console wave (made in the entry
      /// block): a group of several console waves has a pair for each.
      fn exchange_pair(&mut self, slot: u32) -> V {
-@@ -3884,9 +3816,15 @@ impl<'a> Lower<'a> {
+@@ -3884,9 +3819,15 @@ impl<'a> Lower<'a> {
          let some = self.s.op(c, "waveAnyTrue", Attr::NoUnwind, i1t, 113, &[set]);
          self.s.flags |= flags::WAVE_OPS;
          let some = self.s.m.cast(c, Cast::ZExt, some, i32t);
@@ -17922,7 +17929,7 @@ index 3eff07d8..384ca6a2 100644
          let z = self.s.m.i32(0);
          Ok(self.s.m.cmp(c, if any { pred::NE } else { pred::EQ }, both, z))
      }
-@@ -4465,35 +4403,185 @@ impl<'a> Lower<'a> {
+@@ -4465,35 +4406,185 @@ impl<'a> Lower<'a> {
              // the title's checkerboard shadow-mask generators read their
              // neighbours' samples with it; without them every shadowed light
              // was multiplied by an empty mask.)
@@ -18125,7 +18132,7 @@ index 3eff07d8..384ca6a2 100644
          if self.s.lds_dwords == 0 {
              return Err("LDS the program does not allocate");
          }
-@@ -4854,6 +4942,7 @@ impl<'a> Lower<'a> {
+@@ -4854,6 +4945,7 @@ impl<'a> Lower<'a> {
                      .op(self.cur, "barrier", Attr::NoDuplicate, void, 80, &[mode]);
                  Ok(())
              }
@@ -18133,7 +18140,7 @@ index 3eff07d8..384ca6a2 100644
              Fields::Sopp { .. } => Ok(()),
              Fields::Smem { .. } => self.smem(inst, (b, i)),
              Fields::Valu(_) if name.starts_with("v_interp_") => self.interp(inst, (b, i)),
-@@ -5133,6 +5222,20 @@ impl<'a> Lower<'a> {
+@@ -5133,6 +5225,20 @@ impl<'a> Lower<'a> {
                  l.s.m.cmp(c, pred::NE, o, z)
              };
              return match name {
@@ -18154,7 +18161,7 @@ index 3eff07d8..384ca6a2 100644
                  "s_bcnt1_i32_b64" => {
                      let (a, b) = (half(self, 0, 0)?, half(self, 0, 1)?);
                      let i32t = self.s.t.i32;
-@@ -5258,6 +5361,10 @@ impl<'a> Lower<'a> {
+@@ -5258,6 +5364,10 @@ impl<'a> Lower<'a> {
          let (r, carry): (V, Option<V>) = match name {
              "s_mov_b32" => (src32(self, 0)?, None),
              "s_movk_i32" => (sext16(self), None),
@@ -18165,7 +18172,7 @@ index 3eff07d8..384ca6a2 100644
              "s_cselect_b32" => {
                  let cond = self.scc_in(inst)?;
                  let (a, b) = (src32(self, 0)?, src32(self, 1)?);
-@@ -5451,6 +5558,30 @@ impl<'a> Lower<'a> {
+@@ -5451,6 +5561,30 @@ impl<'a> Lower<'a> {
          Ok(())
      }
  
@@ -18196,7 +18203,7 @@ index 3eff07d8..384ca6a2 100644
      /// `a + b (+ cin)` or `a - b (- cin)` with the carry (borrow) out, as the
      /// scalar and vector add-with-carry instructions set it.
      fn add_sub_carry(&mut self, c: usize, add: bool, a: V, b: V, cin: Option<V>) -> (V, V) {
-@@ -5542,6 +5673,9 @@ impl<'a> Lower<'a> {
+@@ -5542,6 +5676,9 @@ impl<'a> Lower<'a> {
          if self.scalar.get(&site).is_some_and(|a| a.param == MEMORY) {
              return self.memory_smem(inst);
          }
@@ -18206,7 +18213,7 @@ index 3eff07d8..384ca6a2 100644
          let Some(rest) = name.strip_prefix("s_buffer_load_dword") else {
              return self.descriptor_data(inst, site);
          };
-@@ -5843,6 +5977,28 @@ impl<'a> Lower<'a> {
+@@ -5843,6 +5980,28 @@ impl<'a> Lower<'a> {
                  }
                  return Ok(());
              }
@@ -18235,7 +18242,7 @@ index 3eff07d8..384ca6a2 100644
              if std::env::var_os("VICTORY_DESC_WHY").is_some() {
                  eprintln!(
                      "DESC-WHY {:#x} {} scalar={:?} lane_copied={}",
-@@ -6104,6 +6260,31 @@ impl<'a> Lower<'a> {
+@@ -6104,6 +6263,31 @@ impl<'a> Lower<'a> {
          Ok(())
      }
  
@@ -18267,7 +18274,7 @@ index 3eff07d8..384ca6a2 100644
      /// The dword at a computed byte address of a constant buffer.
      fn cbuffer_dword(&mut self, h: V, a: V) -> V {
          let c = self.cur;
-@@ -6469,7 +6650,7 @@ impl<'a> Lower<'a> {
+@@ -6469,7 +6653,7 @@ impl<'a> Lower<'a> {
              if self.block[q].is_none() {
                  continue;
              }
@@ -18276,7 +18283,7 @@ index 3eff07d8..384ca6a2 100644
              let at = self.edges.get(&(q, block)).copied().unwrap_or(tail);
              let index = match arg {
                  Source::Loaded { load, first } => {
-@@ -6481,7 +6662,32 @@ impl<'a> Lower<'a> {
+@@ -6481,7 +6665,32 @@ impl<'a> Lower<'a> {
                  Source::Phi { block: inner, args: inner_args } if depth > 0 => {
                      self.descriptor_phi(*inner, inner_args, sampler, depth - 1)?
                  }
@@ -18310,7 +18317,7 @@ index 3eff07d8..384ca6a2 100644
              };
              incoming.push((index, at));
          }
-@@ -6865,28 +7071,37 @@ impl<'a> Lower<'a> {
+@@ -6865,28 +7074,37 @@ impl<'a> Lower<'a> {
          if let Some(op) = name.strip_prefix("v_pk_") {
              return self.packed16(inst, op, guard);
          }
@@ -18355,7 +18362,7 @@ index 3eff07d8..384ca6a2 100644
                      self.lane_bits.insert(w, carry);
                  }
                  for &(_, w) in &inst.writes {
-@@ -7307,6 +7522,63 @@ impl<'a> Lower<'a> {
+@@ -7307,6 +7525,63 @@ impl<'a> Lower<'a> {
                  };
                  float(self, r)
              }
@@ -18419,7 +18426,7 @@ index 3eff07d8..384ca6a2 100644
              "v_cvt_i32_f32" | "v_cvt_u32_f32" | "v_cvt_flr_i32_f32" | "v_cvt_rpi_i32_f32" => {
                  let mut a = f(self, 0)?;
                  if name == "v_cvt_rpi_i32_f32" {
-@@ -7427,22 +7699,10 @@ impl<'a> Lower<'a> {
+@@ -7427,22 +7702,10 @@ impl<'a> Lower<'a> {
                  let Some(Operand::Vector { reg, .. }) = v.dst else {
                      return Err("a mixed-precision result");
                  };
@@ -18443,7 +18450,7 @@ index 3eff07d8..384ca6a2 100644
                  self.write(inst, Reg::V(reg), x, guard);
                  Ok(())
              }
-@@ -7747,8 +8007,16 @@ impl<'a> Lower<'a> {
+@@ -7747,8 +8010,16 @@ impl<'a> Lower<'a> {
                  let x = crate::resource::inline(k).ok_or("a special operand")?;
                  Ok(self.s.m.int_const(i64t, i64::from(x as i32)))
              }
@@ -18461,7 +18468,7 @@ index 3eff07d8..384ca6a2 100644
                  let x = self.operand(inst, &op)?;
                  Ok(self.s.m.cast(c, Cast::ZExt, x, i64t))
              }
-@@ -8044,6 +8312,28 @@ impl<'a> Lower<'a> {
+@@ -8044,6 +8315,28 @@ impl<'a> Lower<'a> {
          Ok(f)
      }
  
@@ -18490,7 +18497,7 @@ index 3eff07d8..384ca6a2 100644
      /// Writes a 16-bit result (low bits of `x`) into the destination's low
      /// half, or its high half with op_sel bit 3 (or an SDWA WORD_1 select);
      /// the other half is kept (GFX10).
-@@ -8067,22 +8357,7 @@ impl<'a> Lower<'a> {
+@@ -8067,22 +8360,7 @@ impl<'a> Lower<'a> {
                  _ => return Err("an SDWA destination of a 16-bit operation"),
              }
          }
@@ -18514,7 +18521,7 @@ index 3eff07d8..384ca6a2 100644
          self.write_placed(inst, Reg::V(reg), r, guard);
          Ok(())
      }
-@@ -8470,6 +8745,35 @@ impl<'a> Lower<'a> {
+@@ -8470,6 +8748,35 @@ impl<'a> Lower<'a> {
          Ok(self.s.m.bin(c, Bin::And, x, m))
      }
  
@@ -18550,7 +18557,7 @@ index 3eff07d8..384ca6a2 100644
      /// Packed 16-bit operations (`v_pk_*`): each half computed as the
      /// 16-bit operation does, f16 through f32 as in [`Self::valu16`].
      fn packed16(&mut self, inst: &Inst, op: &str, guard: Option<V>) -> Result<(), Why> {
-@@ -8478,7 +8782,7 @@ impl<'a> Lower<'a> {
+@@ -8478,7 +8785,7 @@ impl<'a> Lower<'a> {
          };
          let float = op.ends_with("_f16");
          let n = match op {
@@ -18559,7 +18566,7 @@ index 3eff07d8..384ca6a2 100644
              "add_f16" | "mul_f16" | "min_f16" | "max_f16" | "add_u16" | "sub_u16" | "add_i16"
              | "sub_i16" | "mul_lo_u16" | "lshlrev_b16" | "lshrrev_b16" | "ashrrev_i16"
              | "max_u16" | "min_u16" | "max_i16" | "min_i16" => 2,
-@@ -8487,13 +8791,22 @@ impl<'a> Lower<'a> {
+@@ -8487,13 +8794,22 @@ impl<'a> Lower<'a> {
          if v.omod != 0 || !float && (v.clamp || v.neg != 0 || v.neg_hi != 0) {
              return Err("modifiers on a packed integer operation");
          }
@@ -18583,7 +18590,7 @@ index 3eff07d8..384ca6a2 100644
                  if float {
                      let mut f = self
                          .s
-@@ -8591,7 +8904,7 @@ impl<'a> Lower<'a> {
+@@ -8591,7 +8907,7 @@ impl<'a> Lower<'a> {
          };
          Ok(match name {
              "v_and_b32" | "v_or_b32" | "v_xor_b32" | "v_add_nc_u32" | "v_sub_nc_u32"
@@ -18592,7 +18599,7 @@ index 3eff07d8..384ca6a2 100644
                  let (a, b) = (s(self, 0)?, s(self, 1)?);
                  let (op, a, b) = match name {
                      "v_and_b32" => (Bin::And, a, b),
-@@ -8701,6 +9014,131 @@ impl<'a> Lower<'a> {
+@@ -8701,6 +9017,131 @@ impl<'a> Lower<'a> {
                  let (a, b) = (s(self, 0)?, s(self, 1)?);
                  self.mul_hi(a, b, name == "v_mul_hi_i32")
              }
@@ -18724,7 +18731,7 @@ index 3eff07d8..384ca6a2 100644
              "v_alignbit_b32" | "v_alignbyte_b32" => {
                  // The low dword of {a, b} >> shift.
                  let (a, b, sh) = (s(self, 0)?, s(self, 1)?, s(self, 2)?);
-@@ -9451,15 +9889,7 @@ impl<'a> Lower<'a> {
+@@ -9451,15 +9892,7 @@ impl<'a> Lower<'a> {
      /// `x` (an f16 in the low bits) as the low half of VGPR `reg`: 16-bit
      /// results keep the register's high half (GFX10).
      fn low_half(&mut self, inst: &Inst, reg: u8, x: V) -> V {
@@ -18741,7 +18748,7 @@ index 3eff07d8..384ca6a2 100644
      }
  
      fn image(&mut self, inst: &Inst, b: usize, i: usize) -> Result<(), Why> {
-@@ -9800,7 +10230,10 @@ impl<'a> Lower<'a> {
+@@ -9800,7 +10233,10 @@ impl<'a> Lower<'a> {
              if kind == 5 && (*unorm || op == 81) {
                  return Err("a cube sample with texel coordinates or a level query");
              }
@@ -18753,7 +18760,7 @@ index 3eff07d8..384ca6a2 100644
                  let x = addr_packed(self, coord_base, k)?;
                  *slot = to_float(self, x);
              }
-@@ -11383,607 +11816,4 @@ fn interp_mode(kind: Barycentric) -> Option<u8> {
+@@ -11383,607 +11819,4 @@ fn interp_mode(kind: Barycentric) -> Option<u8> {
  }
  
  #[cfg(test)]
@@ -21287,7 +21294,7 @@ index 00000000..614e3d08
 +    lower_with(&words, vec![], vec![]).expect("v_cvt_f32_f64 must lower");
 +}
 diff --git a/crates/victory-shader/src/emit/mod.rs b/crates/victory-shader/src/emit/mod.rs
-index 7d83ad52..5d154c83 100644
+index 7d83ad52..9dbd3f13 100644
 --- a/crates/victory-shader/src/emit/mod.rs
 +++ b/crates/victory-shader/src/emit/mod.rs
 @@ -91,6 +91,8 @@ pub mod host;
@@ -21311,7 +21318,7 @@ index 7d83ad52..5d154c83 100644
 -    MEMORY_FAULTS, MEMORY_PAGES, ROOT_CBV_SPACE, SAMPLER_SPACE, SLOT_FAULTS, SLOT_MEMORY, SLOT_STRIDES,
 -    SLOT_STRIDES_COUNT, USER_DATA_SPACE, USER_MEMORY_BASE, USER_VIEW_ADDRESS, USER_VIEW_BIAS,
 +    MEMORY_FAULTS, MEMORY_PAGES, ROOT_CBV_SPACE, SAMPLER_SPACE, SEEN_SLOTS, SLOT_FAULTS, SLOT_MEMORY, SLOT_SEEN, SLOT_STRIDES,
-+    texture_marks, SLOT_STRIDES_BYTES, VIEW_ADDRESSES,
++    texture_marks, view_addresses, SLOT_STRIDES_BYTES, VIEW_ADDRESSES,
 +    SLOT_STRIDES_COUNT, USER_DATA_SPACE, USER_DISPATCH_SPREAD, USER_MEMORY_BASE, USER_VIEW_ADDRESS, USER_VIEW_BIAS,
      set_view_heap_limit, view_heap_limit,
  };
@@ -22195,10 +22202,10 @@ index 00000000..8ff60cfa
 +    }
 +}
 diff --git a/crates/victory-shader/src/emit/shader.rs b/crates/victory-shader/src/emit/shader.rs
-index 28a36f1b..41007ee8 100644
+index 28a36f1b..033ed028 100644
 --- a/crates/victory-shader/src/emit/shader.rs
 +++ b/crates/victory-shader/src/emit/shader.rs
-@@ -26,6 +26,15 @@ pub const ROOT_CBV_SPACE: u32 = 1;
+@@ -26,6 +26,25 @@ pub const ROOT_CBV_SPACE: u32 = 1;
  pub const SLOT_STRIDES: u8 = 255;
  /// Dwords of the [`SLOT_STRIDES`] buffer: heap indices are clamped to it.
  pub const SLOT_STRIDES_COUNT: u32 = 1 << 21;
@@ -22211,10 +22218,20 @@ index 28a36f1b..41007ee8 100644
 +pub const VIEW_ADDRESSES: u32 = SLOT_STRIDES_COUNT * 4;
 +/// Bytes of the whole [`SLOT_STRIDES`] buffer.
 +pub const SLOT_STRIDES_BYTES: u32 = VIEW_ADDRESSES + SLOT_STRIDES_COUNT * 8;
++
++/// HybridGt: whether the [`SLOT_STRIDES`] buffer has the view addresses after
++/// the strides (`VICTORY_VIEW_ADDRESSES=1`; off by default). It makes each view
++/// heap's table three times as large (24 MiB), one per heap, and the programs
++/// that read it (the ray-traced shadow tracers) have nothing to walk while
++/// the structure builder is off.
++pub fn view_addresses() -> bool {
++    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *ON.get_or_init(|| std::env::var_os("VICTORY_VIEW_ADDRESSES").is_some_and(|v| v == "1"))
++}
  
  /// Title memory by address (`resource::MEMORY`): console code reads and
  /// writes through raw 40-bit addresses it takes from root constants,
-@@ -47,6 +56,20 @@ pub const SLOT_STRIDES_COUNT: u32 = 1 << 21;
+@@ -47,6 +66,20 @@ pub const SLOT_STRIDES_COUNT: u32 = 1 << 21;
  pub const SLOT_MEMORY: u8 = 254;
  /// See [`SLOT_MEMORY`].
  pub const SLOT_FAULTS: u8 = 253;
@@ -22235,7 +22252,7 @@ index 28a36f1b..41007ee8 100644
  /// Entries of the [`SLOT_MEMORY`] directory: title addresses below 128 GiB.
  pub const MEMORY_PAGES: u32 = 1 << 21;
  /// Dwords of the [`SLOT_FAULTS`] buffer.
-@@ -69,6 +92,15 @@ pub const USER_VIEW_ADDRESS: u32 = 0x101;
+@@ -69,6 +102,15 @@ pub const USER_VIEW_ADDRESS: u32 = 0x101;
  /// view. Asked for every root UAV, and for the root SRVs of programs with
  /// a spilled user-data table.
  pub const USER_VIEW_BIAS: u32 = 0x103;
@@ -22251,7 +22268,7 @@ index 28a36f1b..41007ee8 100644
  
  /// `ShaderFlags` bits (metadata) and their `SFI0` feature bits.
  pub(crate) mod flags {
-@@ -76,6 +108,8 @@ pub(crate) mod flags {
+@@ -76,6 +118,8 @@ pub(crate) mod flags {
      pub const DOUBLES: u64 = 1 << 2;
      pub const STENCIL_REF: u64 = 1 << 11;
      pub const TYPED_UAV_LOADS: u64 = 1 << 13;
@@ -22260,7 +22277,7 @@ index 28a36f1b..41007ee8 100644
      pub const WAVE_OPS: u64 = 1 << 19;
      pub const BARYCENTRICS: u64 = 1 << 22;
      pub const INT64: u64 = 1 << 20;
-@@ -157,6 +191,10 @@ pub(crate) struct Shader {
+@@ -157,6 +201,10 @@ pub(crate) struct Shader {
      pub flags: u64,
      /// Heap handles made with a non-uniform index.
      pub nonuniform_handles: u32,
@@ -22271,7 +22288,7 @@ index 28a36f1b..41007ee8 100644
      /// A compute shader with this thread-group size.
      pub threads: Option<[u32; 3]>,
      /// The wave size a compute shader requires (`WaveSize`).
-@@ -213,6 +251,7 @@ impl Shader {
+@@ -213,6 +261,7 @@ impl Shader {
              root_uavs: Vec::new(),
              flags: 0,
              nonuniform_handles: 0,
@@ -22279,7 +22296,7 @@ index 28a36f1b..41007ee8 100644
              threads: None,
              wave_size: None,
              lds_dwords: 0,
-@@ -380,6 +419,15 @@ impl Shader {
+@@ -380,6 +429,15 @@ impl Shader {
      }
  
      pub fn annotate(&mut self, block: usize, h: V, props0: u32, props1: u32) -> V {
@@ -22295,7 +22312,7 @@ index 28a36f1b..41007ee8 100644
          let p = [self.m.i32(props0), self.m.i32(props1)];
          let p = self.m.aggregate(self.t.props, &p);
          self.op(
-@@ -431,6 +479,24 @@ impl Shader {
+@@ -431,6 +489,24 @@ impl Shader {
              flags::RESOURCE_HEAP
          };
          self.nonuniform_handles += u32::from(nonuniform);
@@ -22320,7 +22337,7 @@ index 28a36f1b..41007ee8 100644
          let (s, n) = (self.m.bool(sampler), self.m.bool(nonuniform));
          let h = self.op(
              block,
-@@ -444,13 +510,17 @@ impl Shader {
+@@ -444,13 +520,17 @@ impl Shader {
      }
  
      /// The finished container.
@@ -22340,7 +22357,7 @@ index 28a36f1b..41007ee8 100644
          if passes != 0 {
              self.m.optimise(passes);
              let used = self.m.usage();
-@@ -787,6 +857,9 @@ impl Shader {
+@@ -787,6 +867,9 @@ impl Shader {
          if self.flags & flags::TYPED_UAV_LOADS != 0 {
              features |= 0x800;
          }
@@ -22350,7 +22367,7 @@ index 28a36f1b..41007ee8 100644
          if self.flags & flags::WAVE_OPS != 0 {
              features |= 0x4000;
          }
-@@ -888,3 +961,120 @@ impl Shader {
+@@ -888,3 +971,120 @@ impl Shader {
          Some(self.m.md_node(list))
      }
  }
