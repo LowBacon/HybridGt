@@ -39,9 +39,9 @@
 <text x="686" y="241" class="n">30 fps</text>
 <text x="16" y="270">World frame rate (goal 30)</text>
 <rect class="bg" x="250" y="258" width="380" height="16" rx="4" fill="#eaeef2"/>
-<rect x="250" y="258" width="97.7" height="16" rx="4" fill="#c0392b"/>
-<text x="640" y="271" class="p">25.7 %</text>
-<text x="686" y="271" class="n">7.7 fps median</text>
+<rect x="250" y="258" width="87.4" height="16" rx="4" fill="#c0392b"/>
+<text x="640" y="271" class="p">23 %</text>
+<text x="686" y="271" class="n">6.9 fps median, p10 3.7</text>
 <text x="16" y="300">AMD FSR 3.1 upscaling</text>
 <rect class="bg" x="250" y="288" width="380" height="16" rx="4" fill="#eaeef2"/>
 <rect x="250" y="288" width="304.0" height="16" rx="4" fill="#7cb342"/>

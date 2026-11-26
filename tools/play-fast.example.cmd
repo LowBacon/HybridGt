@@ -49,4 +49,8 @@ rem CS_Visibility, hair shadows). A/B 2026-11-26: no GPU loss, fps the same (6.8
 set VICTORY_WAVE_WIDE=last
 rem skin and clothing bakes: their own textures are uploaded first (clothes and skins that stayed old)
 set VICTORY_BAKE_SOURCES=full
+rem fxceless CPU savings (A/B 2026-11-26, same route: 5.0 -> 6.9 fps median, p10 1.4 -> 3.7)
+set VICTORY_LOOKUP_CACHE=1
+set VICTORY_SETTLE_ROOM=1
+set VICTORY_PARALLEL_REFRESH=1
 E:\GTA\HybridGt-work\victory-gta6\target\release\victory.exe run "E:\GTA\GTA6.Xbox.v1.0.2.1\game_scarlett_master.exe" --execute > "E:\GTA\HybridGt-work\logs\%~n0.log" 2>&1

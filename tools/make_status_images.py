@@ -11,7 +11,7 @@ OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'docs', 'im
 # (file, label, value, colour)
 BADGES = [
     ('badge-shaders.svg', 'shaders translated', '26,084 / 26,084', '#2e9e4f'),
-    ('badge-fps.svg', 'world fps', '7.7 / 30', '#d9822b'),
+    ('badge-fps.svg', 'world fps', '6.9 / 30', '#d9822b'),
     ('badge-fsr.svg', 'AMD FSR', '3.1.6 on RTX 4070 Ti', '#2e9e4f'),
     ('badge-raytracing.svg', 'ray tracing', 'builder runs, crashes', '#c0392b'),
     ('badge-tested.svg', 'tested on', 'RTX 4070 Ti · 32 GB', '#555'),
@@ -27,7 +27,7 @@ AREAS = [
     ('Mesh pipelines on the card', 100.0, '8,765 of 8,765'),
     ('Ray-tracing builder translates', 100.0, '52 of 52 programs'),
     ('Menus at 30 fps', 100.0, '30 fps'),
-    ('World frame rate (goal 30)', 25.7, '7.7 fps median'),
+    ('World frame rate (goal 30)', 23.0, '6.9 fps median, p10 3.7'),
     ('AMD FSR 3.1 upscaling', 80.0, 'runs, 2 bad frames seen'),
     ('Characters and bodies', 100.0, 'whole in the prologue'),
     ('Textures on time', 80.0, 'some still late'),
@@ -105,6 +105,7 @@ FPS_HISTORY = [
     ('0x1c8 off', 7.7),
     ('wave-wide', 6.8),
     ('asset room', 6.7),
+    ('CPU switches', 6.9),
 ]
 
 

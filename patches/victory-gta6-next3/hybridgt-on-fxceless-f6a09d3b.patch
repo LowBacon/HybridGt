@@ -8125,7 +8125,7 @@ index 42efbc67..072f31b1 100644
  pub(crate) extern "system" fn create_graphics(
      _: This,
 diff --git a/crates/victory-gpu/src/pipeline/host.rs b/crates/victory-gpu/src/pipeline/host.rs
-index 5f0f8d78..cbcf0ed9 100644
+index 5f0f8d78..8b883d6b 100644
 --- a/crates/victory-gpu/src/pipeline/host.rs
 +++ b/crates/victory-gpu/src/pipeline/host.rs
 @@ -98,6 +98,65 @@ impl Default for GraphicsState {
@@ -8194,7 +8194,34 @@ index 5f0f8d78..cbcf0ed9 100644
  #[cfg(test)]
  impl GraphicsState {
      /// A state that declares one render target, of format `format` (tests).
-@@ -276,6 +335,163 @@ impl GraphicsState {
+@@ -176,6 +235,26 @@ pub(crate) fn formats_for(declared: &TargetFormats, bound: &TargetFormats) -> Ta
+     formats
+ }
+ 
++/// HybridGt: a console stencil operation (four bits of DB_STENCIL_CONTROL) as the host's.
++/// The console's: keep, zero, ones, replace by the test value, replace by the operation
++/// value, add and subtract clamped, invert, add and subtract wrapping, then bitwise ones.
++/// shortcut: the host has one reference, the test value: "ones" and "replace by the
++/// operation value" become a replace by it, adds and subtracts step by one whatever the
++/// operation value, and the bitwise operations keep.
++fn stencil_op(v: u32) -> D3D12_STENCIL_OP {
++    match v & 0xf {
++        0 => D3D12_STENCIL_OP_KEEP,
++        1 => D3D12_STENCIL_OP_ZERO,
++        2..=4 => D3D12_STENCIL_OP_REPLACE,
++        5 => D3D12_STENCIL_OP_INCR_SAT,
++        6 => D3D12_STENCIL_OP_DECR_SAT,
++        7 => D3D12_STENCIL_OP_INVERT,
++        8 => D3D12_STENCIL_OP_INCR,
++        9 => D3D12_STENCIL_OP_DECR,
++        _ => D3D12_STENCIL_OP_KEEP,
++    }
++}
++
+ impl GraphicsState {
+     /// The formats the state declares ([`TargetFormats`]): nothing past its
+     /// count of render targets.
+@@ -276,6 +355,181 @@ impl GraphicsState {
      ///
      /// # Safety
      /// `at` points at a whole subobject of type `kind`.
@@ -8307,6 +8334,24 @@ index 5f0f8d78..cbcf0ed9 100644
 +        g.depth.StencilWriteMask = ((refmask >> 16) & 0xff) as u8;
 +        g.depth.FrontFace.StencilFunc = func(dc >> 8);
 +        g.depth.BackFace.StencilFunc = if dc & (1 << 7) != 0 { func(dc >> 20) } else { func(dc >> 8) };
++        // HybridGt: the stencil operations (DB_STENCIL_CONTROL at +0xbc: fail, depth pass,
++        // depth fail, then the same for back faces, four bits each). They were all KEEP: the
++        // prologue's most common stencil state (296 of 587 pipelines) tests EQUAL and adds one
++        // on pass, which then never marked a pixel.
++        let ops = r(0xbc);
++        let (fail, pass, zfail) = (stencil_op(ops), stencil_op(ops >> 4), stencil_op(ops >> 8));
++        g.depth.FrontFace.StencilFailOp = fail;
++        g.depth.FrontFace.StencilPassOp = pass;
++        g.depth.FrontFace.StencilDepthFailOp = zfail;
++        if dc & (1 << 7) != 0 {
++            g.depth.BackFace.StencilFailOp = stencil_op(ops >> 12);
++            g.depth.BackFace.StencilPassOp = stencil_op(ops >> 16);
++            g.depth.BackFace.StencilDepthFailOp = stencil_op(ops >> 20);
++        } else {
++            g.depth.BackFace.StencilFailOp = fail;
++            g.depth.BackFace.StencilPassOp = pass;
++            g.depth.BackFace.StencilDepthFailOp = zfail;
++        }
 +        let sc = r(0xa0);
 +        g.rasterizer.CullMode = match sc & 3 {
 +            1 => D3D12_CULL_MODE_FRONT,
@@ -8358,7 +8403,7 @@ index 5f0f8d78..cbcf0ed9 100644
      pub(crate) unsafe fn read(&mut self, kind: u32, at: *const u8) {
          // SAFETY: the caller passes a whole subobject.
          unsafe {
-@@ -514,6 +730,15 @@ fn refuse(reason: &'static str, shaders: &[Arc<Shader>]) -> Option<HostPipeline>
+@@ -514,6 +768,15 @@ fn refuse(reason: &'static str, shaders: &[Arc<Shader>]) -> Option<HostPipeline>
      None
  }
  
@@ -8374,7 +8419,7 @@ index 5f0f8d78..cbcf0ed9 100644
  impl HostPipeline {
      /// A host pipeline for vertex and pixel shaders with the graphics
      /// state `g`, or for one compute shader.
-@@ -529,10 +754,10 @@ impl HostPipeline {
+@@ -529,10 +792,10 @@ impl HostPipeline {
          if compute.is_none()
              && shaders
                  .iter()
@@ -8387,7 +8432,7 @@ index 5f0f8d78..cbcf0ed9 100644
                  shaders,
              );
          }
-@@ -547,6 +772,11 @@ impl HostPipeline {
+@@ -547,6 +810,11 @@ impl HostPipeline {
              };
              let mut stages = vec![first];
              stages.extend(find("pixel").map(|ps| (ps, D3D12_SHADER_VISIBILITY_PIXEL)));
@@ -8399,7 +8444,7 @@ index 5f0f8d78..cbcf0ed9 100644
              stages
          };
          if mesh.is_some() && !host()?.mesh_shaders() {
-@@ -611,7 +841,7 @@ impl HostPipeline {
+@@ -611,7 +879,7 @@ impl HostPipeline {
                      // table of strides, the directory of title memory by
                      // address and its fault notes.
                      let ours = if uav {
@@ -8408,7 +8453,7 @@ index 5f0f8d78..cbcf0ed9 100644
                      } else {
                          slot == victory_shader::emit::SLOT_STRIDES
                              || slot == victory_shader::emit::SLOT_MEMORY
-@@ -802,18 +1032,20 @@ impl HostPipeline {
+@@ -802,18 +1070,20 @@ impl HostPipeline {
                  Err(e) => tracing::warn!(error = %e, ?shaders, "no rectangle geometry stage"),
              }
          }
@@ -8433,7 +8478,7 @@ index 5f0f8d78..cbcf0ed9 100644
              SampleMask: g.sample_mask,
              RasterizerState: g.rasterizer,
              DepthStencilState: g.depth,
-@@ -1060,7 +1292,7 @@ fn mesh_pipeline(
+@@ -1060,7 +1330,7 @@ fn mesh_pipeline(
              root: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE, root.as_raw()),
              ms: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_MS, ms),
              ps: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PS, ps),
@@ -8442,7 +8487,7 @@ index 5f0f8d78..cbcf0ed9 100644
              mask: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_MASK, g.sample_mask),
              raster: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RASTERIZER, g.rasterizer),
              depth,
-@@ -1079,7 +1311,7 @@ fn mesh_pipeline(
+@@ -1079,7 +1349,7 @@ fn mesh_pipeline(
              root: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE, root.as_raw()),
              ms: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_MS, ms),
              ps: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PS, ps),
@@ -8451,7 +8496,41 @@ index 5f0f8d78..cbcf0ed9 100644
              mask: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_MASK, g.sample_mask),
              raster: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RASTERIZER, g.rasterizer),
              depth: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL1, g.depth1()),
-@@ -1647,4 +1879,42 @@ mod tests {
+@@ -1209,6 +1479,33 @@ mod tests {
+     /// not compiled again (a stream without a topology never loads).
+     /// Blending goes off for integer targets only, and a state without
+     /// one that blends is left bit for bit.
++    #[test]
++    fn the_console_stencil_operations_are_the_hosts() {
++        // The prologue's most common stencil state (296 of 587 such pipelines): no depth
++        // test, stencil EQUAL front and back, add one wrapping on pass.
++        let mut regs = vec![0u8; 0x184];
++        regs[0xb8..0xbc].copy_from_slice(&0x0020_02f1u32.to_le_bytes());
++        regs[0xbc..0xc0].copy_from_slice(&0x0008_0080u32.to_le_bytes());
++        regs[0xc0..0xc4].copy_from_slice(&0x01ff_ff00u32.to_le_bytes());
++        let g = GraphicsState::console(&regs, &[], &[DXGI_FORMAT_R8G8B8A8_UNORM], DXGI_FORMAT_D32_FLOAT_S8X24_UINT, false);
++        assert!(g.depth.StencilEnable.as_bool());
++        assert!(!g.depth.DepthEnable.as_bool());
++        for face in [g.depth.FrontFace, g.depth.BackFace] {
++            assert_eq!(face.StencilFunc, D3D12_COMPARISON_FUNC_EQUAL);
++            assert_eq!(face.StencilPassOp, D3D12_STENCIL_OP_INCR);
++            assert_eq!(face.StencilFailOp, D3D12_STENCIL_OP_KEEP);
++            assert_eq!(face.StencilDepthFailOp, D3D12_STENCIL_OP_KEEP);
++        }
++        assert_eq!((g.depth.StencilReadMask, g.depth.StencilWriteMask), (0xff, 0xff));
++        // Back faces their own when the back-face bit is set: replace on fail, zero on pass.
++        regs[0xb8..0xbc].copy_from_slice(&0x0020_02f1u32.to_le_bytes());
++        regs[0xbc..0xc0].copy_from_slice(&0x0001_3080u32.to_le_bytes());
++        let g = GraphicsState::console(&regs, &[], &[DXGI_FORMAT_R8G8B8A8_UNORM], DXGI_FORMAT_D32_FLOAT_S8X24_UINT, false);
++        assert_eq!(g.depth.FrontFace.StencilPassOp, D3D12_STENCIL_OP_INCR);
++        assert_eq!(g.depth.BackFace.StencilFailOp, D3D12_STENCIL_OP_REPLACE);
++        assert_eq!(g.depth.BackFace.StencilPassOp, D3D12_STENCIL_OP_ZERO);
++    }
++
+     #[test]
+     fn integer_targets_do_not_blend() {
+         let mut g = GraphicsState::default();
+@@ -1647,4 +1944,42 @@ mod tests {
          assert_eq!(run_draw(0.6, 1.0), 0, "depth 0.5 outside [0.6, 1.0] must be rejected");
          assert_eq!(run_draw(0.4, 0.6), 255, "depth 0.5 inside [0.4, 0.6] must pass");
      }

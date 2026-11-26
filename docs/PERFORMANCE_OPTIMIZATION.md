@@ -740,3 +740,26 @@ second, so smaller differences are not claimed.
 
 Offline, all 27 compute programs that needed 64-lane waves were tried with the wave-wide form on
 the card: 21 get pipelines. The 6 left have thread groups of several console waves.
+
+### fxceless's CPU switches on this PC; 0x1c8 stencil; memory (2026-11-26, evening)
+
+Same session, same route, shader cache warmed offline first (`translate --warm all` with the
+launcher's own switches: the next run no longer translates while it plays):
+
+| Run | Settings | fps median | p10 | frame median / p90 | preparing: copies / refreshes |
+|---|---|---|---|---|---|
+| base5 | `play-fast` | 5.0 | 1.4 | 199 / 712 ms | 58.6 / 24.4 ms |
+| cpu3a | + `VICTORY_LOOKUP_CACHE=1`, `VICTORY_SETTLE_ROOM=1`, `VICTORY_PARALLEL_REFRESH=1` | **6.9** | **3.7** | **144 / 270 ms** | 26.5 / 26.0 ms |
+
+Kept in `play-fast.cmd`. The slowest tenth of frames is 2.6 times faster.
+
+- The view-address table for the shadow tracers (24 MiB per view heap instead of 8) left the
+  PC with 0.5 GB of RAM in run g2 and doubled every part of a submission's preparing: now only
+  with `VICTORY_VIEW_ADDRESSES=1`. In base5 4.6 GB were free again.
+- 0x1c8 pipelines now take the console's stencil operations (+0xbc; the commonest stencil state
+  of the prologue tests EQUAL and adds one on pass, and all were KEEP before). Run nat1 with
+  `VICTORY_NATIVE_GRAPHICS=1`: bodies are still missing, so the cause is elsewhere; they stay off.
+- About 340-400 draws a frame are dropped "without a host pipeline", with or without 0x1c8
+  pipelines: a diagnostics run names the reasons next.
+- Texture marks or rasterizer-ordered pixels turned the picture white in run all1 (the
+  group-wide form alone renders right, run g1): both stay off until found.
