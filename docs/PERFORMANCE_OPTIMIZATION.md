@@ -567,3 +567,23 @@ launch with the D3D12 debug layer to name the command.
   pre-skinned meshlet culling writes (`meshlet_culling:CS_BatchCullPreSkinnedMeshlets`, indirect
   dispatches themselves); it translates exactly. Next: trace the indirect path (the shader trace
   hooks direct dispatches only, so the culling run found nothing).
+
+### Missing bodies, merge of fxceless f6a09d3b, other ports (2026-11-26 morning)
+
+- **Bodies**: the shader trace now covers indirect dispatches and draws (arguments read as raw
+  words). The pre-skinned meshlet culling's own counts read 0x3be (958 groups) in some readings and
+  0 in most: title memory is read after the card has reset those slots, so it cannot show what the
+  card read when it ran. Not settled; the next step reads the card's own copy at execution.
+- **Merged fxceless/victory-gta6 f6a09d3b** (76 commits): `VICTORY_TEXTURE_BACK=1` (their table:
+  "boats float ... without it boats sink and the mission fails" - the boat mission's failure),
+  the texture pass on its own thread `VICTORY_HEAP_WORKER=1` (their runs at the boat: 6.2-6.7 ->
+  8.7-9.5 world fps), the heap locks (`VICTORY_HEAP_LOCKS=1`, their version of our lock-free
+  mirror), legacy multiply-add as RDNA 2 runs it. 34 conflict hunks resolved keeping both sides'
+  features (our constant samplers, 0x1c8 pipelines, rectangle stage, remap census and commit skip,
+  masked GPU merge). Tests: victory-gpu 222, victory-hle 104, victory-shader 252 passed.
+  `play-fast.cmd` now carries their tested switch set (copy in `tools/play-fast.example.cmd`).
+- **Other ports** (portwatch-vi.xyz tracker): cool_fox (reported 25 fps) is no longer on GitHub;
+  kelvaroq shares no history with this tree; avatarmanz/VIctory-7900XTX (388 own commits,
+  among them ports of cool_fox) and iLucasRT/VInAMD (built on it, 330 own) share the fxceless base,
+  but a trial merge of VIctory-7900XTX meets 328 conflict hunks in 38 files: to be ported piece by
+  piece, measured on this NVIDIA card. XCL is GPL-2.0-only (not mixed into this GPL-3 tree).
