@@ -726,3 +726,17 @@ the 52 ms of a frame's copies goes. Finding that needs the sampling profiler in 
 Its `VICTORY_SETTLE_ROOM=1`, `VICTORY_PARALLEL_REFRESH=1` and `VICTORY_LOOKUP_CACHE=1` were measured
 by fxceless at 11.5, 9 and 14 ms less a frame on an RTX 4070. Not yet measured here: both test
 runs ended when the game window was closed. `play-room.cmd` has the three.
+
+### Wave-wide form, assets settings, parallel fills (2026-11-26, afternoon)
+
+| Run | Settings over `play-fast` | fps median | worst | Result |
+|---|---|---|---|---|
+| w3 / w4 | `VICTORY_WAVE_WIDE=last` | 5.6 / 6.8 | 1,279 / 790 ms | in-game refused pipelines 5 -> 2, no GPU loss: **kept** |
+| f1 | + `VICTORY_WIDE_FILLS=1` (fills on helper threads, new) | 5.8 | 2,055 ms | no gain: off |
+| as1 | + `VICTORY_CARD_WINDOWS_MB=512`, `VICTORY_BAKE_SOURCES=full` | 6.7 | 1,147 ms | textures waiting 12,000 -> 10,200, card 10.4 -> 9.6 GB: **kept** |
+
+The same settings measured 5.6 and 6.8 fps in two runs: run-to-run spread is about one frame a
+second, so smaller differences are not claimed.
+
+Offline, all 27 compute programs that needed 64-lane waves were tried with the wave-wide form on
+the card: 21 get pipelines. The 6 left have thread groups of several console waves.

@@ -34,8 +34,9 @@ set VICTORY_HEAP_LOCKS=1
 set VICTORY_MERGE_GAP=64
 set VICTORY_MERGE_RUNS=4096
 set VICTORY_STAGING_POOL=0
-rem less card memory for copies, more for textures (A/B 2026-11-26: "no room" 60 -> 20, fps same)
-set VICTORY_CARD_WINDOWS_MB=1024
+rem less card memory for copies, more for textures (A/B 2026-11-26: 2048 -> 1024 "no room" 60 -> 20;
+rem 1024 -> 512 textures waiting 12,000 -> 10,200 and 800 MB more free on the card; fps the same)
+set VICTORY_CARD_WINDOWS_MB=512
 set VICTORY_TEXTURE_ROOM_PERCENT=96
 set VICTORY_CARD_BUFFERS_MIN_KB=64
 set VICTORY_CARD_BUFFERS_MB=1280
@@ -43,4 +44,9 @@ set VICTORY_CARD_HASH_LEN=1
 rem stand-in for the traced indirect light (VIctory-7900XTX 82ca1347): interiors and shadowed sides lit
 rem instead of black; A/B 2026-11-26: 6.7 vs 7.7 fps median. Delete to turn off.
 set VICTORY_AMBIENT=1
+rem 19 compute programs NVIDIA refused for 64-lane waves get the wave-wide form (volumetric light, particles,
+rem CS_Visibility, hair shadows). A/B 2026-11-26: no GPU loss, fps the same (6.8 median)
+set VICTORY_WAVE_WIDE=last
+rem skin and clothing bakes: their own textures are uploaded first (clothes and skins that stayed old)
+set VICTORY_BAKE_SOURCES=full
 E:\GTA\HybridGt-work\victory-gta6\target\release\victory.exe run "E:\GTA\GTA6.Xbox.v1.0.2.1\game_scarlett_master.exe" --execute > "E:\GTA\HybridGt-work\logs\%~n0.log" 2>&1

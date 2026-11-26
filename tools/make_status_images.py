@@ -23,7 +23,7 @@ AREAS = [
     ('Shader programs translate', 99.9, '26,069 of 26,084'),
     ('Pass Microsoft\'s DXIL validator', 98.4, '25,466 of 25,874 emitted'),
     ('Vertex/pixel pipelines on the card', 98.6, '14,237 of 14,442'),
-    ('Compute pipelines on the card', 98.8, '2,650 of 2,682 (27 need 64 lanes)'),
+    ('Compute pipelines on the card', 99.6, '2,671 of 2,682 (wave-wide form)'),
     ('Mesh pipelines on the card', 100.0, '8,765 of 8,765'),
     ('Ray-tracing builder translates', 100.0, '52 of 52 programs'),
     ('Menus at 30 fps', 100.0, '30 fps'),
@@ -34,6 +34,8 @@ AREAS = [
     ('Interior light (stand-in)', 80.0, 'lit, costs ~1 fps'),
     ('Boat mission', 60.0, 'fix in, not checked'),
     ('Real ray tracing', 60.0, 'runs, title crashes'),
+    ('Walls and surfaces textured', 60.0, '15 % fewer textures waiting'),
+    ('Clothes changes (bakes)', 60.0, 'bake sources first, not seen yet'),
     ('Mouth animation', 20.0, 'cause not found'),
 ]
 

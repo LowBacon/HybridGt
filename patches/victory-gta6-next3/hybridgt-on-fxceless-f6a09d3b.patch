@@ -3438,7 +3438,7 @@ index 00000000..c53860d0
 +    }
 +}
 diff --git a/crates/victory-gpu/src/host.rs b/crates/victory-gpu/src/host.rs
-index 0a6f20d4..52f00f5b 100644
+index 0a6f20d4..ebcfc700 100644
 --- a/crates/victory-gpu/src/host.rs
 +++ b/crates/victory-gpu/src/host.rs
 @@ -2336,7 +2336,9 @@ fn take_chunk(host: &Host, size: u64) -> Option<Chunk> {
@@ -4434,7 +4434,25 @@ index 0a6f20d4..52f00f5b 100644
          self.deferred().refreshed.clear();
          if list_reuse_set() {
              self.deferred().filled.clear();
-@@ -8479,7 +9195,11 @@ impl HostList {
+@@ -8470,7 +9186,17 @@ impl HostList {
+     fn run_deferred(&self, batch: &mut Batch) {
+         #[cfg(feature = "diagnostics")]
+         use crate::copystat::{C, add};
++        // HybridGt: a run of fills waiting to go to the helper threads together
++        // ([`wide_fills`]); flushed before any other step, so nothing is
++        // reordered against a write of title memory.
++        let mut fills: Vec<(usize, usize, usize)> = Vec::new();
++        let wide = wide_fills();
+         for step in &self.deferred().copies {
++            if wide && let &Step::Fill(dst, src, len) = step {
++                fills.push((dst, src, len));
++                continue;
++            }
++            flush_fills(&mut fills);
+             let started = std::time::Instant::now();
+             let copied = match step {
+                 &Step::Copy(dst, src, len) => {
+@@ -8479,7 +9205,11 @@ impl HostList {
                          add(C::Copies, 1);
                          add(C::CopyBytes, len as u64);
                      }
@@ -4447,7 +4465,7 @@ index 0a6f20d4..52f00f5b 100644
                      #[cfg(feature = "diagnostics")]
                      fill_check::copy_runs(dst, src, len);
                      #[cfg(feature = "diagnostics")]
-@@ -8510,14 +9230,31 @@ impl HostList {
+@@ -8510,14 +9240,31 @@ impl HostList {
                      batch.add(shadow, *address, *len);
                      continue;
                  }
@@ -4482,7 +4500,7 @@ index 0a6f20d4..52f00f5b 100644
                          crate::watch::ask_once_end();
                      }
                      #[cfg(feature = "diagnostics")]
-@@ -8544,9 +9281,26 @@ impl HostList {
+@@ -8544,9 +9291,26 @@ impl HostList {
                      }
                      continue;
                  }
@@ -4510,7 +4528,93 @@ index 0a6f20d4..52f00f5b 100644
                      }
                      continue;
                  }
-@@ -8670,6 +9424,14 @@ struct Batch {
+@@ -8554,9 +9318,85 @@ impl HostList {
+             preparing(0, started.elapsed().as_micros() as u64);
+             preparing(1, copied as u64);
+         }
++        flush_fills(&mut fills);
+     }
+ }
+ 
++/// HybridGt: whether a list's consecutive fills (title memory into the
++/// list's own upload memory) run on the helper threads together
++/// (`VICTORY_WIDE_FILLS=1`; off by default; never in diagnostics builds,
++/// whose per-copy instruments are the submitting thread's).
++///
++/// A frame's fills are some 6,000 copies, 160 MB, one after another on the
++/// submitting thread at about 4.5 GB/s: the frame line's "copies". Each
++/// writes upload memory of its own list and only reads title memory, which
++/// no fill writes, so a run of them with no other step between may go in
++/// any order and side by side.
++/// Measured 2026-11-26 (runs w3, f1, w4, same build): 5.8 fps median with it,
++/// 5.6 and 6.8 without; worst frame 2,055 ms against 1,279 and 790: no gain.
++fn wide_fills() -> bool {
++    static ON: OnceLock<bool> = OnceLock::new();
++    *ON.get_or_init(|| {
++        let on = !cfg!(feature = "diagnostics") && std::env::var_os("VICTORY_WIDE_FILLS").is_some_and(|v| v == "1");
++        if on {
++            tracing::info!("a list's consecutive fills run on the helper threads together (VICTORY_WIDE_FILLS=1)");
++        }
++        on
++    })
++}
++
++/// Runs the fills gathered by [`HostList::run_deferred`]: on this thread if
++/// they are few or small, else in pieces of about a megabyte on the helper
++/// threads ([`crate::shadow::wide_run`], this thread among them).
++fn flush_fills(fills: &mut Vec<(usize, usize, usize)>) {
++    if fills.is_empty() {
++        return;
++    }
++    const PIECE: usize = 1 << 20;
++    const LEAST: usize = 256 << 10;
++    let started = std::time::Instant::now();
++    let total: usize = fills.iter().map(|f| f.2).sum();
++    let all = std::mem::take(fills);
++    if total < LEAST || all.len() < 4 {
++        for (dst, src, len) in all {
++            copy_fill(dst as *mut u8, src as *const u8, len);
++        }
++    } else {
++        let mut jobs: Vec<Box<dyn FnOnce() + Send>> = Vec::new();
++        let mut group: Vec<(usize, usize, usize)> = Vec::new();
++        let mut bytes = 0;
++        for (dst, src, len) in all {
++            // a long fill cut in pieces (each its own copy, the same bytes)
++            let mut at = 0;
++            while at < len {
++                let n = (len - at).min(PIECE);
++                group.push((dst + at, src + at, n));
++                bytes += n;
++                at += n;
++                if bytes >= PIECE {
++                    let g = std::mem::take(&mut group);
++                    jobs.push(Box::new(move || {
++                        for (dst, src, len) in g {
++                            copy_fill(dst as *mut u8, src as *const u8, len);
++                        }
++                    }));
++                    bytes = 0;
++                }
++            }
++        }
++        if !group.is_empty() {
++            jobs.push(Box::new(move || {
++                for (dst, src, len) in group {
++                    copy_fill(dst as *mut u8, src as *const u8, len);
++                }
++            }));
++        }
++        crate::shadow::wide_run(jobs);
++    }
++    preparing(0, started.elapsed().as_micros() as u64);
++    preparing(1, total as u64);
++}
++
+ /// Whether a submission's refreshes of host copies run on several threads,
+ /// a copy to a thread (`VICTORY_WIDE_REFRESH=1`; off by default).
+ ///
+@@ -8670,6 +9510,14 @@ struct Batch {
      current: std::collections::HashMap<usize, (std::sync::Arc<crate::shadow::Shadow>, usize, usize)>,
      /// Staging buffers (by address) refreshed since the last title write.
      textures: std::collections::HashSet<usize>,
@@ -4525,7 +4629,7 @@ index 0a6f20d4..52f00f5b 100644
  }
  
  impl Batch {
-@@ -8758,8 +9520,10 @@ impl Batch {
+@@ -8758,8 +9606,10 @@ impl Batch {
      /// Before a step that writes title memory: pending refreshes are done
      /// first, and textures are checked again after it.
      fn title_written(&mut self) {
@@ -4536,7 +4640,7 @@ index 0a6f20d4..52f00f5b 100644
          // Where it writes is not known: no copy counts as up to date.
          self.current.clear();
      }
-@@ -8769,8 +9533,10 @@ impl Batch {
+@@ -8769,8 +9619,10 @@ impl Batch {
      /// in this submission that holds some of those bytes, the larger part
      /// beside them stays so.
      fn title_wrote(&mut self, at: usize, len: usize) {
@@ -4547,7 +4651,7 @@ index 0a6f20d4..52f00f5b 100644
          let end = at + len;
          self.current.retain(|_, entry| {
              let (from, to) = (entry.1, entry.2);
-@@ -8787,7 +9553,137 @@ impl Batch {
+@@ -8787,7 +9639,137 @@ impl Batch {
          });
      }
  
@@ -4685,7 +4789,7 @@ index 0a6f20d4..52f00f5b 100644
          self.index.clear();
          // One write-watch asking for the copies that lie close together,
          // not one per copy.
-@@ -8914,6 +9810,120 @@ fn fills_plain() -> bool {
+@@ -8914,6 +9896,120 @@ fn fills_plain() -> bool {
      }
  }
  
@@ -4806,7 +4910,7 @@ index 0a6f20d4..52f00f5b 100644
  /// A fill's copy ([`Step::Fill`]): title memory at `src` into upload memory
  /// at `dst`. In place if it is short and [`fills_plain`] says so, else (and
  /// if a source page was not there) as every copy ([`copy_mapped`]).
-@@ -8978,6 +9988,13 @@ pub(crate) fn copy_mapped(dst: *mut u8, src: *const u8, len: usize, title_dst: b
+@@ -8978,6 +10074,13 @@ pub(crate) fn copy_mapped(dst: *mut u8, src: *const u8, len: usize, title_dst: b
      if ask_first && !crate::texture::committed(dst, len) {
          return;
      }
@@ -4820,7 +4924,7 @@ index 0a6f20d4..52f00f5b 100644
      if title_dst {
          // The kernel writes the destination: it must not be guarded.
          crate::watch::writing(dst as usize, len);
-@@ -9014,6 +10031,7 @@ pub(crate) fn copy_mapped(dst: *mut u8, src: *const u8, len: usize, title_dst: b
+@@ -9014,6 +10117,7 @@ pub(crate) fn copy_mapped(dst: *mut u8, src: *const u8, len: usize, title_dst: b
  /// After a failed bulk read into host memory, skip contiguous holes. Never
  /// cache the query across copies: the title may remap the same address.
  fn read_sparse(src: *const u8, dst: *mut u8, len: usize) {
@@ -4828,7 +4932,7 @@ index 0a6f20d4..52f00f5b 100644
      use windows_sys::Win32::System::Memory::{
          MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_NOACCESS, VirtualQuery,
      };
-@@ -9045,6 +10063,7 @@ fn read_sparse(src: *const u8, dst: *mut u8, len: usize) {
+@@ -9045,6 +10149,7 @@ fn read_sparse(src: *const u8, dst: *mut u8, len: usize) {
  }
  
  fn read_pieces(src: *const u8, dst: *mut u8, len: usize) {
@@ -4836,7 +4940,7 @@ index 0a6f20d4..52f00f5b 100644
      // Something is unmapped: page by page (64 KiB, then 4 KiB in a piece
      // that fails), zeros for what cannot be read.
      for_pieces(src as usize, len, 64 << 10, |at, n| {
-@@ -9066,6 +10085,7 @@ fn read_pieces(src: *const u8, dst: *mut u8, len: usize) {
+@@ -9066,6 +10171,7 @@ fn read_pieces(src: *const u8, dst: *mut u8, len: usize) {
  /// Reads title memory at `src` into `dst`; false if a page of it is not
  /// readable.
  pub(crate) fn read_into(src: *const u8, dst: &mut [u8]) -> bool {
@@ -4844,7 +4948,7 @@ index 0a6f20d4..52f00f5b 100644
      #[cfg(feature = "diagnostics")]
      crate::backreads::touched(src as usize, dst.len(), false);
      // In place first, if asked for (`crate::plaincopy`): the destination is
-@@ -9112,6 +10132,7 @@ fn direct_writes() -> bool {
+@@ -9112,6 +10218,7 @@ fn direct_writes() -> bool {
  /// Copies host memory into title memory after a submission (what shaders
  /// wrote), leaving pages that are not mapped alone.
  pub(crate) fn write_mapped(dst: *mut u8, src: *const u8, len: usize) {
@@ -4852,7 +4956,7 @@ index 0a6f20d4..52f00f5b 100644
      use windows_sys::Win32::System::Diagnostics::Debug::WriteProcessMemory;
      use windows_sys::Win32::System::Threading::GetCurrentProcess;
      #[cfg(feature = "diagnostics")]
-@@ -9280,6 +10301,8 @@ struct Presenter {
+@@ -9280,6 +10387,8 @@ struct Presenter {
      ahead: Vec<(HostList, u64)>,
      hwnd: HWND,
      meter: Meter,
@@ -4861,7 +4965,7 @@ index 0a6f20d4..52f00f5b 100644
  }
  
  /// The frame rate, shown in the window's caption every second and logged
-@@ -9347,7 +10370,12 @@ impl Meter {
+@@ -9347,7 +10456,12 @@ impl Meter {
          let mesh_largest = MESH_GROUPS[0].swap(0, Ordering::Relaxed);
          let mesh_groups = MESH_GROUPS[1].swap(0, Ordering::Relaxed) as f64 / frames;
          tracing::info!(
@@ -4875,7 +4979,7 @@ index 0a6f20d4..52f00f5b 100644
          );
          // (Run 200 counted indirect compute records asking for 77,000 to
          // 98,000 groups in x, 0.2 to 0.8 a frame, cut to the 65,535 one
-@@ -9355,6 +10383,15 @@ impl Meter {
+@@ -9355,6 +10469,15 @@ impl Meter {
          // the card's memory.)
          {
              let [texture_us, slots] = [0, 1].map(|i| crate::draw::HEAP_PASS_PARTS[i].swap(0, Ordering::Relaxed));
@@ -4891,7 +4995,7 @@ index 0a6f20d4..52f00f5b 100644
              tracing::info!(
                  "the pass over the heap per frame (the frame line's \"heap buffers ... ms\" is both parts): {:.1} ms in its                  pass over textures picked by index; {:.0} buffer slots looked at by its pass over buffer views",
                  texture_us as f64 / 1e3 / frames,
-@@ -9403,6 +10440,47 @@ impl Meter {
+@@ -9403,6 +10526,47 @@ impl Meter {
                       hold still (the runtime remapping it); the rest is reading, hashing and detiling"
                  );
              }
@@ -4939,7 +5043,7 @@ index 0a6f20d4..52f00f5b 100644
              let [through, left] = [0, 1].map(|i| crate::texture::UNLOCKED[i].swap(0, Ordering::Relaxed) as f64 / frames);
              if through + left > 0.0 {
                  tracing::info!(
-@@ -9622,7 +10700,10 @@ impl Host {
+@@ -9622,7 +10786,10 @@ impl Host {
              tracing::warn!(format = desc.Format.0, "cannot present this format");
              return None;
          };
@@ -4951,7 +5055,7 @@ index 0a6f20d4..52f00f5b 100644
          let mut presenter = self.presenter.lock().unwrap_or_else(|e| e.into_inner());
          if presenter.is_none() {
              *presenter = match self.presenter(width, height, format) {
-@@ -9691,6 +10772,26 @@ impl Host {
+@@ -9691,6 +10858,26 @@ impl Host {
              };
              copy.reset();
              let list = &copy.list;
@@ -4978,7 +5082,7 @@ index 0a6f20d4..52f00f5b 100644
              list.ResourceBarrier(&[
                  transition(texture, state, D3D12_RESOURCE_STATE_COPY_SOURCE),
                  transition(
-@@ -9792,6 +10893,7 @@ impl Host {
+@@ -9792,6 +10979,7 @@ impl Host {
                  ahead: Vec::new(),
                  hwnd,
                  meter: Meter::new(),
@@ -4986,7 +5090,7 @@ index 0a6f20d4..52f00f5b 100644
              })
          }
      }
-@@ -10457,6 +11559,95 @@ mod batch {   // Batch::texture_due lives here; `mod tests` is already taken at
+@@ -10457,6 +11645,95 @@ mod batch {   // Batch::texture_due lives here; `mod tests` is already taken at
      }
  }
  
@@ -17086,7 +17190,7 @@ index 28a36f1b..526a8eb7 100644
 +    }
 +}
 diff --git a/crates/victory-shader/src/emit/valu_tests.rs b/crates/victory-shader/src/emit/valu_tests.rs
-index 6a4b3b84..3ca24170 100644
+index 6a4b3b84..55eceea9 100644
 --- a/crates/victory-shader/src/emit/valu_tests.rs
 +++ b/crates/victory-shader/src/emit/valu_tests.rs
 @@ -47,6 +47,14 @@ const fn vop3(op: u16, vdst: u8, src0: u16, src1: u16, src2: u16) -> [u32; 2] {
@@ -17996,7 +18100,7 @@ index 6a4b3b84..3ca24170 100644
  /// `v_mad_legacy_f32` as RDNA 2 runs it: fused (`v_fma_legacy_f32`), with
  /// flushed subnormal sources and the legacy zero-factor rule.
  #[test]
-@@ -1654,3 +2519,126 @@ fn legacy_mad_fuses_its_product_and_flushes_its_sources() {
+@@ -1654,3 +2519,127 @@ fn legacy_mad_fuses_its_product_and_flushes_its_sources() {
          assert_eq!(got, want[i], "{backend}: case {i}");
      });
  }
@@ -18078,6 +18182,7 @@ index 6a4b3b84..3ca24170 100644
 +        root_srvs: lowered.root_srvs,
 +        root_uavs: lowered.root_uavs,
 +        root_indexed_views: res.root_indexed_views,
++        heap_samplers: Vec::new(),
 +    };
 +    if let Ok(mut v) = validator::Validator::load(validator::Validator::default_path().as_deref()) {
 +        let mut copy = shader.dxil.clone();
@@ -18745,10 +18850,10 @@ index 2b6edd46..4f9bc9e9 100644
      /// per outcome (other words are the same for both).
      fn select(
 diff --git a/crates/victory-shader/src/structure.rs b/crates/victory-shader/src/structure.rs
-index a913176c..ef731fd9 100644
+index a913176c..1a125f88 100644
 --- a/crates/victory-shader/src/structure.rs
 +++ b/crates/victory-shader/src/structure.rs
-@@ -897,6 +897,17 @@ impl<'a> Lanes<'a> {
+@@ -897,6 +897,31 @@ impl<'a> Lanes<'a> {
          if let Some(&m) = self.other.get(&k) {
              return (m, false);
          }
@@ -18762,11 +18867,25 @@ index a913176c..ef731fd9 100644
 +                self.masks.insert(k, m);
 +                return (m, true);
 +            }
++            // HybridGt: the two words come from a pair of joins (a mask
++            // parked in two VGPR lanes across a loop: the water volumetrics
++            // programs): the join of the pair, as for a pair joined in place.
++            if source != k
++                && !self.masks.contains_key(&source)
++                && self.phis.contains_key(&source.0)
++                && self.phis.contains_key(&source.1)
++                && let Some((m, derived)) = self.join(source)
++            {
++                let cache = if derived { &mut self.masks } else { &mut self.other };
++                cache.insert(source, m);
++                cache.insert(k, m);
++                return (m, derived);
++            }
 +        }
          let p = self.p;
          let (m, derived) = match self.join(k) {
              Some(join) => join,
-@@ -939,6 +950,20 @@ impl<'a> Lanes<'a> {
+@@ -939,6 +964,20 @@ impl<'a> Lanes<'a> {
          (m, derived)
      }
  
@@ -18787,7 +18906,7 @@ index a913176c..ef731fd9 100644
      /// A mask joined by phis at a block entry, and whether a mask coming in
      /// on a forward edge derives from EXEC or a VALU result. Where every
      /// lane arriving so far has the incoming mask set (or clear), the join
-@@ -1690,6 +1715,32 @@ mod tests {
+@@ -1690,6 +1729,63 @@ mod tests {
          }
      }
  
@@ -18814,6 +18933,37 @@ index a913176c..ef731fd9 100644
 +            let compare = p.blocks[0].insts[0].write(Reg::S(VCC)).unwrap();
 +            let restored = p.blocks[2].insts[0].write(Reg::S(EXEC)).unwrap();
 +            assert_eq!(s.masks[&restored] == s.masks[&compare], intact);
++        }
++    }
++
++    /// HybridGt: the two dwords of a mask copied on both ways into a join
++    /// (one join per dword, as a mask parked in two VGPR lanes comes out of a
++    /// loop in the water volumetrics programs) and copied once more after it
++    /// are that mask; with the high dword rewritten on one way they are not.
++    #[test]
++    fn a_mask_whose_dwords_are_joined_apart_is_the_mask() {
++        for (high, intact) in [(0xBE83_036B, true), (0xBE83_036A, false)] {
++            let p = build(
++                &[
++                    0x7D84_0080, // v_cmp_eq_u32 vcc, 0, v0
++                    0xBE82_036A, // s_mov_b32 s2, vcc_lo
++                    0xBE83_036B, // s_mov_b32 s3, vcc_hi
++                    0xBF06_0100, // s_cmp_eq_u32 s0, s1
++                    0xBF85_0002, // s_cbranch_scc1 -> join at 28
++                    0xBE82_036A, // s_mov_b32 s2, vcc_lo
++                    high,        // s_mov_b32 s3, vcc_hi (or vcc_lo)
++                    0xBE84_0302, // s_mov_b32 s4, s2
++                    0xBE85_0303, // s_mov_b32 s5, s3
++                    0xBEFE_0404, // s_mov_b64 exec, s[4:5]
++                    0x7E02_0280, // v_mov_b32 v1, 0
++                    S_ENDPGM,
++                ],
++                true,
++            );
++            let s = structure(&p).unwrap();
++            let compare = p.blocks[0].insts[0].write(Reg::S(VCC)).unwrap();
++            let restored = p.blocks[2].insts[2].write(Reg::S(EXEC)).unwrap();
++            assert_eq!(s.masks.get(&restored) == s.masks.get(&compare), intact, "high dword intact: {intact}");
 +        }
 +    }
 +
