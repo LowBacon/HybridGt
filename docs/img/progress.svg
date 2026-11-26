@@ -19,9 +19,9 @@
 <text x="686" y="121" class="n">14,237 of 14,442</text>
 <text x="16" y="150">Compute pipelines on the card</text>
 <rect class="bg" x="250" y="138" width="380" height="16" rx="4" fill="#eaeef2"/>
-<rect x="250" y="138" width="378.5" height="16" rx="4" fill="#2e9e4f"/>
-<text x="640" y="151" class="p">99.6 %</text>
-<text x="686" y="151" class="n">2,671 of 2,682 (wave-wide form)</text>
+<rect x="250" y="138" width="379.2" height="16" rx="4" fill="#2e9e4f"/>
+<text x="640" y="151" class="p">99.8 %</text>
+<text x="686" y="151" class="n">2,677 of 2,682 (wave- and group-wide forms)</text>
 <text x="16" y="180">Mesh pipelines on the card</text>
 <rect class="bg" x="250" y="168" width="380" height="16" rx="4" fill="#eaeef2"/>
 <rect x="250" y="168" width="380.0" height="16" rx="4" fill="#2e9e4f"/>
