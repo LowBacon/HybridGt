@@ -21,7 +21,7 @@ BADGES = [
 # (programs, fps); otherwise the five-step scale of docs/STATUS.md (20 % a step).
 AREAS = [
     ('Shader programs translate', 99.9, '26,069 of 26,084'),
-    ('Pass Microsoft\'s DXIL validator', 98.4, '25,466 of 25,874 emitted'),
+    ('Pass Microsoft\'s DXIL validator', 98.4, '25,464 of 25,874 emitted'),
     ('Vertex/pixel pipelines on the card', 98.6, '14,237 of 14,442'),
     ('Compute pipelines on the card', 99.8, '2,677 of 2,682 (wave- and group-wide forms)'),
     ('Mesh pipelines on the card', 100.0, '8,765 of 8,765'),
