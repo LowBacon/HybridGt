@@ -22,10 +22,11 @@ game**.
 | 0x1c8 graphics pipelines (console path) | `●●●○○` ③ | Built, but they hide bodies (stencil not decoded). Off |
 | Walls and surfaces missing or low quality | `●●●○○` ③ | The card is at its memory line (10.5 of 10.75 GB): 18,000-25,000 textures wait for room, so some surfaces are drawn untextured or at low detail. Textures are never let go while the game's texture table points at them. `VICTORY_CARD_WINDOWS_MB=512` (on): textures waiting 12,000 -> 10,200, 800 MB more free on the card, fps the same. Next: free idle textures safely. Textures on screen first (`VICTORY_TEXTURE_MARKS=1`, built and tested on the card, off): shaders mark the texture slots they sample, a copy queue reads the map back every half second in 2.4 ms, and marked textures are uploaded first. Its first game try read the map through the bus and stalled loading; fixed, not yet run in game again |
 | Lucia's clothes don't change | `●●●○○` ③ | Characters' skins and clothes are "baked" by the game from source textures; the bakes run while those sources still wait for upload, so a bake can keep the old look. `VICTORY_BAKE_SOURCES=full` (on): each bake's sources are uploaded first (40 textures, 48 MB, in the test run; none skipped). Not yet seen in game at an outfit change |
+| Black faces in cutscenes | `●●○○○` ② | One character's face is black in a cutscene of the prologue, after fxceless's black-face fix (textures under DirectStorage writes made due again) too. Not the ray-tracing drops (those are the builder's dispatches, ~350 a frame, expected); next: the 10 pixel-ordering character shaders (`VICTORY_POPS=rov`) in isolation |
 | Lag spikes | `●●○○○` ② | Worst frames 1.3-2.8 s, when textures and pipelines arrive |
 | Ray-traced shadow programs (5) | `●●●○○` ③ | All 5 translate, validate and get pipelines: the address of a view picked at a computed index comes from a host table (after VIctory-7900XTX 027e367a, reimplemented), and mask operations on a joined number read as data (VIctory-7900XTX d1f883ec). Not yet seen in game |
 | Ped tint cut-out pixel shaders (10) | `●●●○○` ③ | They order overlapping pixels themselves (POPS). `VICTORY_POPS=rov` (off until seen in game) translates them with rasterizer-ordered views, so the card keeps that order: all 10 validate and get pipelines on the RTX 4070 Ti. `VICTORY_POPS=1` (no order) made characters' eyes glow |
-| Mouth animation | `●●○○○` ② | The head's GPU programs (`ped_standard_head_cs`) all translate; four run in game (sticky lips, blend-shape mappings, the network's output extract, normals). No GPU program evaluates the face network: the game's CPU code does, and the extract's result stayed the same over ~1,500 frames of talking. So the cause is on the CPU side: the face animation is not advancing (speech timing or facial animation data). Next: trace what the CPU writes before the extract |
+| Mouth animation | `●●●●○` ④ | **Mouths move** since the merge of fxceless 52ac4ec0 (16-bit face-network indices moved through typed views bit-exactly, pull request #927 by tippythetaidum; SDWA sign extension): seen in game. At 5-7 fps they update only that often and a frame late: the frame rate is what remains |
 
 ## Frame rate
 
@@ -42,3 +43,14 @@ Every test of the runtime's workspace passes (673, 0 failed; the GPU tests on th
 repository's asset policy (`cargo xtask policy`). A full translation of the title's 26,084 shader programs
 with validation and pipeline creation on the card: all translate; compute 2,682 of 2,682 pipelines; no
 program lost a pipeline or its validation against the run before.
+
+## Other builds measured on this PC (RTX 4070 Ti)
+
+| Build | Result |
+|---|---|
+| VIctory-7900XTX main `2de99801`, renderer ports 1-7 on, Series X | 2.0-2.5 fps and **no 3D world** (only 2D text): its ports are built for AMD cards |
+| cool_fox `f4b48ad` (its own launcher, Series S) | 1.9-2.7 fps |
+| HybridGt `play-fast` (this repository) | 5.0-6.9 fps median by scene, whole picture |
+
+AnyXboxX (LooperSalty) reports 15-20 fps on Linux with Proton, an RX 9070 XT and a patched RADV; not
+measured on Windows. Its graphics are a VIctory copy (`third_party/victory`).
