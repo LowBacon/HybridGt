@@ -1,0 +1,4 @@
+bbbf2994 FidelityFX: the title's upscale context flags said by name; AMD's runtime's messages go to our log (not to the title's callback); VICTORY_FFX_DEBUG=1 turns on its checks, VICTORY_FFX_ADD_FLAG
+751a491a FidelityFX stage 2: the title's FSR calls run AMD's PC upscaler on the host device and the host list (VICTORY_FFX_DIR); list hooks for external host work (HybridGt)
+f25c8758 FidelityFX pseudo-module (stage 1: NO_PROVIDER, logs descriptor types); constant null descriptors at a join read the null slot; finer refusal reasons (HybridGt)
+c37fa93e Audio: VICTORY_AUDIO_DELAY_MS holds the title's sound back so speech meets the mouths (off by default)

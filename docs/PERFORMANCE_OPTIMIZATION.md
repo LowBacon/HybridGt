@@ -851,3 +851,18 @@ the next run.
 by itself, prepares shaders, starts a preset and shows the frame rate. Built with
 `HGT_RUNTIME_EXE=<victory.exe>`, the runtime is inside it and unpacked on first start (checked:
 byte-identical).
+
+### The base changes: VIctory-NVIDIA, 14.2 fps (2026-11-27, afternoon)
+
+Same PC, same scripted route, shader caches warmed and pipelines made beforehand, back to back:
+
+| Run | Runtime | fps median | best | p10 | frame median | graphics memory at the end |
+|---|---|---|---|---|---|---|
+| x6-fast | HybridGt on fxceless (merged 9a9091d1), `play-fast` | 5.8 | 7.4 | 1.9 | 174 ms | 9.2 GB |
+| x6-nvidia | VIctory-NVIDIA 9d6300fa, its `play-foxhound.ps1` switches, no DLSS | **14.2** | **18.0** | **3.5** | **70 ms** | **5.6 GB** |
+
+The tester: "the build runs smoothly at stable 15 fps"; people and assets load faster in cutscenes.
+Still seen there: textures pixelated or another colour until they have loaded, eyes and mouths look
+wrong. So HybridGt 0.2.0 takes VIctory-NVIDIA as its runtime (`patches/victory-nvidia`), with FSR 3.1
+and the sound delay carried over; fxceless's mouth fix (#927) is next. Its first run is black for
+minutes while the driver makes pipelines: `victory warm` makes them ahead (39,160 here).

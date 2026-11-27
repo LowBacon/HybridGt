@@ -13,10 +13,12 @@ use std::time::{Duration, Instant};
 pub struct Found {
     pub game_dir: Option<PathBuf>,
     pub runtime_exe: Option<PathBuf>,
-    pub nvidia_exe: Option<PathBuf>,
+    pub classic_exe: Option<PathBuf>,
     pub source_dir: Option<PathBuf>,
     pub cache_dir: Option<String>,
     pub data_dir: Option<String>,
+    pub classic_cache_dir: Option<String>,
+    pub classic_data_dir: Option<String>,
     pub ffx_dir: Option<String>,
     pub folders_seen: usize,
 }
@@ -99,29 +101,38 @@ pub fn scan(progress: impl Fn(usize)) -> Found {
             queue.push_back((e.path(), depth + 1));
         }
     }
-    // HybridGt's runtime is the one built in a `victory-gta6` checkout; VIctory-NVIDIA's in one
-    // named for it. Otherwise the first found.
+    // HybridGt's runtime since 0.2.0 is the one built in a `victory-nvidia` checkout (or any
+    // other than the earlier `victory-gta6` one); that earlier one is Classic's.
     let named = |part: &str| runtimes.iter().find(|r| r.to_string_lossy().to_lowercase().contains(part)).cloned();
-    found.runtime_exe = named("victory-gta6").or_else(|| runtimes.iter().find(|r| !r.to_string_lossy().to_lowercase().contains("nvidia")).cloned());
-    found.nvidia_exe = named("nvidia");
-    if let Some(rt) = &found.runtime_exe {
-        // ...\<checkout>\target\release\victory.exe
-        let checkout = rt.ancestors().nth(3).map(Path::to_path_buf);
-        if let Some(c) = &checkout
-            && c.join("Cargo.toml").is_file()
-        {
+    found.classic_exe = named("victory-gta6");
+    found.runtime_exe = named("victory-nvidia")
+        .or_else(|| runtimes.iter().find(|r| !r.to_string_lossy().to_lowercase().contains("victory-gta6")).cloned());
+    let checkout = |rt: &Path| rt.ancestors().nth(3).map(Path::to_path_buf);
+    if let Some(c) = found.runtime_exe.as_deref().and_then(checkout) {
+        if c.join("Cargo.toml").is_file() {
             found.source_dir = Some(c.clone());
         }
-        if let Some(work) = checkout.as_deref().and_then(Path::parent) {
-            read_launcher(&work.join("play-fast.cmd"), &mut found);
+        if let Some(work) = c.parent() {
+            let (mut cache, mut data, mut ffx) = (None, None, None);
+            read_launcher(&work.join("play-nvidia.cmd"), &mut cache, &mut data, &mut ffx);
+            (found.cache_dir, found.data_dir) = (cache, data);
+            found.ffx_dir = found.ffx_dir.take().or(ffx);
         }
+    }
+    if let Some(c) = found.classic_exe.as_deref().and_then(checkout)
+        && let Some(work) = c.parent()
+    {
+        let (mut cache, mut data, mut ffx) = (None, None, None);
+        read_launcher(&work.join("play-fast.cmd"), &mut cache, &mut data, &mut ffx);
+        (found.classic_cache_dir, found.classic_data_dir) = (cache, data);
+        found.ffx_dir = found.ffx_dir.take().or(ffx);
     }
     progress(found.folders_seen);
     found
 }
 
-/// The folders a HybridGt launcher (`set VICTORY_...=` lines) names.
-fn read_launcher(path: &Path, found: &mut Found) {
+/// The folders a HybridGt launcher (`set VICTORY_...=` lines) names, where they exist.
+fn read_launcher(path: &Path, cache: &mut Option<String>, data: &mut Option<String>, ffx: &mut Option<String>) {
     let Ok(text) = std::fs::read_to_string(path) else { return };
     for line in text.lines() {
         let Some(rest) = line.trim().strip_prefix("set ") else { continue };
@@ -131,9 +142,9 @@ fn read_launcher(path: &Path, found: &mut Found) {
             continue;
         }
         match key.trim() {
-            "VICTORY_CACHE_DIR" => found.cache_dir = Some(value),
-            "VICTORY_DATA_DIR" => found.data_dir = Some(value),
-            "VICTORY_FFX_DIR" => found.ffx_dir = Some(value),
+            "VICTORY_CACHE_DIR" => *cache = Some(value),
+            "VICTORY_DATA_DIR" => *data = Some(value),
+            "VICTORY_FFX_DIR" => *ffx = Some(value),
             _ => {}
         }
     }
@@ -149,10 +160,11 @@ mod tests {
         std::fs::create_dir_all(dir.join("cache")).unwrap();
         let cmd = dir.join("play-fast.cmd");
         std::fs::write(&cmd, format!("@echo off\r\nset VICTORY_CACHE_DIR={}\r\nset VICTORY_DATA_DIR=Z:\\nowhere\r\n", dir.join("cache").display())).unwrap();
-        let mut found = Found::default();
-        read_launcher(&cmd, &mut found);
-        assert_eq!(found.cache_dir.as_deref(), Some(dir.join("cache").to_string_lossy().as_ref()));
-        assert_eq!(found.data_dir, None, "a folder that does not exist is not taken");
+        let (mut cache, mut data, mut ffx) = (None, None, None);
+        read_launcher(&cmd, &mut cache, &mut data, &mut ffx);
+        assert_eq!(cache.as_deref(), Some(dir.join("cache").to_string_lossy().as_ref()));
+        assert_eq!(data, None, "a folder that does not exist is not taken");
+        assert_eq!(ffx, None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

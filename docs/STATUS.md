@@ -31,6 +31,8 @@ game**.
 
 ## Frame rate
 
+**Since 0.2.0: 14.2 fps median, 18.0 best** on the VIctory-NVIDIA base (same PC, same route; the earlier runtime 5.8). Below: the earlier runtime's history.
+
 World median on the RTX 4070 Ti, each step measured:
 3.0 → 3.7 → 4.8 → 5.8 → 6.7 → **7.7 fps** (6.7 with interiors lit). Menus run at the game's own
 30 fps. The frame is CPU-bound: preparing title memory for the card, not the card itself.

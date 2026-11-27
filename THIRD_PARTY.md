@@ -20,3 +20,15 @@ HybridGt is GPL-3.0-or-later. This file lists every outside project HybridGt use
 | WinDurango | LGPL-3.0 | Not inspected. |
 
 Licence note on upstreams (an observation, not legal advice): XCL's `crates/xcl/src/hle/bcpack/victory.rs` says it was "Ported from VIctory's victory-formats/src/bcpack.rs". That is GPL-3.0-or-later code inside a GPL-2.0-only project. HybridGt avoids the question by depending on VIctory directly.
+
+## The runtime since 0.2.0
+
+- **[VIctory-NVIDIA](https://github.com/pepezin-ai/VIctory-NVIDIA)** by pepezin-ai (trustno1-coder),
+  GPL-3.0-or-later, at `9d6300fa`: the runtime HybridGt.exe carries, with HybridGt's patch
+  (`patches/victory-nvidia`). Its README credits the many projects it was built from.
+- **[foxhound](https://github.com/readmet3xt-lab/foxhound)** by readmet3xt-lab, GPL-3.0-or-later: the
+  base VIctory-NVIDIA stands on (Series X at 1440p, the copy machinery that runs about twice as fast,
+  DLSS and frame generation through NVIDIA Streamline, loaded at run time from a folder you supply).
+- **[VIctory](https://github.com/Marvisak/VIctory)** by Marvisak and contributors, under all of them.
+- NVIDIA Streamline, DLSS and Reflex, and AMD FidelityFX, are their makers'; nothing of them is in this
+  repository or in HybridGt.exe: they are loaded from folders you supply.

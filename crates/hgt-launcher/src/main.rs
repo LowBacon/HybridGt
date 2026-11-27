@@ -64,12 +64,23 @@ fn icon() -> egui::IconData {
 struct Config {
     game_dir: String,
     runtime_exe: String,
+    /// The earlier runtime (fxceless's victory-gta6 with HybridGt's patch), for "Classic".
+    classic_exe: String,
+    classic_cache_dir: String,
+    classic_data_dir: String,
+    /// 2 since the runtime moved to the VIctory-NVIDIA base (0.2.0); a config without it is
+    /// older (0), not the default.
+    #[serde(default)]
+    version: u32,
+    /// Read from launchers before 0.2.0 only.
+    #[serde(skip_serializing)]
     nvidia_exe: String,
     source_dir: String,
     cache_dir: String,
     data_dir: String,
     logs_dir: String,
     ffx_dir: String,
+    #[serde(deserialize_with = "presets::lenient")]
     preset: Preset,
     inplace: bool,
     hash_wide: bool,
@@ -83,13 +94,17 @@ impl Default for Config {
         Config {
             game_dir: String::new(),
             runtime_exe: String::new(),
+            classic_exe: String::new(),
+            classic_cache_dir: home.join("classic-cache").display().to_string(),
+            classic_data_dir: home.join("classic-data").display().to_string(),
+            version: 2,
             nvidia_exe: String::new(),
             source_dir: String::new(),
             cache_dir: home.join("cache").display().to_string(),
             data_dir: home.join("data").display().to_string(),
             logs_dir: home.join("logs").display().to_string(),
             ffx_dir: String::new(),
-            preset: Preset::Performance,
+            preset: Preset::Fast,
             inplace: false,
             hash_wide: false,
             ambient: true,
@@ -112,7 +127,18 @@ fn config_path() -> PathBuf {
 
 impl Config {
     fn load() -> Self {
-        std::fs::read_to_string(config_path()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+        let mut c: Config = std::fs::read_to_string(config_path()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+        if c.version < 2 {
+            // Before 0.2.0 the runtime was the earlier one: it and its folders become Classic's
+            // (saves and warm caches kept), and the VIctory-NVIDIA build, if one was set, the main.
+            let defaults = Config::default();
+            c.classic_exe = std::mem::take(&mut c.runtime_exe);
+            c.classic_cache_dir = std::mem::replace(&mut c.cache_dir, defaults.cache_dir);
+            c.classic_data_dir = std::mem::replace(&mut c.data_dir, defaults.data_dir);
+            c.runtime_exe = std::mem::take(&mut c.nvidia_exe);
+            c.version = 2;
+        }
+        c
     }
     fn save(&self) {
         if let Ok(t) = serde_json::to_string_pretty(self) {
@@ -341,10 +367,10 @@ impl Launcher {
             c.runtime_exe = r.display().to_string();
             took.push("runtime");
         }
-        if let Some(r) = found.nvidia_exe
-            && !Path::new(&c.nvidia_exe).is_file()
+        if let Some(r) = found.classic_exe
+            && !Path::new(&c.classic_exe).is_file()
         {
-            c.nvidia_exe = r.display().to_string();
+            c.classic_exe = r.display().to_string();
         }
         if let Some(s) = found.source_dir
             && c.source_dir.is_empty()
@@ -354,6 +380,8 @@ impl Launcher {
         for (slot, value, default) in [
             (&mut c.cache_dir, found.cache_dir, defaults.cache_dir),
             (&mut c.data_dir, found.data_dir, defaults.data_dir),
+            (&mut c.classic_cache_dir, found.classic_cache_dir, defaults.classic_cache_dir),
+            (&mut c.classic_data_dir, found.classic_data_dir, defaults.classic_data_dir),
             (&mut c.ffx_dir, found.ffx_dir, defaults.ffx_dir),
         ] {
             if let Some(v) = value
@@ -379,7 +407,7 @@ impl Launcher {
     }
 
     fn runtime_for(&self, preset: Preset) -> String {
-        if preset == Preset::Nvidia { self.config.nvidia_exe.clone() } else { self.config.runtime_exe.clone() }
+        if preset.classic() { self.config.classic_exe.clone() } else { self.config.runtime_exe.clone() }
     }
 
     /// The switches a run gets: the preset's, the toggles, and the folders.
@@ -392,12 +420,12 @@ impl Launcher {
             env.push((k.to_string(), v));
         };
         set("VICTORY_GAME_DIR", c.game_dir.clone());
-        let beside = |dir: &str, name: &str| if preset == Preset::Nvidia { format!("{dir}-{name}") } else { dir.to_string() };
-        set("VICTORY_CACHE_DIR", beside(&c.cache_dir, preset.cache_name()));
-        set("VICTORY_DATA_DIR", beside(&c.data_dir, preset.data_name()));
-        if preset != Preset::Nvidia {
+        let (cache, data) = if preset.classic() { (&c.classic_cache_dir, &c.classic_data_dir) } else { (&c.cache_dir, &c.data_dir) };
+        set("VICTORY_CACHE_DIR", cache.clone());
+        set("VICTORY_DATA_DIR", data.clone());
+        if preset.classic() {
             // Device method 0x218's index of the game's own shader heads, made on this PC.
-            let index = Path::new(&c.cache_dir).join("native-index.txt");
+            let index = Path::new(cache).join("native-index.txt");
             if index.is_file() {
                 set("VICTORY_NATIVE_INDEX", index.display().to_string());
             }
@@ -407,15 +435,15 @@ impl Launcher {
             if c.hash_wide {
                 set("VICTORY_CARD_HASH_WIDE", "1".into());
             }
-            if !c.ambient {
-                env.retain(|(k, _)| k != "VICTORY_AMBIENT");
-            }
-            if c.audio_delay_ms > 0 {
-                env.push(("VICTORY_AUDIO_DELAY_MS".into(), c.audio_delay_ms.to_string()));
-            }
-            if matches!(preset, Preset::SeriesSFsr | Preset::AllInOne) && !c.ffx_dir.is_empty() {
-                env.push(("VICTORY_FFX_DIR".into(), c.ffx_dir.clone()));
-            }
+        }
+        if !c.ambient {
+            env.retain(|(k, _)| k != "VICTORY_AMBIENT" && k != "VICTORY_AMBIENT_AIR");
+        }
+        if c.audio_delay_ms > 0 {
+            env.push(("VICTORY_AUDIO_DELAY_MS".into(), c.audio_delay_ms.to_string()));
+        }
+        if preset.fsr() && !c.ffx_dir.is_empty() {
+            env.push(("VICTORY_FFX_DIR".into(), c.ffx_dir.clone()));
         }
         env
     }
@@ -753,8 +781,8 @@ impl Launcher {
         let mut changed = false;
         style::card(ui, |ui| {
             changed |= style::toggle_row(ui, "Stand-in light", "Lights interiors in place of the game's traced light (about 1 fps).", &mut self.config.ambient);
-            changed |= style::toggle_row(ui, "In-place memory", "Opens the game's memory to the card directly (measured +1 fps, one run).", &mut self.config.inplace);
-            changed |= style::toggle_row(ui, "Wide hashing", "Hashes copies on the card 64 threads a piece (faster median, bigger spikes).", &mut self.config.hash_wide);
+            changed |= style::toggle_row(ui, "In-place memory (Classic)", "Opens the game's memory to the card directly (measured +1 fps, one run).", &mut self.config.inplace);
+            changed |= style::toggle_row(ui, "Wide hashing (Classic)", "Hashes copies on the card 64 threads a piece (faster median, bigger spikes).", &mut self.config.hash_wide);
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
@@ -788,11 +816,11 @@ impl Launcher {
         style::title(ui, "Builds");
         let mut changed = false;
         style::card(ui, |ui| {
-            ui.label(RichText::new("HybridGt runtime (victory.exe)").strong().color(Color32::WHITE));
+            ui.label(RichText::new("HybridGt runtime (victory.exe, VIctory-NVIDIA base)").strong().color(Color32::WHITE));
             changed |= style::path_field(ui, &mut self.config.runtime_exe);
             ui.add_space(6.0);
-            ui.label(RichText::new("VIctory-NVIDIA runtime (optional, for its preset)").strong().color(Color32::WHITE));
-            changed |= style::path_field(ui, &mut self.config.nvidia_exe);
+            ui.label(RichText::new("Classic runtime (optional, for the Classic preset)").strong().color(Color32::WHITE));
+            changed |= style::path_field(ui, &mut self.config.classic_exe);
         });
         ui.add_space(12.0);
         style::card(ui, |ui| {
@@ -865,9 +893,25 @@ mod tests {
     }
 
     #[test]
+    fn an_older_launchers_config_moves_to_classic() {
+        let old = r#"{"game_dir":"G","runtime_exe":"old.exe","nvidia_exe":"new.exe","cache_dir":"C","data_dir":"D","preset":"Performance"}"#;
+        let mut c: Config = serde_json::from_str(old).unwrap();
+        assert_eq!(c.preset, Preset::Fast, "an unknown preset reads as Fast");
+        // as `Config::load` does
+        if c.version < 2 {
+            let defaults = Config::default();
+            c.classic_exe = std::mem::take(&mut c.runtime_exe);
+            c.classic_cache_dir = std::mem::replace(&mut c.cache_dir, defaults.cache_dir);
+            c.classic_data_dir = std::mem::replace(&mut c.data_dir, defaults.data_dir);
+            c.runtime_exe = std::mem::take(&mut c.nvidia_exe);
+        }
+        assert_eq!((c.classic_exe.as_str(), c.classic_data_dir.as_str(), c.runtime_exe.as_str()), ("old.exe", "D", "new.exe"));
+    }
+
+    #[test]
     fn every_preset_names_its_folders() {
         for p in Preset::ALL {
-            assert!(!p.cache_name().is_empty() && !p.data_name().is_empty() && !p.switches().is_empty());
+            assert!(!p.switches().is_empty() && p.label().len() > 2);
         }
     }
 }

@@ -30,10 +30,11 @@ are measured ratios where one exists (programs translated, frames a second); oth
 five-step scale of [STATUS.md](docs/STATUS.md), 20 % a step. The images are drawn by
 `tools/make_status_images.py`.</sub>
 
-**Not yet playable at a good frame rate.** On a new game the intro, menus and prologue render with
-whole characters, at **6.3 fps median** in the world with fxceless's newest work merged (best 8.7;
-first run of a build stutters while pipelines compile). Menus run at 30 fps. Graphics memory fell
-from 9.9 to 8.0 GB with the merge.
+**New base, 2.4x faster (HybridGt 0.2.0):** the runtime is now
+[VIctory-NVIDIA](https://github.com/pepezin-ai/VIctory-NVIDIA) (pepezin-ai, on readmet3xt-lab's
+[foxhound](https://github.com/readmet3xt-lab/foxhound)) with HybridGt's additions. On the test PC, same
+route, back to back: **14.2 fps median** in the world (best 18.0), against 5.8 for the earlier runtime,
+and **5.6 GB** of graphics memory against 9.2. Menus run at 30 fps.
 
 ## Launcher: one file
 
@@ -43,9 +44,9 @@ runtime inside. Start it and it finds your copy of the game, the runtime and you
 
 ![HybridGt launcher](docs/img/launcher.png)
 
-- **Presets:** All in one (AMD FSR 3.1, the game's ray tracing, the water fix, in-place memory),
-  Performance (the measured switches), Ray tracing, Series S + FSR 3.1, and VIctory-NVIDIA (its own
-  runtime, if you have it).
+- **Presets:** Fast (the default: Series X at 1440p with every speed switch, 14 fps measured), All in
+  one (AMD FSR 3.1 + the game's ray tracing, experimental), Series S + FSR 3.1 (any GPU), Ray tracing
+  (experimental), and Classic (the earlier runtime, with its own saves).
 - **Prepare shaders** translates every shader ahead of the first run, so the game does not stutter.
 - **Live frame rate**, draws per frame and the log while the game runs; settings as switches; a
   build from source for those who want one.
@@ -78,7 +79,10 @@ Xbox controllers work as they are. Without one, the keyboard stands in:
 
 ## Where the work comes from
 
-The runtime merges work from several victory-gta6 forks:
+Since 0.2.0 the runtime is **VIctory-NVIDIA** by pepezin-ai (trustno1-coder), built on **foxhound** by
+readmet3xt-lab, with HybridGt's additions ([`patches/victory-nvidia`](patches/victory-nvidia)): chosen
+by measurement on the same PC. The earlier runtime (the Classic preset) merges work from several
+victory-gta6 forks:
 [fxceless](https://github.com/fxceless/victory-gta6) (base), [ZTRX](https://github.com/Zettrox/ztrx),
 DexNom, VIctory-7900XTX, VInAMD and cool_fox. Each piece was measured on this PC before it was kept;
 the commits are listed in [`COMMITS.txt`](patches/victory-gta6-next3/COMMITS.txt).

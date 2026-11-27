@@ -11,7 +11,7 @@ OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'docs', 'im
 # (file, label, value, colour)
 BADGES = [
     ('badge-shaders.svg', 'shaders translated', '26,084 / 26,084', '#2e9e4f'),
-    ('badge-fps.svg', 'world fps', '6.3 median, 8.7 best', '#d9822b'),
+    ('badge-fps.svg', 'world fps', '14.2 median, 18 best', '#7cb342'),
     ('badge-fsr.svg', 'AMD FSR', '3.1.6 on RTX 4070 Ti', '#2e9e4f'),
     ('badge-raytracing.svg', 'ray tracing', 'builder runs, crashes', '#c0392b'),
     ('badge-tested.svg', 'tested on', 'RTX 4070 Ti · 32 GB', '#555'),
@@ -27,10 +27,10 @@ AREAS = [
     ('Mesh pipelines on the card', 100.0, '8,765 of 8,765'),
     ('Ray-tracing builder translates', 100.0, '52 of 52 programs'),
     ('Menus at 30 fps', 100.0, '30 fps'),
-    ('World frame rate (goal 30)', 21.0, '6.3 fps median, 8.7 best (merged build)'),
+    ('World frame rate (goal 30)', 47.0, '14.2 fps median, 18.0 best (new base)'),
     ('One-file launcher', 100.0, 'HybridGt.exe: scans, presets, live fps'),
-    ('Graphics memory', 75.0, '8.0 GB (was 9.9)'),
-    ('AMD FSR 3.1 upscaling', 80.0, 'runs, 2 bad frames seen'),
+    ('Graphics memory', 90.0, '5.6 GB in use (was 9.2)'),
+    ('AMD FSR 3.1 upscaling', 80.0, 'ported to the new base; not yet run there'),
     ('Characters and bodies', 100.0, 'whole in the prologue'),
     ('Textures on time', 80.0, 'some still late'),
     ('Interior light (stand-in)', 80.0, 'lit, costs ~1 fps'),
@@ -110,6 +110,7 @@ FPS_HISTORY = [
     ('asset room', 6.7),
     ('CPU switches', 6.9),
     ('fxceless 11-27', 6.3),
+    ('new base', 14.2),
 ]
 
 

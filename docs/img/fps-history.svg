@@ -20,35 +20,38 @@
 <line x1="56" x2="830" y1="68.3" y2="68.3" stroke="#d0d7de" stroke-opacity=".5"/>
 <text x="28" y="34.0" class="n">30</text>
 <line x1="56" x2="830" y1="30.0" y2="30.0" stroke="#d0d7de" stroke-opacity=".5"/>
-<path d="M56.0,237.0 L142.0,231.6 L228.0,223.2 L314.0,215.5 L400.0,208.6 L486.0,201.0 L572.0,207.9 L658.0,208.6 L744.0,207.1 L830.0,211.7" fill="none" stroke="#2e9e4f" stroke-width="2.5"/>
+<path d="M56.0,237.0 L133.4,231.6 L210.8,223.2 L288.2,215.5 L365.6,208.6 L443.0,201.0 L520.4,207.9 L597.8,208.6 L675.2,207.1 L752.6,211.7 L830.0,151.1" fill="none" stroke="#2e9e4f" stroke-width="2.5"/>
 <circle cx="56.0" cy="237.0" r="4" fill="#2e9e4f"/>
 <text x="46.0" y="228.0">3.0</text>
 <text x="34.0" y="286" class="n">start</text>
-<circle cx="142.0" cy="231.6" r="4" fill="#2e9e4f"/>
-<text x="132.0" y="222.6">3.7</text>
-<text x="120.0" y="286" class="n">GPU copies</text>
-<circle cx="228.0" cy="223.2" r="4" fill="#2e9e4f"/>
-<text x="218.0" y="214.2">4.8</text>
-<text x="206.0" y="286" class="n">remap locks</text>
-<circle cx="314.0" cy="215.5" r="4" fill="#2e9e4f"/>
-<text x="304.0" y="206.5">5.8</text>
-<text x="292.0" y="286" class="n">lock-free</text>
-<circle cx="400.0" cy="208.6" r="4" fill="#2e9e4f"/>
-<text x="390.0" y="199.6">6.7</text>
-<text x="378.0" y="286" class="n">fxceless</text>
-<circle cx="486.0" cy="201.0" r="4" fill="#2e9e4f"/>
-<text x="476.0" y="192.0">7.7</text>
-<text x="464.0" y="286" class="n">0x1c8 off</text>
-<circle cx="572.0" cy="207.9" r="4" fill="#2e9e4f"/>
-<text x="562.0" y="198.9">6.8</text>
-<text x="550.0" y="286" class="n">wave-wide</text>
-<circle cx="658.0" cy="208.6" r="4" fill="#2e9e4f"/>
-<text x="648.0" y="199.6">6.7</text>
-<text x="636.0" y="286" class="n">asset room</text>
-<circle cx="744.0" cy="207.1" r="4" fill="#2e9e4f"/>
-<text x="734.0" y="198.1">6.9</text>
-<text x="722.0" y="286" class="n">CPU switches</text>
-<circle cx="830.0" cy="211.7" r="4" fill="#2e9e4f"/>
-<text x="820.0" y="202.7">6.3</text>
-<text x="808.0" y="286" class="n">fxceless 11-27</text>
+<circle cx="133.4" cy="231.6" r="4" fill="#2e9e4f"/>
+<text x="123.4" y="222.6">3.7</text>
+<text x="111.4" y="286" class="n">GPU copies</text>
+<circle cx="210.8" cy="223.2" r="4" fill="#2e9e4f"/>
+<text x="200.8" y="214.2">4.8</text>
+<text x="188.8" y="286" class="n">remap locks</text>
+<circle cx="288.2" cy="215.5" r="4" fill="#2e9e4f"/>
+<text x="278.2" y="206.5">5.8</text>
+<text x="266.2" y="286" class="n">lock-free</text>
+<circle cx="365.6" cy="208.6" r="4" fill="#2e9e4f"/>
+<text x="355.6" y="199.6">6.7</text>
+<text x="343.6" y="286" class="n">fxceless</text>
+<circle cx="443.0" cy="201.0" r="4" fill="#2e9e4f"/>
+<text x="433.0" y="192.0">7.7</text>
+<text x="421.0" y="286" class="n">0x1c8 off</text>
+<circle cx="520.4" cy="207.9" r="4" fill="#2e9e4f"/>
+<text x="510.4" y="198.9">6.8</text>
+<text x="498.4" y="286" class="n">wave-wide</text>
+<circle cx="597.8" cy="208.6" r="4" fill="#2e9e4f"/>
+<text x="587.8" y="199.6">6.7</text>
+<text x="575.8" y="286" class="n">asset room</text>
+<circle cx="675.2" cy="207.1" r="4" fill="#2e9e4f"/>
+<text x="665.2" y="198.1">6.9</text>
+<text x="653.2" y="286" class="n">CPU switches</text>
+<circle cx="752.6" cy="211.7" r="4" fill="#2e9e4f"/>
+<text x="742.6" y="202.7">6.3</text>
+<text x="730.6" y="286" class="n">fxceless 11-27</text>
+<circle cx="830.0" cy="151.1" r="4" fill="#2e9e4f"/>
+<text x="820.0" y="142.1">14.2</text>
+<text x="808.0" y="286" class="n">new base</text>
 </svg>
