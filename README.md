@@ -31,8 +31,26 @@ five-step scale of [STATUS.md](docs/STATUS.md), 20 % a step. The images are draw
 `tools/make_status_images.py`.</sub>
 
 **Not yet playable at a good frame rate.** On a new game the intro, menus and prologue render with
-whole characters, at **5.9-6.9 fps median** in the world with interiors lit (tonight's runs; best
-single run 7.7 without interior light). Menus run at 30 fps.
+whole characters, at **6.3 fps median** in the world with fxceless's newest work merged (best 8.7;
+first run of a build stutters while pipelines compile). Menus run at 30 fps. Graphics memory fell
+from 9.9 to 8.0 GB with the merge.
+
+## Launcher: one file
+
+**[Download `HybridGt.exe`](https://github.com/LowBacon/HybridGt/releases/latest)**: the launcher with the
+runtime inside. Start it and it finds your copy of the game, the runtime and your folders by itself
+(a scan of your drives, about half a minute), then **PLAY**.
+
+![HybridGt launcher](docs/img/launcher.png)
+
+- **Presets:** All in one (AMD FSR 3.1, the game's ray tracing, the water fix, in-place memory),
+  Performance (the measured switches), Ray tracing, Series S + FSR 3.1, and VIctory-NVIDIA (its own
+  runtime, if you have it).
+- **Prepare shaders** translates every shader ahead of the first run, so the game does not stutter.
+- **Live frame rate**, draws per frame and the log while the game runs; settings as switches; a
+  build from source for those who want one.
+- What it shows about the game is read from **your** folder (`MicrosoftGame.Config`); HybridGt
+  carries nothing of the game. Source: [`crates/hgt-launcher`](crates/hgt-launcher).
 
 ## Compatibility
 

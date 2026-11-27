@@ -830,3 +830,24 @@ rate is the fix.
   run).
 - `VICTORY_AUDIO_DELAY_MS` (sound held back to meet the mouths) wrote no line in the first minute of a
   boot: whether the title opens XAudio2 through that import is not known yet.
+
+### The merged build in game; VIctory-NVIDIA's first run (2026-11-27, afternoon)
+
+| Run | Build | fps median | best | p10 | Graphics memory | Notes |
+|---|---|---|---|---|---|---|
+| x5-fast | merged (fxceless 9a9091d1) | - | - | - | - | the title's 30 s hang watchdog ended it while loading the save (once; not in the next run) |
+| x5-fast2 | merged | **6.3** | **8.7** | 0.8 | **8.0 GB** (was 9.9) | 1,657 pipelines compiled while playing (the first run of a new translator): the slow tenth is that |
+| x5-nvidia | VIctory-NVIDIA 9d6300fa, its switches, no DLSS | 2.9-3.7 | - | - | - | black picture: 600-900 pipelines still being made, up to 2,100 draws a frame dropped; it could not read HybridGt's save (a copy was used) |
+
+Tester, merged build: eyes, textures, hair and light look better; less graphics memory; **the boat
+moves and missions no longer fail**; the water was pixelated: `play-fast` now pairs the two water
+programs with exact sums as fxceless does (`VICTORY_WAVE_PAIRS_ONLY`, `VICTORY_WAVE_PAIRS_FP32`), not
+yet seen in game. VIctory-NVIDIA needs its pipelines made first (`victory warm`); a fair comparison is
+the next run.
+
+### Launcher
+
+`crates/hgt-launcher` builds `HybridGt.exe`: a window that finds the game, the runtime and the folders
+by itself, prepares shaders, starts a preset and shows the frame rate. Built with
+`HGT_RUNTIME_EXE=<victory.exe>`, the runtime is inside it and unpacked on first start (checked:
+byte-identical).
