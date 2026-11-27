@@ -1,3 +1,5 @@
+3aa522c5 Shaders: signature parts as the validator builds them; one interpolation mode a row
+e9fb40ec Mouths: fxceless's #927 (tippythetaidum) on this base: 16-bit values moved bit-exactly through unsigned twin views, beside the base's own integer views; SDWA sign extension
 bbbf2994 FidelityFX: the title's upscale context flags said by name; AMD's runtime's messages go to our log (not to the title's callback); VICTORY_FFX_DEBUG=1 turns on its checks, VICTORY_FFX_ADD_FLAG
 751a491a FidelityFX stage 2: the title's FSR calls run AMD's PC upscaler on the host device and the host list (VICTORY_FFX_DIR); list hooks for external host work (HybridGt)
 f25c8758 FidelityFX pseudo-module (stage 1: NO_PROVIDER, logs descriptor types); constant null descriptors at a join read the null slot; finer refusal reasons (HybridGt)

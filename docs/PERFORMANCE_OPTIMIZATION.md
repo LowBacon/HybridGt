@@ -866,3 +866,22 @@ Still seen there: textures pixelated or another colour until they have loaded, e
 wrong. So HybridGt 0.2.0 takes VIctory-NVIDIA as its runtime (`patches/victory-nvidia`), with FSR 3.1
 and the sound delay carried over; fxceless's mouth fix (#927) is next. Its first run is black for
 minutes while the driver makes pipelines: `victory warm` makes them ahead (39,160 here).
+
+### Mouths, memory settings, SlaktarnVI (2026-11-27, evening; no game runs)
+
+- fxceless's mouth fix (#927) is on the new base (`patches/victory-nvidia`): not yet seen in game.
+- Why the new base uses up to ~12 GB of a 12 GB card: it copies textures to the card until it uses nine
+  tenths of the budget Windows gives it (`VICTORY_TEXTURE_ROOM_PERCENT`, 90). That is a cache, not a
+  leak. The launcher's **Memory** setting caps it: Balanced (`VICTORY_TEXTURE_BUDGET_MB=6144`, smaller
+  loading buffers) and Low (4096, 70 %, 64 MB loading buffers): less memory, more textures arriving late.
+  **Frame cap** 30 or 60 (`VICTORY_FRAME_INTERVAL_US`) lets the CPU and card rest between frames. Not
+  measured yet.
+- [SlaktarnVI](https://github.com/Slaktarn700/SlaktarnVI) (Valhalla, Linux under Proton, RX 9070 XT)
+  reports 19-25 fps in gameplay with FSR 4 and frame generation; its streaming needs a Wine patch
+  (`linux/wineserver-view-tree.patch`) with no Windows counterpart, and its history is four squashed
+  commits: read for its design, not merged.
+- The validator fix of this morning (one interpolation mode a signature row) is on the new base too:
+  offline, every program translates; **25,593 of 25,694 emitted programs validate (99.6 %)**: vertex and
+  pixel 14,244 of 14,247, mesh 8,694 of 8,765, compute 2,655 of 2,655 emitted (27 compute programs
+  do not translate on this base: 22 need 64-lane waves, 5 shadow tracers; and 195 geometry programs are
+  refused by its resource tracking: next).

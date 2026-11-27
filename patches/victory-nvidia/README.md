@@ -11,7 +11,11 @@ in use at the end against 9.2.
 `COMMITS.txt`: the commits it contains. Apply on a checkout of VIctory-NVIDIA at `9d6300fa` with
 `git apply`.
 
-Carried over so far: AMD FidelityFX / FSR 3.1 for the title's upscale calls (`VICTORY_FFX_DIR`), and
-the sound delay (`VICTORY_AUDIO_DELAY_MS`). Not needed: HybridGt's POPS change (this base has its own
-rasterizer-ordered views for ordered sections). Next: fxceless's mouth fix (#927, 16-bit values
-through typed views), which this base does not have.
+Carried over: AMD FidelityFX / FSR 3.1 for the title's upscale calls (`VICTORY_FFX_DIR`), the sound
+delay (`VICTORY_AUDIO_DELAY_MS`), and **fxceless's mouth fix** (#927 by tippythetaidum: the face
+network's 16-bit values moved bit-exactly through unsigned twin views of float-format views, beside this
+base's own integer views; the table snapshots show the twin, `draw::State::halved_view`). Not needed:
+HybridGt's POPS change (this base has its own rasterizer-ordered views for ordered sections).
+
+Tests: the shader suite passes; of victory-gpu, 406 pass and 2 indirect tests fail, which fail on
+VIctory-NVIDIA 9d6300fa without these changes too.

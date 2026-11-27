@@ -86,6 +86,10 @@ struct Config {
     hash_wide: bool,
     ambient: bool,
     audio_delay_ms: u32,
+    /// 0 Auto (the runtime fills the card's budget with textures), 1 Balanced, 2 Low.
+    memory: u8,
+    /// Frames a second the runtime starts at most (0: the game's own pacing).
+    fps_cap: u32,
 }
 
 impl Default for Config {
@@ -109,6 +113,8 @@ impl Default for Config {
             hash_wide: false,
             ambient: true,
             audio_delay_ms: 0,
+            memory: 0,
+            fps_cap: 0,
         }
     }
 }
@@ -441,6 +447,22 @@ impl Launcher {
         }
         if c.audio_delay_ms > 0 {
             env.push(("VICTORY_AUDIO_DELAY_MS".into(), c.audio_delay_ms.to_string()));
+        }
+        if !preset.classic() {
+            // Less memory: textures copied to the card capped (more of them wait), smaller
+            // loading buffers. Not measured yet.
+            let caps: &[(&str, &str)] = match c.memory {
+                1 => &[("VICTORY_TEXTURE_BUDGET_MB", "6144"), ("VICTORY_DSTORAGE_STAGING_MB", "128")],
+                2 => &[("VICTORY_TEXTURE_BUDGET_MB", "4096"), ("VICTORY_TEXTURE_ROOM_PERCENT", "70"), ("VICTORY_DSTORAGE_STAGING_MB", "64")],
+                _ => &[],
+            };
+            for (k, v) in caps {
+                env.retain(|(key, _)| key != k);
+                env.push((k.to_string(), v.to_string()));
+            }
+            if c.fps_cap > 0 {
+                env.push(("VICTORY_FRAME_INTERVAL_US".into(), (1_000_000 / c.fps_cap).to_string()));
+            }
         }
         if preset.fsr() && !c.ffx_dir.is_empty() {
             env.push(("VICTORY_FFX_DIR".into(), c.ffx_dir.clone()));
@@ -783,6 +805,38 @@ impl Launcher {
             changed |= style::toggle_row(ui, "Stand-in light", "Lights interiors in place of the game's traced light (about 1 fps).", &mut self.config.ambient);
             changed |= style::toggle_row(ui, "In-place memory (Classic)", "Opens the game's memory to the card directly (measured +1 fps, one run).", &mut self.config.inplace);
             changed |= style::toggle_row(ui, "Wide hashing (Classic)", "Hashes copies on the card 64 threads a piece (faster median, bigger spikes).", &mut self.config.hash_wide);
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.set_max_width(ui.available_width() - 320.0);
+                    ui.label(RichText::new("Memory").strong().color(Color32::WHITE));
+                    ui.label(RichText::new("Auto fills the card with textures up to nine tenths of its memory. Balanced and Low cap that (less memory, more textures arriving late). Not measured yet.").color(style::SOFT));
+                });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    for (level, name) in [(2u8, "Low"), (1, "Balanced"), (0, "Auto")] {
+                        if style::pill(ui, name, self.config.memory == level).clicked() {
+                            self.config.memory = level;
+                            changed = true;
+                        }
+                    }
+                });
+            });
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.set_max_width(ui.available_width() - 320.0);
+                    ui.label(RichText::new("Frame cap").strong().color(Color32::WHITE));
+                    ui.label(RichText::new("A cap lets the CPU and graphics card rest between frames (less heat and noise).").color(style::SOFT));
+                });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    for (fps, name) in [(60u32, "60"), (30, "30"), (0, "Game's own")] {
+                        if style::pill(ui, name, self.config.fps_cap == fps).clicked() {
+                            self.config.fps_cap = fps;
+                            changed = true;
+                        }
+                    }
+                });
+            });
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
