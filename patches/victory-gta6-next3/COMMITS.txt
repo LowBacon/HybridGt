@@ -1,3 +1,5 @@
+7c1d02cc Merge fxceless/victory-gta6 9a9091d1 (35 commits): ray tracing runs, masked patch and mesh launch on by default, GPU detile, ds_bpermute within its 32-lane half
+fb8201f9 Shaders: signature parts as the validator builds them; one interpolation mode a row
 e846e591 Audio: VICTORY_AUDIO_DELAY_MS holds the title's sound back so speech meets the mouths (off by default)
 586469bb Merge fxceless/victory-gta6 52ac4ec0: mouths move (16-bit values through typed views, #927), SDWA sign extension, black-face texture fixes (textures under DirectStorage writes made due again)
 bd9e5f6a 0x1c8 pipelines: the console's stencil operations (DB_STENCIL_CONTROL at +0xbc, front and back faces) instead of KEEP everywhere; test with the prologue's most common stencil state (EQUAL, ad

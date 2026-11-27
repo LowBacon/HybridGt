@@ -14,9 +14,9 @@
 <text x="686" y="91" class="n">25,479 of 25,889 emitted</text>
 <text x="16" y="120">Vertex/pixel pipelines on the card</text>
 <rect class="bg" x="250" y="108" width="380" height="16" rx="4" fill="#eaeef2"/>
-<rect x="250" y="108" width="374.7" height="16" rx="4" fill="#7cb342"/>
-<text x="640" y="121" class="p">98.6 %</text>
-<text x="686" y="121" class="n">14,247 of 14,442</text>
+<rect x="250" y="108" width="380.0" height="16" rx="4" fill="#2e9e4f"/>
+<text x="640" y="121" class="p">100 %</text>
+<text x="686" y="121" class="n">14,247 of 14,247 (geometry stages build in game)</text>
 <text x="16" y="150">Compute pipelines on the card</text>
 <rect class="bg" x="250" y="138" width="380" height="16" rx="4" fill="#eaeef2"/>
 <rect x="250" y="138" width="380.0" height="16" rx="4" fill="#2e9e4f"/>
@@ -71,7 +71,7 @@
 <rect class="bg" x="250" y="438" width="380" height="16" rx="4" fill="#eaeef2"/>
 <rect x="250" y="438" width="228.0" height="16" rx="4" fill="#7cb342"/>
 <text x="640" y="451" class="p">60 %</text>
-<text x="686" y="451" class="n">runs, title crashes</text>
+<text x="686" y="451" class="n">merged: rays see structures; very slow</text>
 <text x="16" y="480">Walls and surfaces textured</text>
 <rect class="bg" x="250" y="468" width="380" height="16" rx="4" fill="#eaeef2"/>
 <rect x="250" y="468" width="228.0" height="16" rx="4" fill="#7cb342"/>

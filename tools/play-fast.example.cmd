@@ -1,5 +1,5 @@
 @echo off
-set VICTORY_GAME_DIR=E:\GTA\GTA6.Xbox.v1.0.2.1
+set VICTORY_GAME_DIR=<your game folder>
 set VICTORY_CACHE_DIR=E:\GTA\HybridGt-work\cache-next3
 set VICTORY_DATA_DIR=E:\GTA\HybridGt-work\data
 set VICTORY_LOG=info
@@ -10,7 +10,7 @@ set VICTORY_WIDE_REFRESH=1
 set VICTORY_WIDE_MERGE=1
 set VICTORY_GPU_BUFFER_COPIES=1
 set VICTORY_GPU_FILLS=1
-set VICTORY_GPU_MERGE=1
+rem fxceless masked patch (on by default since their 0e006f00) replaces our VICTORY_GPU_MERGE=1
 set VICTORY_ASYNC_SUBMIT=1
 set VICTORY_QUEUE2=1
 set VICTORY_INDIRECT_WINDOW=1
@@ -43,6 +43,8 @@ set VICTORY_CARD_BUFFERS_MB=1280
 set VICTORY_CARD_HASH_LEN=1
 rem stand-in for the traced indirect light (VIctory-7900XTX 82ca1347): interiors and shadowed sides lit
 rem instead of black; A/B 2026-11-26: 6.7 vs 7.7 fps median. Delete to turn off.
+rem Ray-tracing structure builder off for speed (fxceless: 0.2-3 fps while it runs); play-rt.cmd has it on
+set VICTORY_BVH_BUILDER=0
 set VICTORY_AMBIENT=1
 rem 19 compute programs NVIDIA refused for 64-lane waves get the wave-wide form (volumetric light, particles,
 rem CS_Visibility, hair shadows). A/B 2026-11-26: no GPU loss, fps the same (6.8 median)
@@ -53,4 +55,4 @@ rem fxceless CPU savings (A/B 2026-11-26, same route: 5.0 -> 6.9 fps median, p10
 set VICTORY_LOOKUP_CACHE=1
 set VICTORY_SETTLE_ROOM=1
 set VICTORY_PARALLEL_REFRESH=1
-E:\GTA\HybridGt-work\victory-gta6\target\release\victory.exe run "E:\GTA\GTA6.Xbox.v1.0.2.1\game_scarlett_master.exe" --execute > "E:\GTA\HybridGt-work\logs\%~n0.log" 2>&1
+E:\GTA\HybridGt-work\victory-gta6\target\release\victory.exe run "<your game folder>\game_scarlett_master.exe" --execute > "E:\GTA\HybridGt-work\logs\%~n0.log" 2>&1

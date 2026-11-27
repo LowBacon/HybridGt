@@ -22,7 +22,7 @@ BADGES = [
 AREAS = [
     ('Shader programs translate', 100.0, '26,084 of 26,084 (with the opt-in switches)'),
     ('Pass Microsoft\'s DXIL validator', 98.4, '25,479 of 25,889 emitted'),
-    ('Vertex/pixel pipelines on the card', 98.6, '14,247 of 14,442'),
+    ('Vertex/pixel pipelines on the card', 100.0, '14,247 of 14,247 (geometry stages build in game)'),
     ('Compute pipelines on the card', 100.0, '2,682 of 2,682'),
     ('Mesh pipelines on the card', 100.0, '8,765 of 8,765'),
     ('Ray-tracing builder translates', 100.0, '52 of 52 programs'),
@@ -33,7 +33,7 @@ AREAS = [
     ('Textures on time', 80.0, 'some still late'),
     ('Interior light (stand-in)', 80.0, 'lit, costs ~1 fps'),
     ('Boat mission', 60.0, 'fix in, not checked'),
-    ('Real ray tracing', 60.0, 'runs, title crashes'),
+    ('Real ray tracing', 60.0, 'merged: rays see structures; very slow'),
     ('Walls and surfaces textured', 60.0, '15 % fewer textures waiting'),
     ('Clothes changes (bakes)', 60.0, 'bake sources first, not seen yet'),
     ('Mouth animation', 80.0, 'moves; trails the voice at low fps'),

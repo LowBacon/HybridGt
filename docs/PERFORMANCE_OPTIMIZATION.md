@@ -810,3 +810,23 @@ The title draws the world at 2560x1440 and its own temporal upscaler takes it to
 (logged). Hair is drawn dithered and made smooth by that blend of frames, which expects 30 fps:
 at 6-7 fps the frames move too far apart to line up, and hair and faces smear. A higher frame
 rate is the fix.
+
+### 2026-11-27: validator fixes, fxceless merged (35 commits)
+
+- **DXIL validator:** 25,616 of 25,889 programs validate (was 25,479); every checked vertex and pixel
+  program passes. A full re-translation of all 26,084 programs found no program that validated before
+  and fails now. Left: 71 mesh programs over the 32 KB output limit (16-bit outputs declared 32-bit)
+  and 2 group-wide compute programs 132 bytes over the group-memory limit.
+- **fxceless 9a9091d1 merged:** ray tracing runs (structure builder on by default, rays see the
+  structures), their masked patch on by default (their run 362: waiting for the card 21 -> 2 ms a
+  frame), mesh launch, GPU detiling, in-place constants, water programs in the paired form, and
+  `ds_bpermute` within its 32-lane half (GFX10). Every workspace test passes (744).
+- `play-fast` now uses fxceless's masked patch instead of our `VICTORY_GPU_MERGE=1` (both are in the
+  code; ours stays opt-in) and keeps the structure builder off for speed (`VICTORY_BVH_BUILDER=0`);
+  `play-rt.cmd` turns it on.
+- The PC rebooted unexpectedly during the first re-translation (Windows: sleep in progress, no bug
+  check); the run was repeated and finished in 13 minutes.
+- Frame rate of the merged build: **not measured yet** (the test chain was stopped before the first
+  run).
+- `VICTORY_AUDIO_DELAY_MS` (sound held back to meet the mouths) wrote no line in the first minute of a
+  boot: whether the title opens XAudio2 through that import is not known yet.
