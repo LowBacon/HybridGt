@@ -7,18 +7,44 @@ game**.
 
 `①` found · `②` cause known · `③` fix written · `④` seen in game · `⑤` done
 
+## 2026-11-28: new runtime base, crash fixed
+
+The runtime base moved from VIctory-NVIDIA `9d6300fa` to `df2daafe` (50 upstream commits newer;
+pepezin-ai / trustno1-coder, GPL-3.0-or-later). Upstream brought, among others: open water without dark
+blocks, the "confetti on faces" fix, the F1 settings menu and F3 stats panel, DLSS Super Resolution and
+Frame Generation through NVIDIA Streamline, AMD FSR 3 frame generation, and `victory play`. HybridGt's
+9 commits on top: [hybridgt-on-victory-nvidia-df2daafe.patch](../patches/victory-nvidia/hybridgt-on-victory-nvidia-df2daafe.patch),
+list in [COMMITS-df2daafe.txt](../patches/victory-nvidia/COMMITS-df2daafe.txt).
+
+| Problem (merged build) | Progress | Where it stands |
+|---|---|---|
+| Crash about 50 s after loading a save (divide by zero, `0xc0000094`, in the game's own code) | `●●●●○` ④ | Seen twice at the same place on the merged build before the fix. Cause: HybridGt's FidelityFX module claimed `amd_fidelityfx_upscaler_xbox.dll` with no AMD PC files, so the title's upscaler context failed, upstream's DLSS interposer saw no context (0 upscales by DLSS; log: "an upscale dispatch on a context we did not see made"), and the title divided by zero. Now the FidelityFX stand-in starts only when `VICTORY_FFX_DIR` names a folder with `amd_fidelityfx_loader_dx12.dll` and `amd_fidelityfx_upscaler_dx12.dll`. After the fix DLSS took the upscales (324 and counting) and a session ran about 12 minutes past the old crash point and closed normally |
+| F1 settings not kept after the first-start restart | `●●●○○` ③ | `victory play` dropped `VICTORY_HOME` on its planned restart and fell back to `%LOCALAPPDATA%\victory`. Now kept. Not yet seen in game |
+| Reflections wrong (blue sky light in rooms, cyan sparkle on glass) | `●●○○○` ② | The runtime does not build the title's ray-tracing structures, so reflection rays miss. The runtime's estimate (`VICTORY_AMBIENT_SPECULAR`) covers opaque surfaces only. `VICTORY_AMBIENT_SPECULAR_ALPHA=1` would cover glass too (upstream left it off: dark patches on water); a test is prepared, not yet reported. Floors keep grainy reflection noise |
+| White screen while driving that fades slowly | `●○○○○` ① | Suspected: DLSS history after a bad frame. Not confirmed. Test: F1, DLSS off |
+| Black or late textures | `●●○○○` ② | Graphics memory full ("the card has no room for new ones", about 79,500 times in one session with frame generation on; frame generation takes 1.5-2 GB and the runtime then caps textures at 80 %) |
+| Draws skipped until their pipelines are made | `●●●○○` ③ | 88,782 pipelines recorded. `victory warm` makes them ahead (about 35 minutes with the game closed) |
+| Frame rate below the 30 fps target | `●●○○○` ② | Indicative, not a same-route benchmark: upstream `df2daafe` 13.2 fps world median (10th percentile 10.2, 90th 16.6; DLSS and frame generation on, the tester's own session); merged build 17.3-17.9 fps per-second readings in an interior while pipelines were still being made, and 12.8 fps (77.9 ms frame) in the same interior with frame generation off (F3 panel). Not comparable: world against interior. The limit is CPU-side: preparing title memory for the GPU and copying back |
+
+Moved this round: the crash (new, to ④) and F1 settings (new, to ③). The rows below are unchanged and
+describe the earlier runtimes (Classic and `9d6300fa`); they are not yet re-checked on `df2daafe`, where
+some differ (for example, this runtime does not build the title's ray-tracing structures). The shader validation figures below were measured on the `9d6300fa`
+build; re-checked on `df2daafe` on 2026-11-28: the same counts. More: [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
+
+## Every problem
+
 | Problem | Progress | Where it stands |
 |---|---|---|
 | Characters' bodies missing | `●●●●●` ⑤ | Whole characters in the prologue. Fixed by the fxceless merge with the 0x1c8 pipelines off |
 | Intro "triangles" (rectangle lists) | `●●●●●` ⑤ | `VICTORY_NATIVE_RECTS=1` |
 | Late textures | `●●●●○` ④ | "No room for textures" 60 → 20 a run (`VICTORY_CARD_WINDOWS_MB=1024`, `TEXTURE_ROOM_PERCENT=96`). Still some late |
-| AMD FSR 3.1 upscaling | `●●●●○` ④ | **FSR 3.1.6** runs on the RTX 4070 Ti (provider checked on the card), through the game's Series S path (`--console series-s`), 720p → 1080p. No fps gain; one black face and one white frame seen. The game's creation flags are now logged by name, AMD's messages go to our log, and `VICTORY_FFX_DEBUG=1` turns on its input checks for the next Series S run |
+| AMD FSR 3.1 upscaling | `●●●●○` ④ | **FSR 3.1.6** runs on the RTX 4070 Ti (provider checked on the card), through the game's Series S path (`--console series-s`), 720p → 1080p. No fps gain; one black face and one white frame seen. The game's creation flags are now logged by name, AMD's messages go to our log, and `VICTORY_FFX_DEBUG=1` turns on its input checks for the next Series S run. Seen on the earlier runtime. On `df2daafe` it starts only when `VICTORY_FFX_DIR` names a folder with `amd_fidelityfx_loader_dx12.dll` and `amd_fidelityfx_upscaler_dx12.dll`; not yet seen in game there |
 | Series S mode | `●●●●○` ④ | Boots and plays the prologue |
 | Black interiors (traced indirect light) | `●●●●○` ④ | `VICTORY_AMBIENT=1` stand-in lights them (costs about 1 fps). On in `play-fast` |
 | Boat sinks ("Cal fell off the boat") | `●●●○○` ③ | fxceless's `VICTORY_TEXTURE_BACK=1` makes boats float; not yet checked at that mission in our runs |
 | Water light volume shaders (above and under water) | `●●●○○` ③ | A mask parked in two halves across a loop was not followed: fixed in the translator (with a test), both now translate and validate. The card still refuses their pipelines: they need 64-lane waves |
 | 27 compute programs that need 64-lane waves | `●●●●○` ④ | 21 run as two 32-lane halves with branches taken by the whole wave (`VICTORY_WAVE_WIDE=last`, on in `play-fast`): in game, refused pipelines 5 -> 2, no GPU loss. The other 6 (heap defrag, triangle collection, 2 decal-trail builders: thread groups of several console waves) now get pipelines on the card with branches decided by the whole group (`VICTORY_GROUP_WIDE=1`, off until a game run); 2 of them exceed Direct3D's 32 KB of group memory by 132 bytes (NVIDIA accepts it) |
-| Ray tracing (real traced light) | `●●●○○` ③ | **Merged from fxceless (2026-11-27):** the structure builder no longer stalls the title and rays see the structures (a structure view's address was read as 0). fxceless reports ray-traced shadows and light once a scene has streamed in, at 0.2 to 3 fps while the builder runs. `play-rt.cmd` has it on; `play-fast` keeps it off (`VICTORY_BVH_BUILDER=0`) with the stand-in light. Not yet run here |
+| Ray tracing (real traced light) | `●●●○○` ③ | **Merged from fxceless (2026-11-27):** the structure builder no longer stalls the title and rays see the structures (a structure view's address was read as 0). fxceless reports ray-traced shadows and light once a scene has streamed in, at 0.2 to 3 fps while the builder runs. On the earlier (Classic) runtime, `play-fast` ([tools/play-fast.example.cmd](../tools/play-fast.example.cmd)) keeps it off (`VICTORY_BVH_BUILDER=0`) with the stand-in light. Not part of the `df2daafe` runtime. Not yet run here |
 | 0x1c8 graphics pipelines (console path) | `●●●○○` ③ | Built, but they hide bodies (stencil not decoded). Off |
 | Walls and surfaces missing or low quality | `●●●○○` ③ | The card is at its memory line (10.5 of 10.75 GB): 18,000-25,000 textures wait for room, so some surfaces are drawn untextured or at low detail. Textures are never let go while the game's texture table points at them. `VICTORY_CARD_WINDOWS_MB=512` (on): textures waiting 12,000 -> 10,200, 800 MB more free on the card, fps the same. Next: free idle textures safely. Textures on screen first (`VICTORY_TEXTURE_MARKS=1`, built and tested on the card, off): shaders mark the texture slots they sample, a copy queue reads the map back every half second in 2.4 ms, and marked textures are uploaded first. Its first game try read the map through the bus and stalled loading; fixed, not yet run in game again |
 | Lucia's clothes don't change | `●●●○○` ③ | Characters' skins and clothes are "baked" by the game from source textures; the bakes run while those sources still wait for upload, so a bake can keep the old look. `VICTORY_BAKE_SOURCES=full` (on): each bake's sources are uploaded first (40 textures, 48 MB, in the test run; none skipped). Not yet seen in game at an outfit change |
@@ -31,7 +57,7 @@ game**.
 
 ## Frame rate
 
-**Since 0.2.0: 14.2 fps median, 18.0 best** on the VIctory-NVIDIA base (same PC, same route; the earlier runtime 5.8). Below: the earlier runtime's history.
+**Since 0.2.0: 14.2 fps median, 18.0 best** on the VIctory-NVIDIA `9d6300fa` base (same PC, same route, 2026-11-27; the earlier runtime 5.8). On `df2daafe` only indicative figures so far (see the 2026-11-28 section); a same-route run is not yet measured. Below: the earlier runtime's history.
 
 World median on the RTX 4070 Ti, each step measured:
 3.0 → 3.7 → 4.8 → 5.8 → 6.7 → **7.7 fps** (6.7 with interiors lit). Menus run at the game's own
@@ -42,7 +68,7 @@ More: [KNOWN_FAILURES.md](KNOWN_FAILURES.md) · [MASTER_STATUS.md](MASTER_STATUS
 
 ## Microsoft's DXIL validator (2026-11-27)
 
-**Current runtime** (VIctory-NVIDIA `9d6300fa` plus the HybridGt patch, offline, as for a 32-lane GPU):
+**Runtime on `9d6300fa`** (VIctory-NVIDIA `9d6300fa` plus the HybridGt patch, offline, as for a 32-lane GPU; measured on the `9d6300fa` build; re-checked on `df2daafe` on 2026-11-28: the same counts):
 25,600 of 25,889 programs validate (98.9 %). That's every vertex and pixel program (14,247), mesh 8,694 of
 8,765 and compute 2,659 of 2,682. Geometry is 0 of 195. Fixed this round: the level-of-detail query
 (3 programs) and heap descriptors read for their address (4 shadow tracers). Details:
@@ -54,8 +80,11 @@ Of 25,889 programs emitted, **25,616 validate (98.9 %)**, up from 25,479. Every 
 
 ## Tests
 
-Every test of the runtime's workspace passes (673, 0 failed; the GPU tests on the RTX 4070 Ti), and so does the
-repository's asset policy (`cargo xtask policy`). A full translation of the title's 26,084 shader programs
+Runtime suite on the `9d6300fa` build: 1,031 of 1,032 pass (one upstream test, victory-gpu
+`watch::tests::what_is_put_in_beside_the_guards_is_told_at_every_view`, fails only when tests run in
+parallel and passes alone; all 408 victory-gpu tests pass with `--test-threads 1`). On the `df2daafe`
+build: 1,078 passed, 0 failed, 52 ignored (2026-11-28). Launcher: 34 unit tests pass. Earlier runtime (Classic), for reference: 673 passed,
+0 failed (the GPU tests on the RTX 4070 Ti), and so does the repository's asset policy (`cargo xtask policy`). A full translation of the title's 26,084 shader programs
 with validation and pipeline creation on the card: all translate; compute 2,682 of 2,682 pipelines; no
 program lost a pipeline or its validation against the run before.
 

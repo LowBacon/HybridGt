@@ -33,6 +33,7 @@
 | [STATUS.md](STATUS.md) | Every problem on a five-step scale, from found to seen fixed in game |
 | [ROADMAP.md](ROADMAP.md) | Done, next, and how each item will be checked |
 | [PERFORMANCE_OPTIMIZATION.md](PERFORMANCE_OPTIMIZATION.md) | The full log of runs and measurements |
+| [UPSTREAM_SWEEP_2026-11-28.md](UPSTREAM_SWEEP_2026-11-28.md) | New upstream commits and ports, ranked as merge candidates (research only) |
 | [MISSION_REPORT.md](MISSION_REPORT.md) | The launcher 0.3.0 work and the offline log analysis |
 
 ## History

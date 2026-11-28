@@ -68,8 +68,12 @@ pub fn read(dir: &str) -> Game {
 
 /// An image file as RGBA (the title's own art, shown as it is).
 pub fn load_image(path: &Path, max_side: u32) -> Option<([usize; 2], Vec<u8>)> {
-    let bytes = std::fs::read(path).ok()?;
-    let mut img = image::load_from_memory(&bytes).ok()?;
+    decode_image(&std::fs::read(path).ok()?, max_side)
+}
+
+/// An image's RGBA pixels from its encoded bytes, at most `max_side` a side.
+pub fn decode_image(bytes: &[u8], max_side: u32) -> Option<([usize; 2], Vec<u8>)> {
+    let mut img = image::load_from_memory(bytes).ok()?;
     if img.width().max(img.height()) > max_side {
         img = img.thumbnail(max_side, max_side);
     }
@@ -168,6 +172,16 @@ mod tests {
     #[test]
     fn a_folder_without_the_game_is_not_found() {
         assert!(!read(&std::env::temp_dir().display().to_string()).found);
+    }
+
+    #[test]
+    fn the_embedded_logo_decodes() {
+        let (size, px) = decode_image(crate::LOGO, 256).expect("the logo decodes");
+        assert_eq!(size, [256, 256]);
+        assert_eq!(px.len(), 256 * 256 * 4);
+        // Rounded corners: the corner pixel is clear, the centre is not.
+        assert_eq!(px[3], 0);
+        assert_eq!(px[(128 * 256 + 128) * 4 + 3], 255);
     }
 
     #[test]

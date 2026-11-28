@@ -24,11 +24,29 @@ Licence note on upstreams (an observation, not legal advice): XCL's `crates/xcl/
 ## The runtime since 0.2.0
 
 - **[VIctory-NVIDIA](https://github.com/pepezin-ai/VIctory-NVIDIA)** by pepezin-ai (trustno1-coder),
-  GPL-3.0-or-later, at `9d6300fa`: the runtime HybridGt.exe carries, with HybridGt's patch
-  (`patches/victory-nvidia`). Its README credits the many projects it was built from.
+  GPL-3.0-or-later, at `df2daafe`: the runtime HybridGt.exe carries from 0.3.0, with HybridGt's patch
+  (`patches/victory-nvidia/hybridgt-on-victory-nvidia-df2daafe.patch`, commit list
+  `COMMITS-df2daafe.txt`: 9 commits). 0.2.x carried it at `9d6300fa`; that patch
+  (`hybridgt-on-victory-nvidia-9d6300fa.patch`, `COMMITS.txt`) stays for reference. Its README credits
+  the many projects it was built from. HybridGt's F1 menu keeps the credit:
+  "GITHUB.COM/LOWBACON/HYBRIDGT - BUILT ON VICTORY-NVIDIA".
 - **[foxhound](https://github.com/readmet3xt-lab/foxhound)** by readmet3xt-lab, GPL-3.0-or-later: the
   base VIctory-NVIDIA stands on (Series X at 1440p, the copy machinery that runs about twice as fast,
   DLSS and frame generation through NVIDIA Streamline, loaded at run time from a folder you supply).
 - **[VIctory](https://github.com/Marvisak/VIctory)** by Marvisak and contributors, under all of them.
 - NVIDIA Streamline, DLSS and Reflex, and AMD FidelityFX, are their makers'; nothing of them is in this
-  repository or in HybridGt.exe: they are loaded from folders you supply.
+  repository or in HybridGt.exe: they are loaded from folders you supply. The runtime's `victory
+  get-dlss` and `get-fsr` commands (also the launcher's "Get NVIDIA DLSS" and "Get AMD FSR 3" buttons)
+  fetch them from NVIDIA's and AMD's own GitHub only when you ask (AMD's files are checked against
+  SHA-256; NVIDIA's are checked for the sizes listed in NVIDIA's archive).
+- **[MFG Unlocker](https://github.com/dashdogy/MFG-Unlocker)** by dashdogy, MIT: someone else's mod
+  for RTX 20/30 cards, offered by VIctory-NVIDIA as an option that is off by default. It is not in this
+  repository or in HybridGt.exe. The runtime fetches it from the author's own GitHub release, checked
+  against the SHA-256 the author published, only when you ask: with `victory get-mfg` (the launcher's
+  "Get MFG Unlocker (mod)" button), or at the next start after you turn on F1 > MFG UNLOCKER. The
+  launcher itself has no network code.
+- **`tools/vendor/`**: VIctory-NVIDIA's download scripts at `df2daafe`, GPL-3.0-or-later, with credit
+  (see [tools/vendor/README.md](tools/vendor/README.md)). `get-nvidia-sdks.ps1` and `get-amd-fsr.ps1`
+  are copied unchanged. The `Get-NVIDIA-DLSS.cmd` and `Get-AMD-FSR.cmd` wrappers are changed: new
+  comment lines, the script beside them instead of in `scripts\`, and a `-To` folder under
+  `%LOCALAPPDATA%\victory\`. They fetch NVIDIA's and AMD's files only when you run them.

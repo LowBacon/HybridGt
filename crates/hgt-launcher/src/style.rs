@@ -103,10 +103,16 @@ pub fn mark(painter: &egui::Painter, center: Pos2, r: f32) {
 }
 
 /// The sidebar's top: the mark and the name.
-pub fn brand(ui: &mut Ui) {
+pub fn brand(ui: &mut Ui, logo: Option<&egui::TextureHandle>) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 64.0), Sense::hover());
     let painter = ui.painter();
-    mark(painter, Pos2::new(rect.left() + 26.0, rect.center().y), 18.0);
+    match logo {
+        Some(tex) => {
+            let at = Rect::from_center_size(Pos2::new(rect.left() + 26.0, rect.center().y), Vec2::splat(42.0));
+            painter.image(tex.id(), at, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+        }
+        None => mark(painter, Pos2::new(rect.left() + 26.0, rect.center().y), 18.0),
+    }
     painter.text(Pos2::new(rect.left() + 56.0, rect.center().y - 8.0), Align2::LEFT_CENTER, "HYBRIDGT", FontId::proportional(22.0), Color32::WHITE);
     painter.text(Pos2::new(rect.left() + 57.0, rect.center().y + 14.0), Align2::LEFT_CENTER, "built on VIctory", FontId::proportional(11.5), MUTED);
 }

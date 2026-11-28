@@ -91,7 +91,11 @@ fn find_rc() -> Option<PathBuf> {
 
 fn resources(out: &Path) -> Result<PathBuf, String> {
     let rc = find_rc().ok_or("the Windows SDK's rc.exe was not found (set HGT_RC)")?;
-    std::fs::write(out.join("hybridgt.ico"), ico()).map_err(|e| e.to_string())?;
+    // HybridGt's logo (`tools/make_logo.py` draws it; `assets/hybridgt.ico`), else the drawn mark.
+    let logo = std::path::Path::new("assets").join("hybridgt.ico");
+    println!("cargo:rerun-if-changed={}", logo.display());
+    let icon = std::fs::read(&logo).unwrap_or_else(|_| ico());
+    std::fs::write(out.join("hybridgt.ico"), icon).map_err(|e| e.to_string())?;
     let version = std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.0.0".into());
     let mut parts: Vec<u16> = version.split(['.', '-']).take(3).map(|p| p.parse().unwrap_or(0)).collect();
     parts.resize(4, 0);

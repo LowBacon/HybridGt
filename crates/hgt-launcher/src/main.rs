@@ -43,10 +43,19 @@ fn main() -> eframe::Result<()> {
     eframe::run_native("HybridGt", options, Box::new(|cc| Ok(Box::new(App::new(cc)))))
 }
 
-/// The window's icon: the brand mark (the same one `build.rs` puts in the executable).
+/// HybridGt's logo (`tools/make_logo.py`), 256 pixels a side: the window icon and the brand.
+pub const LOGO: &[u8] = include_bytes!("../assets/logo-256.png");
+
+/// The window's icon: the logo (the executable's icon is the same, from `build.rs`), else the
+/// drawn mark.
 fn icon() -> egui::IconData {
-    let (rgba, n) = mark_pixels(64);
-    egui::IconData { rgba, width: n, height: n }
+    match library::decode_image(LOGO, 128) {
+        Some(([w, h], rgba)) => egui::IconData { rgba, width: w as u32, height: h as u32 },
+        None => {
+            let (rgba, n) = mark_pixels(64);
+            egui::IconData { rgba, width: n, height: n }
+        }
+    }
 }
 
 pub use mark::mark_pixels;
@@ -76,6 +85,8 @@ pub struct App {
     pub game: library::Game,
     pub splash: Option<egui::TextureHandle>,
     pub logo: Option<egui::TextureHandle>,
+    /// HybridGt's own logo, for the sidebar.
+    pub brand: Option<egui::TextureHandle>,
     pub playtime: library::Playtime,
     pub page: Page,
     pub job: Option<Job>,
@@ -107,6 +118,7 @@ impl App {
             sys,
             splash: None,
             logo: None,
+            brand: None,
             playtime: library::Playtime::load(),
             page: Page::Home,
             job: None,
@@ -138,6 +150,10 @@ impl App {
         };
         self.splash = tex(&self.game.splash, "splash", 1600);
         self.logo = tex(&self.game.logo, "logo", 320);
+        if self.brand.is_none() {
+            self.brand = library::decode_image(LOGO, 256)
+                .map(|(size, px)| ctx.load_texture("hybridgt", egui::ColorImage::from_rgba_unmultiplied(size, &px), egui::TextureOptions::LINEAR));
+        }
     }
 
     pub fn refresh(&mut self, ctx: &egui::Context) {
@@ -483,7 +499,7 @@ impl eframe::App for App {
             .resizable(false)
             .frame(egui::Frame::none().fill(style::PANEL).inner_margin(egui::Margin::symmetric(16.0, 18.0)))
             .show(ctx, |ui| {
-                style::brand(ui);
+                style::brand(ui, self.brand.as_ref());
                 ui.add_space(14.0);
                 ui.spacing_mut().item_spacing.y = 8.0;
                 for (page, label, icon) in [

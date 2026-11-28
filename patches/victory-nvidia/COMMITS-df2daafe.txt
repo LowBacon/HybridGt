@@ -1,0 +1,9 @@
+e760179a FidelityFX: HybridGt's upscaler stand-in only with AMD's PC files set; play keeps VICTORY_HOME across restarts
+713cb835 F1 menu: HybridGt's name and repository, with the fork it is built on
+5bee312d Shaders: the level of detail takes no array slice; heap buffer descriptors read for their address come from title memory (4 shadow tracers); an offline translate-and-validate test and a disassembly test; two indirect-budget tests and the 16-bit table tests brought up to this base
+3f198bcb Shaders: signature parts as the validator builds them; one interpolation mode a row
+f9d111c8 Mouths: fxceless's #927 (tippythetaidum) on this base: 16-bit values moved bit-exactly through unsigned twin views, beside the base's own integer views; SDWA sign extension
+69928a7c FidelityFX: the title's upscale context flags said by name; AMD's runtime's messages go to our log (not to the title's callback); VICTORY_FFX_DEBUG=1 turns on its checks, VICTORY_FFX_ADD_FLAGS adds creation flags; dispatches logged with their inputs, exposure and reset
+a497390b FidelityFX stage 2: the title's FSR calls run AMD's PC upscaler on the host device and the host list (VICTORY_FFX_DIR); list hooks for external host work (HybridGt)
+fa185cfb FidelityFX pseudo-module (stage 1: NO_PROVIDER, logs descriptor types); constant null descriptors at a join read the null slot; finer refusal reasons (HybridGt)
+5fcce61d Audio: VICTORY_AUDIO_DELAY_MS holds the title's sound back so speech meets the mouths (off by default)
