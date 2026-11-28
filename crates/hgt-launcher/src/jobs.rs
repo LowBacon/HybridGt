@@ -12,6 +12,8 @@ pub enum Kind {
     Shaders,
     Pipelines,
     Build,
+    /// NVIDIA's, AMD's or the MFG Unlocker's files, fetched by the runtime (`victory get-...`).
+    Download,
 }
 
 impl Kind {
@@ -21,6 +23,7 @@ impl Kind {
             Kind::Shaders => "shader preparation",
             Kind::Pipelines => "pipeline preparation",
             Kind::Build => "build",
+            Kind::Download => "download",
         }
     }
 }

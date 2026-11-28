@@ -213,6 +213,30 @@ impl App {
         self.refresh(ctx);
     }
 
+    /// Fetches NVIDIA's DLSS files (`get-dlss`), AMD's FSR 3 files (`get-fsr`) or the MFG
+    /// Unlocker (`get-mfg`) by the runtime's own commands, which take them from their makers'
+    /// GitHub and check them, into HybridGt's home. Only when pressed; the launcher itself has
+    /// no network code.
+    pub fn fetch(&mut self, command: &'static str) {
+        if self.job.is_some() || self.setup.as_ref().is_some_and(setup::Setup::running) {
+            self.message = "Something is already running.".into();
+            return;
+        }
+        let exe = self.config.runtime_exe.clone();
+        if !deps::is_ours(Path::new(&exe)) {
+            self.message = "Set HybridGt's runtime first (Settings).".into();
+            return;
+        }
+        let env = vec![("VICTORY_HOME".to_string(), config::app_dir().join("home").display().to_string())];
+        match jobs::start(Kind::Download, &exe, &[command.to_string()], &env, None, Path::new(&self.config.logs_dir)) {
+            Ok(job) => {
+                self.message = "Downloading: the log is under Diagnostics.".into();
+                self.job = Some(job);
+            }
+            Err(e) => self.message = e,
+        }
+    }
+
     pub fn play(&mut self) {
         if self.job.is_some() || self.setup.as_ref().is_some_and(setup::Setup::running) {
             self.message = "Something is already running.".into();
@@ -227,11 +251,22 @@ impl App {
         let (exe, _, _) = self.config.folders_for(preset);
         let exe = exe.to_string();
         let game_exe = Path::new(&self.config.game_dir).join(&self.game.executable).display().to_string();
-        let mut args = vec!["run".to_string(), game_exe, "--execute".to_string()];
-        if let Some(console) = preset.console() {
-            args.splice(2..2, ["--console".to_string(), console.to_string()]);
+        // Only HybridGt's own runtime is started (`deps::is_ours`).
+        if !deps::is_ours(Path::new(&exe)) {
+            self.message = "That victory.exe is not HybridGt's runtime: set HybridGt's under Settings, or build it.".into();
+            return;
         }
-        let env = presets::environment(&self.config, preset);
+        // The current runtime through `victory play`, so its F1 menu saves and applies its
+        // settings; Classic as before.
+        let (args, env) = if preset.classic() {
+            let mut args = vec!["run".to_string(), game_exe, "--execute".to_string()];
+            if let Some(console) = preset.console() {
+                args.splice(2..2, ["--console".to_string(), console.to_string()]);
+            }
+            (args, presets::environment(&self.config, preset))
+        } else {
+            presets::play_command(&self.config, preset, &game_exe)
+        };
         self.config.save();
         match jobs::start(Kind::Game, &exe, &args, &env, None, Path::new(&self.config.logs_dir)) {
             Ok(job) => {
@@ -359,6 +394,18 @@ impl App {
             if kind == Kind::Game {
                 self.playtime.add(&key, self.played_tick.elapsed().as_secs());
                 self.playtime.save();
+            }
+            if kind == Kind::Download {
+                // What arrived: the folders taken where none is set.
+                let (streamline, ffx) = scan::vendor_now(std::iter::once(Path::new(&self.config.runtime_exe)));
+                for (slot, found) in [(&mut self.config.streamline_dir, streamline), (&mut self.config.ffx_dir, ffx)] {
+                    if let Some(dir) = found
+                        && slot.is_empty()
+                    {
+                        *slot = dir;
+                    }
+                }
+                self.config.save();
             }
             if kind == Kind::Build && ok {
                 let built = Path::new(&self.config.source_dir).join("target").join("release").join("victory.exe");

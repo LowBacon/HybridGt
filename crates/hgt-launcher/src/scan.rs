@@ -85,7 +85,8 @@ pub fn scan(progress: impl Fn(usize)) -> Found {
             found.game_dir = Some(dir.clone());
         }
         let exe = dir.join("victory.exe");
-        if exe.is_file() && dir.ends_with(Path::new("target").join("release")) && !runtimes.contains(&exe) {
+        // HybridGt's own runtimes only (`deps::is_ours`): other builds of VIctory are passed by.
+        if exe.is_file() && dir.ends_with(Path::new("target").join("release")) && !runtimes.contains(&exe) && crate::deps::is_ours(&exe) {
             runtimes.push(exe);
         }
         if depth >= DEPTH {
@@ -133,13 +134,20 @@ pub fn scan(progress: impl Fn(usize)) -> Found {
     // NVIDIA's and AMD's files, fetched by the runtime's own scripts (`Get-NVIDIA-DLSS.cmd`,
     // `Get-AMD-FSR.cmd`), lie where the walk does not go (under AppData) or below a checkout:
     // looked for where those scripts put them. Nothing is fetched here.
-    let mut places: Vec<PathBuf> = std::env::var_os("LOCALAPPDATA").map(|l| PathBuf::from(l).join("victory")).into_iter().collect();
-    places.extend([found.runtime_exe.as_deref(), found.classic_exe.as_deref()].into_iter().flatten().filter_map(checkout));
-    let (streamline, ffx) = vendor_dirs(&places);
+    let (streamline, ffx) = vendor_now([found.runtime_exe.as_deref(), found.classic_exe.as_deref()].into_iter().flatten());
     found.streamline_dir = streamline;
     found.ffx_dir = found.ffx_dir.take().or(ffx);
     progress(found.folders_seen);
     found
+}
+
+/// NVIDIA's and AMD's folders as they are now: in HybridGt's home (where its Get buttons put
+/// them), in `%LOCALAPPDATA%\victory`, or in a runtime's checkout.
+pub fn vendor_now<'a>(runtimes: impl Iterator<Item = &'a Path>) -> (Option<String>, Option<String>) {
+    let mut places = vec![crate::config::app_dir().join("home")];
+    places.extend(std::env::var_os("LOCALAPPDATA").map(|l| PathBuf::from(l).join("victory")));
+    places.extend(runtimes.filter_map(|rt| rt.ancestors().nth(3).map(Path::to_path_buf)));
+    vendor_dirs(&places)
 }
 
 /// The first folder below `places` holding NVIDIA Streamline (`sl.interposer.dll`) and the first
@@ -151,7 +159,7 @@ fn vendor_dirs(places: &[PathBuf]) -> (Option<String>, Option<String>) {
     };
     (
         first(&["nvidia-sdk", "Streamline", "bin", "x64"], "sl.interposer.dll"),
-        first(&["amd-sdk", "FidelityFX", "bin"], "amd_fidelityfx_loader_dx12.dll"),
+        first(&["amd-fidelityfx"], "amd_fidelityfx_loader_dx12.dll").or_else(|| first(&["amd-sdk", "FidelityFX", "bin"], "amd_fidelityfx_loader_dx12.dll")),
     )
 }
 

@@ -425,6 +425,35 @@ impl App {
         });
         ui.add_space(12.0);
         style::card(ui, |ui| {
+            ui.label(RichText::new("DLSS, FSR 3 and frame generation files").size(17.0).strong().color(Color32::WHITE));
+            ui.label(
+                RichText::new("Not part of HybridGt. Each button has the runtime fetch them from their makers' own GitHub, check them, and keep them in HybridGt's folder. Nothing is fetched until you press one.")
+                    .color(style::SOFT),
+            );
+            let have = |dir: &str, file: &str| !dir.is_empty() && Path::new(dir).join(file).is_file();
+            let dlss = have(&self.config.streamline_dir, "sl.interposer.dll");
+            let fsr = have(&self.config.ffx_dir, "amd_fidelityfx_loader_dx12.dll");
+            style::status_row(ui, "NVIDIA DLSS and frame generation", "NVIDIA Streamline, about 70 MB", if dlss { "present" } else { "not yet" }, if dlss { style::GOOD } else { style::MUTED });
+            style::status_row(ui, "AMD FSR 3 frame generation", "AMD FidelityFX SDK, about 30 MB", if fsr { "present" } else { "not yet" }, if fsr { style::GOOD } else { style::MUTED });
+            ui.horizontal_wrapped(|ui| {
+                if style::pill(ui, "Get NVIDIA DLSS", false).clicked() {
+                    self.fetch("get-dlss");
+                }
+                if style::pill(ui, "Get AMD FSR 3", false).clicked() {
+                    self.fetch("get-fsr");
+                }
+                if style::pill(ui, "Get MFG Unlocker (mod)", false).clicked() {
+                    self.fetch("get-mfg");
+                }
+            });
+            ui.label(
+                RichText::new("MFG Unlocker is someone else's mod (MIT) that lets DLSS frame generation run on cards NVIDIA does not support it on, RTX 20 and 30. RTX 40 cards do 2x without it. Turn it on in the game's F1 menu. Frame generation multiplies the frames shown, not the game's speed.")
+                    .small()
+                    .color(style::MUTED),
+            );
+        });
+        ui.add_space(12.0);
+        style::card(ui, |ui| {
             ui.label(RichText::new("Logging and appearance").size(17.0).strong().color(Color32::WHITE));
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Runtime log").color(style::SOFT));

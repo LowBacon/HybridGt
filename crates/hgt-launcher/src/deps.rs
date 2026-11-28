@@ -105,10 +105,16 @@ pub fn check(config: &Config, sys: &System) -> Vec<Check> {
     add(
         "Runtime (victory.exe)",
         Need::Required,
-        Path::new(exe).is_file(),
+        is_ours(Path::new(exe)),
         false,
-        if exe.is_empty() { "not set".into() } else { exe.to_string() },
-        "HybridGt.exe unpacks its own; or build one under Settings.",
+        if exe.is_empty() {
+            "not set".into()
+        } else if Path::new(exe).is_file() && !is_ours(Path::new(exe)) {
+            format!("{exe}: not HybridGt's runtime")
+        } else {
+            exe.to_string()
+        },
+        "HybridGt.exe unpacks its own, or build one under Settings: other builds of VIctory are not started.",
     );
     let free = system::free_space(Path::new(cache)).unwrap_or(0);
     add(
@@ -149,6 +155,17 @@ pub fn check(config: &Config, sys: &System) -> Vec<Check> {
     out
 }
 
+/// What HybridGt's runtimes carry and other builds of VIctory do not: its repository line (the
+/// F1 menu's, since the VIctory-NVIDIA df2daafe merge) or its own switch, the sound delay
+/// (every HybridGt runtime since 0.1, the Classic one too).
+const MARKERS: [&[u8]; 2] = [b"GITHUB.COM/LOWBACON/HYBRIDGT", b"VICTORY_AUDIO_DELAY_MS"];
+
+/// Whether `exe` is one of HybridGt's runtimes, read from the file (it is not run).
+pub fn is_ours(exe: &Path) -> bool {
+    let Ok(bytes) = std::fs::read(exe) else { return false };
+    MARKERS.iter().any(|m| bytes.windows(m.len()).any(|w| w == *m))
+}
+
 pub fn which(name: &str) -> Option<std::path::PathBuf> {
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path).map(|d| d.join(format!("{name}.exe"))).find(|p| p.is_file())
@@ -157,6 +174,19 @@ pub fn which(name: &str) -> Option<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_hybridgts_runtime_counts_as_one() {
+        let dir = std::env::temp_dir().join(format!("hgt-ours-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (ours, other) = (dir.join("ours.exe"), dir.join("other.exe"));
+        std::fs::write(&ours, b"MZ...VICTORY_AUDIO_DELAY_MS...").unwrap();
+        std::fs::write(&other, b"MZ...VICTORY_LOG...").unwrap();
+        let (a, b) = (is_ours(&ours), is_ours(&other));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(a && !b);
+        assert!(!is_ours(Path::new("no such file.exe")));
+    }
 
     #[test]
     fn a_blank_config_is_blocked_by_the_game_folder_and_runtime() {

@@ -12,7 +12,7 @@
 /// What the Settings and Diagnostics pages say.
 pub const POLICY: &[&str] = &[
     "No update checks, telemetry, sign-in or cloud saves: the launcher has no network code.",
-    "Nothing is downloaded: missing pieces are reported, for you to supply from files you have.",
+    "Downloads only when you press a Get button: the runtime fetches NVIDIA's or AMD's files from their own GitHub, checked.",
     "The game reaches only this PC (loopback): the runtime refuses every other connection and name lookup.",
 ];
 

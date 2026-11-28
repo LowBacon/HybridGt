@@ -254,6 +254,66 @@ pub fn environment(c: &crate::config::Config, preset: Preset) -> Vec<(String, St
     env
 }
 
+/// Switches the runtime's F1 menu owns (`victory-gpu` `host::menu`): a start passes them as
+/// `victory play` options, which what the menu saved overrides, never with `--set`, which
+/// would override the menu at every start.
+const MENU_OWNED: &[&str] = &[
+    "VICTORY_DLSS",
+    "VICTORY_DLSS_MODE",
+    "VICTORY_STREAMLINE_DIR",
+    "VICTORY_FRAMEGEN",
+    "VICTORY_FRAMEGEN_X",
+    "VICTORY_FRAME_INTERVAL_US",
+    "VICTORY_NATIVE_1440P",
+    "VICTORY_AMBIENT",
+    "VICTORY_AMBIENT_AIR",
+    "VICTORY_AMBIENT_SPECULAR",
+    "VICTORY_EARLY_DEPTH",
+];
+
+/// Folders `victory play` keeps from the environment (its `KEPT`).
+const KEPT: &[&str] = &["VICTORY_GAME_DIR", "VICTORY_CACHE_DIR", "VICTORY_DATA_DIR", "VICTORY_STREAMLINE_DIR", "VICTORY_FIDELITYFX_DIR", "VICTORY_LOG", "VICTORY_HOME"];
+
+/// A start of the current runtime through `victory play`, as its own launcher starts it, so the
+/// F1 menu saves its settings (in HybridGt's own home, `%LOCALAPPDATA%\HybridGt\home`) and
+/// they apply at every start: the arguments after the program, and the environment. The
+/// preset's and the settings' switches the menu does not own go as `--set`; play's own tuned
+/// switches stand in for the Fast list. Classic is started with `run` ([`environment`]).
+pub fn play_command(c: &crate::config::Config, preset: Preset, game_exe: &str) -> (Vec<String>, Vec<(String, String)>) {
+    let all = environment(c, preset);
+    let get = |k: &str| all.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone());
+    let mut args = vec!["play".to_string(), game_exe.to_string()];
+    if preset.console() == Some("series-s") {
+        args.push("--series-s".into());
+    }
+    let dlss_files = std::path::Path::new(&c.streamline_dir).join("sl.interposer.dll").is_file();
+    args.push("--dlss".into());
+    args.push(if dlss_files && !preset.fsr() { get("VICTORY_DLSS_MODE").unwrap_or_else(|| "quality".into()) } else { "off".into() });
+    if let Some(x) = get("VICTORY_FRAMEGEN_X") {
+        args.push("--framegen".into());
+        args.push(x);
+    }
+    args.push("--fps".into());
+    args.push(if c.fps_cap > 0 { c.fps_cap.to_string() } else { "1000".into() });
+    let mut env: Vec<(String, String)> = Vec::new();
+    for (k, v) in &all {
+        if KEPT.contains(&k.as_str()) || k == crate::jobs::PRIORITY {
+            env.push((k.clone(), v.clone()));
+        } else if !MENU_OWNED.contains(&k.as_str()) && !FAST.iter().any(|(f, fv)| f == k && fv == v) {
+            args.push("--set".into());
+            args.push(format!("{k}={v}"));
+        }
+    }
+    if dlss_files {
+        env.push(("VICTORY_STREAMLINE_DIR".into(), c.streamline_dir.clone()));
+    }
+    if !c.ffx_dir.is_empty() {
+        env.push(("VICTORY_FIDELITYFX_DIR".into(), c.ffx_dir.clone()));
+    }
+    env.push(("VICTORY_HOME".into(), crate::config::app_dir().join("home").display().to_string()));
+    (args, env)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -261,6 +321,26 @@ mod tests {
 
     fn get<'a>(env: &'a [(String, String)], k: &str) -> Option<&'a str> {
         env.iter().find(|(key, _)| key == k).map(|(_, v)| v.as_str())
+    }
+
+    #[test]
+    fn a_play_start_keeps_folders_in_the_environment_and_the_menu_free() {
+        let mut c = Config { game_dir: "G".into(), audio_delay_ms: 150, memory: 1, ..Config::default() };
+        c.fps_cap = 30;
+        let (args, env) = play_command(&c, Preset::Performance, "G/game_scarlett_master.exe");
+        assert_eq!(&args[..2], ["play", "G/game_scarlett_master.exe"]);
+        let at = |flag: &str| args.iter().position(|a| a == flag).map(|i| args[i + 1].as_str());
+        assert_eq!(at("--fps"), Some("30"));
+        assert_eq!(at("--dlss"), Some("off"), "no NVIDIA files in a default config");
+        let sets: Vec<&str> = args.iter().enumerate().filter(|(_, a)| *a == "--set").map(|(i, _)| args[i + 1].as_str()).collect();
+        assert!(sets.contains(&"VICTORY_AUDIO_DELAY_MS=150") && sets.contains(&"VICTORY_PLACED_ORDER=1"));
+        assert!(sets.contains(&"VICTORY_TEXTURE_BUDGET_MB=6144"));
+        assert!(sets.iter().all(|s| !s.starts_with("VICTORY_DLSS") && !s.starts_with("VICTORY_FRAME") && !s.starts_with("VICTORY_AMBIENT")), "{sets:?}");
+        let e = |k: &str| env.iter().find(|(key, _)| key == k).map(|(_, v)| v.as_str());
+        assert_eq!(e("VICTORY_GAME_DIR"), Some("G"));
+        assert!(e("VICTORY_HOME").is_some_and(|h| h.ends_with("home")));
+        assert_eq!(e(crate::jobs::PRIORITY), Some("high"));
+        assert!(env.iter().all(|(k, _)| KEPT.contains(&k.as_str()) || k == crate::jobs::PRIORITY), "{env:?}");
     }
 
     #[test]
