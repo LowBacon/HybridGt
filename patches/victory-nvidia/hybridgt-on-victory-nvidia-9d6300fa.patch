@@ -1,3 +1,87 @@
+diff --git a/apps/victory/src/shader.rs b/apps/victory/src/shader.rs
+index 1c202854..2dab9328 100644
+--- a/apps/victory/src/shader.rs
++++ b/apps/victory/src/shader.rs
+@@ -221,7 +221,7 @@ pub fn run(paths: Vec<PathBuf>, verbose: bool, disasm: bool) -> Result<()> {
+     Ok(())
+ }
+ 
+-fn format_instruction(i: &Instruction, wave64: bool) -> String {
++pub(crate) fn format_instruction(i: &Instruction, wave64: bool) -> String {
+     let words: Vec<_> = i.words.iter().map(|w| format!("{w:08X}")).collect();
+     let text = match i.name() {
+         Some(_) => i.text(wave64),
+diff --git a/apps/victory/src/translate.rs b/apps/victory/src/translate.rs
+index faa68c12..e491bf49 100644
+--- a/apps/victory/src/translate.rs
++++ b/apps/victory/src/translate.rs
+@@ -961,3 +961,66 @@ mod tests {
+         );
+     }
+ }
++
++/// HybridGt: the whole offline batch from a test, so shaders can be checked against
++/// Microsoft's validator without starting the runtime or making a graphics device (no
++/// `--pipelines`). Ignored unless asked for; reads the title's own files, writes nothing:
++///
++/// `VICTORY_TEST_SHADERS=<shaders.rpf> VICTORY_TEST_WAVE=32 VICTORY_TEST_VIEWS=999999
++/// cargo test --release --offline -p victory every_shader -- --ignored --nocapture`
++#[cfg(test)]
++mod offline_batch {
++    #[test]
++    #[ignore]
++    fn every_shader_translates_and_validates() {
++        let Some(path) = std::env::var_os("VICTORY_TEST_SHADERS") else {
++            eprintln!("VICTORY_TEST_SHADERS is not set: nothing to check");
++            return;
++        };
++        let number = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<u32>().ok());
++        if let Some(n) = number("VICTORY_TEST_VIEWS") {
++            victory_shader::emit::set_view_heap_limit(n);
++        }
++        if let Some(n) = number("VICTORY_TEST_WAVE") {
++            victory_shader::emit::set_host_max_wave(n);
++        }
++        let jobs = number("VICTORY_TEST_JOBS").map_or(4, |n| n as usize);
++        super::run(vec![path.into()], true, false, true, Some(jobs)).expect("the batch ran");
++    }
++
++    /// The native programs of the containers whose hash starts with one of
++    /// `VICTORY_TEST_ONLY` (comma separated): stage, I/O, root layout, used
++    /// resources and the disassembly. Printed only, nothing written.
++    #[test]
++    #[ignore]
++    fn disassemble_chosen_shaders() {
++        let (Some(path), Ok(only)) = (std::env::var_os("VICTORY_TEST_SHADERS"), std::env::var("VICTORY_TEST_ONLY")) else {
++            eprintln!("VICTORY_TEST_SHADERS and VICTORY_TEST_ONLY are not both set");
++            return;
++        };
++        let only: Vec<String> = only.split(',').map(|h| h.trim().to_lowercase()).filter(|h| !h.is_empty()).collect();
++        let data = std::fs::read(&path).expect("the shaders file reads");
++        for source in crate::shader::sources(&data) {
++            let Some(bytes) = source.bytes() else { continue };
++            let hash = blake3::hash(&bytes).to_hex()[..16].to_owned();
++            if !only.iter().any(|o| hash.starts_with(o.as_str())) {
++                continue;
++            }
++            let Ok(container) = victory_shader::Container::parse(&bytes) else { continue };
++            let Some(dxil) = container.part(victory_shader::FourCC::DXIL).or(container.part(victory_shader::FourCC::ACCC)) else { continue };
++            for n in victory_shader::native_programs(dxil.data).unwrap_or_default() {
++                println!("== #{hash}{} {:?} wave64={} vgprs={}", source.label(), n.stage, n.wave64, n.vgprs);
++                println!("   io {:?}", n.io);
++                for p in &n.layout {
++                    println!("   {p:?}");
++                }
++                for u in &n.used {
++                    println!("   {u:?}");
++                }
++                for i in victory_shader::gfx10::decode(&n.code).unwrap_or_default() {
++                    println!("   {:#06x}  {}", i.offset, crate::shader::format_instruction(&i, n.wave64));
++                }
++            }
++        }
++    }
++}
 diff --git a/crates/victory-gpu/src/descriptor.rs b/crates/victory-gpu/src/descriptor.rs
 index 140a0cfe..a63631b4 100644
 --- a/crates/victory-gpu/src/descriptor.rs
@@ -339,7 +423,7 @@ index 9045bb04..0179c52a 100644
      /// wind field), and is 2D when the title names none.
      #[test]
 diff --git a/crates/victory-gpu/src/draw.rs b/crates/victory-gpu/src/draw.rs
-index c09e6930..20b9ede4 100644
+index c09e6930..8efb87be 100644
 --- a/crates/victory-gpu/src/draw.rs
 +++ b/crates/victory-gpu/src/draw.rs
 @@ -1576,6 +1576,16 @@ impl State {
@@ -359,7 +443,24 @@ index c09e6930..20b9ede4 100644
      pub(crate) fn replay(&mut self, list: &HostList) {
          self.host_pipeline = 0;
          self.host_roots = [0; 2];
-@@ -1956,7 +1966,7 @@ impl State {
+@@ -1655,6 +1665,16 @@ impl State {
+         if kind == victory_shader::emit::USER_DISPATCH_THREADS_X {
+             return 0;
+         }
++        // The title address of the bound view heap's first descriptor
++        // (HybridGt): programs read a heap descriptor's dwords from title
++        // memory there (`victory_shader::emit::USER_HEAP_ADDRESS`).
++        if kind == victory_shader::emit::USER_HEAP_ADDRESS || kind == victory_shader::emit::USER_HEAP_ADDRESS + 1 {
++            let start = match self.heaps[0] {
++                0 => 0,
++                h => crate::descriptor::heap(h as This).start,
++            };
++            return if kind == victory_shader::emit::USER_HEAP_ADDRESS { start as u32 } else { (start >> 32) as u32 };
++        }
+         if kind == USER_ROOT_ADDRESS || kind == USER_ROOT_ADDRESS + 1 {
+             return match self.roots_ref(compute).get(usize::from(slot)) {
+                 Some(&Root::View(address)) if kind == USER_ROOT_ADDRESS => address as u32,
+@@ -1956,7 +1976,7 @@ impl State {
              if t.stores && crate::picked::on() && crate::picked::picks(&stage.shader, &t.picks) {
                  crate::picked::runs_in(list);
              }
@@ -368,7 +469,7 @@ index c09e6930..20b9ede4 100644
              STORES.set(true);
              if made.iter().any(|m| m.1 == u32::MAX) {
                  once!("a draw whose descriptor table found no free slots is dropped");
-@@ -4420,17 +4430,42 @@ impl State {
+@@ -4420,17 +4440,42 @@ impl State {
      /// once: its constant data is copied at submission either way, and the
      /// big tables the world binds would otherwise take hundreds of slots per
      /// draw, wrapping the dynamic slots onto lists not yet submitted.
@@ -411,7 +512,7 @@ index c09e6930..20b9ede4 100644
                  || match self.roots_ref(compute).get(usize::from(slot)) {
                      Some(&Root::Table(table)) => self.heap_of(table).is_some_and(|heap| {
                          heap.host()
-@@ -4481,6 +4516,15 @@ impl State {
+@@ -4481,6 +4526,15 @@ impl State {
                      index.byte_offset.wrapping_add(constant << index.shift) / 32
                  })
                  .collect();
@@ -427,7 +528,7 @@ index c09e6930..20b9ede4 100644
              selected.sort_unstable();
              selected.dedup();
              let n = (group.max_dword / 8).max(selected.last().copied().unwrap_or(0)) + 1;
-@@ -4498,6 +4542,9 @@ impl State {
+@@ -4498,6 +4552,9 @@ impl State {
                      let at = table + u64::from(k) * 32;
                      // SAFETY: a descriptor slot in title memory.
                      h.add(unsafe { (at as *const [u32; 3]).read_unaligned() });
@@ -437,7 +538,7 @@ index c09e6930..20b9ede4 100644
                  }
                  (table, n, h.0)
              };
-@@ -4648,7 +4695,10 @@ impl State {
+@@ -4648,7 +4705,10 @@ impl State {
                          host.constant_at(index, &buffer, gpu, size);
                      }
                      Some(view) => {
@@ -449,6 +550,55 @@ index c09e6930..20b9ede4 100644
                          let kind = used.map(|u| u.kind).or_else(|| {
                              selected.binary_search(&k).ok().and_then(|_| view_kind(&view))
                          });
+diff --git a/crates/victory-gpu/src/indirect.rs b/crates/victory-gpu/src/indirect.rs
+index 46707408..bc9bfca4 100644
+--- a/crates/victory-gpu/src/indirect.rs
++++ b/crates/victory-gpu/src/indirect.rs
+@@ -2697,7 +2697,12 @@ void main(uint3 g : SV_GroupID, uint i : SV_GroupIndex) {
+             }
+             sig.unwrap()
+         };
+-        // Three records of 65,535 x 16 groups: about half the budget each.
++        // Three records of 32,768 x 32 groups: half the budget each, so two
++        // spend all of it and nothing is left for the small record, whether
++        // or not a record that does not fit takes the rest
++        // (`VICTORY_INDIRECT_REST`, off by default since 49f9aa03; with it
++        // off, records of 65,535 x 16 left 2,048 over, room for the small
++        // one).
+         let Some((big, big_ptr)) = host.shared_buffer(3 * u64::from(STRIDE)) else {
+             return;
+         };
+@@ -2710,7 +2715,7 @@ void main(uint3 g : SV_GroupID, uint i : SV_GroupIndex) {
+         // SAFETY: mapped buffers of these sizes; nothing runs yet.
+         unsafe {
+             for i in 0..3 {
+-                let words = [65535u32, 16, 1];
++                let words = [32768u32, 32, 1];
+                 std::ptr::copy_nonoverlapping(
+                     words.as_ptr().cast::<u8>(),
+                     big_ptr.add(i * STRIDE as usize),
+@@ -3193,7 +3198,20 @@ void main(uint3 group : SV_GroupID, uint3 thread : SV_DispatchThreadID) {
+             };
+             assert_eq!(out.iter().filter(|&&v| v == 1 << 22).count(), filled, "{times} times {records}: {out:?}");
+             assert!(out.iter().all(|&v| v == 0 || v == 1 << 22));
+-            assert_eq!(spent, BUDGET.min((1 << 26) * times * records as u32));
++            // What the records charge in order: each its cost if it fits in
++            // what is left; one that does not takes nothing, or the rest
++            // with `VICTORY_INDIRECT_REST=1` (off by default since 49f9aa03).
++            let cost = (1u64 << 26) * u64::from(times);
++            let expected = (0..records).fold(0u64, |at, _| {
++                if u64::from(BUDGET) - at >= cost {
++                    at + cost
++                } else if super::rest() == 1 {
++                    u64::from(BUDGET)
++                } else {
++                    at
++                }
++            });
++            assert_eq!(u64::from(spent), expected, "{times} times {records}");
+         }
+     }
+ 
 diff --git a/crates/victory-gpu/src/list.rs b/crates/victory-gpu/src/list.rs
 index 1d3f364e..5a89440a 100644
 --- a/crates/victory-gpu/src/list.rs
@@ -2164,7 +2314,7 @@ index f2eddab6..91143f64 100644
      if let Ok(mut v) = validator::Validator::load(validator::Validator::default_path().as_deref()) {
          let mut copy = shader.dxil.clone();
 diff --git a/crates/victory-shader/src/emit/lower.rs b/crates/victory-shader/src/emit/lower.rs
-index e56307b5..cbd1fe06 100644
+index e56307b5..8741e489 100644
 --- a/crates/victory-shader/src/emit/lower.rs
 +++ b/crates/victory-shader/src/emit/lower.rs
 @@ -25,6 +25,11 @@ use crate::structure::{Atom, Bool, LaneExit, Structured};
@@ -2200,7 +2350,21 @@ index e56307b5..cbd1fe06 100644
      samplers: Vec<[u32; 4]>,
      descriptors: HashMap<(Site, bool), &'a Source>,
      scalar: HashMap<Site, Address>,
-@@ -1896,6 +1908,8 @@ impl<'a> Lower<'a> {
+@@ -1199,6 +1211,13 @@ static HOST_MAX_WAVE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU3
+ 
+ /// The host GPU's `WaveLaneCountMax`: 32 lets console wave64 compute programs whose cross-lane
+ /// code stays inside 32-lane halves run in waves of 32 instead of being refused.
++/// Whether a heap descriptor read only as numbers is read from title memory
++/// (`VICTORY_HEAP_DESC_MEMORY`, on; `0`: such programs are refused).
++fn heap_desc_memory_on() -> bool {
++    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *ON.get_or_init(|| std::env::var_os("VICTORY_HEAP_DESC_MEMORY").is_none_or(|v| v != "0"))
++}
++
+ pub fn set_host_max_wave(lanes: u32) {
+     HOST_MAX_WAVE.store(lanes, std::sync::atomic::Ordering::Relaxed);
+ }
+@@ -1896,6 +1915,8 @@ impl<'a> Lower<'a> {
              params: x.res.params.iter().map(|&(v, p, d)| (v, (p, d))).collect(),
              user_data: None,
              user_reads: BTreeMap::new(),
@@ -2209,7 +2373,7 @@ index e56307b5..cbd1fe06 100644
              samplers: Vec::new(),
              descriptors: x
                  .res
-@@ -2610,6 +2624,8 @@ impl<'a> Lower<'a> {
+@@ -2610,6 +2631,8 @@ impl<'a> Lower<'a> {
              self.s.entry = body;
          }
          self.find_coherent();
@@ -2218,7 +2382,7 @@ index e56307b5..cbd1fe06 100644
          let order = crate::ir::reverse_postorder(&p.blocks);
          for (n, &b) in order.iter().enumerate() {
              self.rpo[b] = n;
-@@ -2695,6 +2711,7 @@ impl<'a> Lower<'a> {
+@@ -2695,6 +2718,7 @@ impl<'a> Lower<'a> {
          let root_cbvs = self.s.root_cbvs.iter().map(|r| r.0).collect();
          let root_srvs = self.s.root_srvs.iter().map(|r| r.0).collect();
          let root_uavs = self.s.root_uavs.iter().map(|r| r.0).collect();
@@ -2226,7 +2390,7 @@ index e56307b5..cbd1fe06 100644
          let cmp_samplers = self.s.cmp_samplers;
          let wave_size = self.s.wave_size;
          Ok(Lowered {
-@@ -2703,6 +2720,7 @@ impl<'a> Lower<'a> {
+@@ -2703,6 +2727,7 @@ impl<'a> Lower<'a> {
              root_cbvs,
              root_srvs,
              root_uavs,
@@ -2234,7 +2398,57 @@ index e56307b5..cbd1fe06 100644
              #[cfg(test)]
              nonuniform_handles: self.s.nonuniform_handles,
              #[cfg(test)]
-@@ -6972,7 +6990,15 @@ impl<'a> Lower<'a> {
+@@ -6929,6 +6954,49 @@ impl<'a> Lower<'a> {
+                 }
+                 return Ok(());
+             }
++            // A descriptor picked from the bindless heap at an index the code
++            // computes, read only as numbers (the shadow tracers keep the
++            // buffer address of it and walk the ray-tracing structure there):
++            // its own dwords, read from title memory at the heap's address
++            // ([`super::shader::USER_HEAP_ADDRESS`]) plus its byte, through
++            // the memory copies ([`Self::memory`]). A page without a copy
++            // reads zeros, an address of 0 (HybridGt;
++            // `VICTORY_HEAP_DESC_MEMORY=0`: refused as before). Buffer
++            // descriptors only (four dwords): an image's sizes read as
++            // numbers stay refused, as `sizes_of_a_volume_or_an_array_stay_untranslated` asks.
++            if count <= 4
++                && heap_desc_memory_on()
++                && let Some(a) = address
++                && let Some(rp) = self.x.native.layout.get(a.param).copied()
++                && rp.root == RootType::ResourceHeap
++            {
++                use super::shader::USER_HEAP_ADDRESS;
++                let byte = self.heap_byte(site, 0)?;
++                let lo = self.host_word(RootType::Other(USER_HEAP_ADDRESS), rp.slot, 0);
++                let hi = self.host_word(RootType::Other(USER_HEAP_ADDRESS + 1), rp.slot, 0);
++                let c = self.cur;
++                let i32t = self.s.t.i32;
++                let sum = self.s.m.bin(c, Bin::Add, lo, byte);
++                let carry = self.s.m.cmp(c, pred::IULT, sum, lo);
++                let carry = self.s.m.cast(c, Cast::ZExt, carry, i32t);
++                let hi = self.s.m.bin(c, Bin::Add, hi, carry);
++                let (iu, align) = (self.s.m.undef(i32t), self.s.m.i32(4));
++                let res = self.s.t.res_ret;
++                for first in (0..count).step_by(4) {
++                    let n = (count - first).min(4);
++                    let (lo, hi) = self.address_plus(sum, hi, 4 * first as i32);
++                    let (h, at) = self.memory(lo, hi, None, false);
++                    let c = self.cur;
++                    let mask = self.s.m.i8((1u8 << n) - 1);
++                    let r = self.s.op(c, "rawBufferLoad.f32", Attr::ReadOnly, res, 139, &[h, at, iu, mask, align]);
++                    for k in 0..n {
++                        let x = self.s.m.extract(c, r, k as u32);
++                        let x = self.as_int(x);
++                        self.write(inst, Reg::S(code + (first + k) as u8), x, None);
++                    }
++                }
++                return Ok(());
++            }
+             if std::env::var_os("VICTORY_DESC_WHY").is_some() {
+                 eprintln!(
+                     "DESC-WHY {:#x} {} scalar={:?} lane_copied={}",
+@@ -6972,7 +7040,15 @@ impl<'a> Lower<'a> {
                  let props = if un.starts_with("buffer_load_format")
                      || un.starts_with("buffer_store_format")
                  {
@@ -2251,7 +2465,7 @@ index e56307b5..cbd1fe06 100644
                  } else if !counted
                      && *idxen
                      && format.is_none()
-@@ -7612,6 +7638,22 @@ impl<'a> Lower<'a> {
+@@ -7612,6 +7688,22 @@ impl<'a> Lower<'a> {
          (kind == Some(ResourceType::Uav)).then(|| self.host_word(RootType::Other(USER_VIEW_BIAS), rp.slot, 0))
      }
  
@@ -2274,7 +2488,7 @@ index e56307b5..cbd1fe06 100644
      /// The used-resource entry a descriptor loaded from a table falls in.
      fn used_kind(&self, src: &Source) -> Option<&'a UsedResource> {
          if let Source::Phi { args, .. } | Source::Select { args, .. } | Source::Lanes { args, .. } =
-@@ -7812,7 +7854,7 @@ impl<'a> Lower<'a> {
+@@ -7812,7 +7904,7 @@ impl<'a> Lower<'a> {
              if self.block[q].is_none() {
                  continue;
              }
@@ -2283,7 +2497,7 @@ index e56307b5..cbd1fe06 100644
              let at = self.edges.get(&(q, block)).copied().unwrap_or(tail);
              let index = match arg {
                  Source::Loaded { load, first } => {
-@@ -7824,7 +7866,19 @@ impl<'a> Lower<'a> {
+@@ -7824,7 +7916,19 @@ impl<'a> Lower<'a> {
                  Source::Phi { block: inner, args: inner_args } if depth > 0 => {
                      self.descriptor_phi(*inner, inner_args, sampler, depth - 1)?
                  }
@@ -2304,7 +2518,34 @@ index e56307b5..cbd1fe06 100644
              };
              incoming.push((index, at));
          }
-@@ -9692,33 +9746,43 @@ impl<'a> Lower<'a> {
+@@ -8144,6 +8248,16 @@ impl<'a> Lower<'a> {
+     /// The heap index of the descriptor at dword `first` of what the scalar
+     /// load at `load` reads, computed in the current block.
+     fn heap_index(&mut self, load: Site, first: u8, sampler: bool) -> Result<V, Why> {
++        let addr = self.heap_byte(load, first)?;
++        let c = self.cur;
++        let shift = self.s.m.i32(if sampler { 4 } else { 5 });
++        Ok(self.s.m.bin(c, Bin::LShr, addr, shift))
++    }
++
++    /// The byte in its heap of the descriptor the scalar load at `load`
++    /// reads (from dword `first` on): the load's base, offset and offset
++    /// register ([`Self::heap_index`] divides it by the slot size).
++    fn heap_byte(&mut self, load: Site, first: u8) -> Result<V, Why> {
+         let a = *self
+             .scalar
+             .get(&load)
+@@ -8177,8 +8291,7 @@ impl<'a> Lower<'a> {
+             let so = self.operand(li, soffset)?;
+             addr = self.s.m.bin(c, Bin::Add, addr, so);
+         }
+-        let shift = self.s.m.i32(if sampler { 4 } else { 5 });
+-        Ok(self.s.m.bin(c, Bin::LShr, addr, shift))
++        Ok(addr)
+     }
+ 
+     fn valu(&mut self, inst: &Inst, b: usize, i: usize) -> Result<(), Why> {
+@@ -9692,33 +9805,43 @@ impl<'a> Lower<'a> {
              return Err("a 16-bit result outside a VGPR");
          };
          let mut high = v.opsel >> 3 & 1 != 0;
@@ -2364,7 +2605,28 @@ index e56307b5..cbd1fe06 100644
          };
          self.write_placed(inst, Reg::V(reg), r, guard);
          Ok(())
-@@ -12215,6 +12279,23 @@ impl<'a> Lower<'a> {
+@@ -11612,6 +11735,11 @@ impl<'a> Lower<'a> {
+                     return Err("an image result");
+                 };
+                 let f32t = self.s.t.f32;
++                // The level of detail takes the spatial coordinates alone:
++                // an array's slice is no coordinate of it (the validator:
++                // "out of bound coord must be undef", HybridGt).
++                let at = |k: usize| if k < spatial { cs[k] } else { fu };
++                let (x, y, z) = (at(0), at(1), at(2));
+                 for (k, ch) in (0..2u32).filter(|ch| dmask >> ch & 1 != 0).enumerate() {
+                     let clamped = self.s.m.bool(ch == 0);
+                     let lod = self.s.op(
+@@ -11620,7 +11748,7 @@ impl<'a> Lower<'a> {
+                         Attr::ReadOnly,
+                         f32t,
+                         81,
+-                        &[h, sh, cs[0], cs[1], cs[2], clamped],
++                        &[h, sh, x, y, z, clamped],
+                     );
+                     let x = self.as_int(lod);
+                     self.write(inst, Reg::V(reg + k as u8), x, guard);
+@@ -12215,6 +12343,23 @@ impl<'a> Lower<'a> {
              .copied()
              .ok_or("an untracked buffer")?;
          let used = self.used_kind(src);
@@ -2388,7 +2650,7 @@ index e56307b5..cbd1fe06 100644
          let (base, extra) = self.built_offset(src)?;
          if base != 0 {
              let b = self.s.m.i32(base);
-@@ -12446,15 +12527,10 @@ impl<'a> Lower<'a> {
+@@ -12446,15 +12591,10 @@ impl<'a> Lower<'a> {
              let mut vals =
                  self.vgprs(inst, data.as_ref().ok_or("buffer store data")?, regs as u8)?;
              if d16 {
@@ -2408,7 +2670,7 @@ index e56307b5..cbd1fe06 100644
                  let integer = if typed { self.integer_view(src)? } else { None };
                  let mut wide = Vec::new();
                  for k in 0..count {
-@@ -12463,6 +12539,11 @@ impl<'a> Lower<'a> {
+@@ -12463,6 +12603,11 @@ impl<'a> Lower<'a> {
                          let k16 = self.s.m.i32(16);
                          x = self.s.m.bin(c, Bin::LShr, x, k16);
                      }
@@ -2420,7 +2682,7 @@ index e56307b5..cbd1fe06 100644
                      let f32t = self.s.t.f32;
                      let f = self
                          .s
-@@ -12487,12 +12568,21 @@ impl<'a> Lower<'a> {
+@@ -12487,12 +12632,21 @@ impl<'a> Lower<'a> {
                  if count != 4 || *offen || *offset != 0 {
                      return Err("a typed buffer store of some channels or at an offset");
                  }
@@ -2445,7 +2707,7 @@ index e56307b5..cbd1fe06 100644
              } else {
                  match index {
                      // A raw buffer (stride 1) written by index: the index is the byte.
-@@ -12552,16 +12642,30 @@ impl<'a> Lower<'a> {
+@@ -12552,16 +12706,30 @@ impl<'a> Lower<'a> {
              if uav {
                  self.s.flags |= flags::TYPED_UAV_LOADS;
              }
@@ -2485,7 +2747,7 @@ index e56307b5..cbd1fe06 100644
          } else {
              let mask = self.s.m.i8((1u8 << count) - 1);
              let align = self.s.m.i32(4);
-@@ -12611,8 +12715,8 @@ impl<'a> Lower<'a> {
+@@ -12611,8 +12779,8 @@ impl<'a> Lower<'a> {
              return Err("a buffer result");
          };
          if d16 {
@@ -2496,7 +2758,7 @@ index e56307b5..cbd1fe06 100644
              let integer = if typed { self.integer_view(src)? } else { None };
              let k16 = self.s.m.i32(16);
              let i32t = self.s.t.i32;
-@@ -12620,15 +12724,21 @@ impl<'a> Lower<'a> {
+@@ -12620,15 +12788,21 @@ impl<'a> Lower<'a> {
                  let mut x = None;
                  for ch in (2 * k..(2 * k + 2).min(count)).rev() {
                      let f = self.s.m.extract(c, r, ch);
@@ -2527,7 +2789,7 @@ index e56307b5..cbd1fe06 100644
                      x = Some(match x {
                          Some(hi) => {
                              let hi = self.s.m.bin(c, Bin::Shl, hi, k16);
-@@ -12643,7 +12753,8 @@ impl<'a> Lower<'a> {
+@@ -12643,7 +12817,8 @@ impl<'a> Lower<'a> {
          }
          for k in 0..count {
              let x = self.s.m.extract(c, r, k);
@@ -2538,9 +2800,18 @@ index e56307b5..cbd1fe06 100644
          }
          Ok(())
 diff --git a/crates/victory-shader/src/emit/mod.rs b/crates/victory-shader/src/emit/mod.rs
-index e835c2c5..1f5a2f94 100644
+index e835c2c5..d1d71526 100644
 --- a/crates/victory-shader/src/emit/mod.rs
 +++ b/crates/victory-shader/src/emit/mod.rs
+@@ -124,7 +124,7 @@ pub use lower::{host_settings, set_host_max_wave, set_host_rdna};
+ pub use rect::rect_list_gs;
+ pub use shader::{
+     MEMORY_FAULTS, MEMORY_PAGES, MEMORY_READ_ONLY, ROOT_CBV_SPACE, SAMPLER_SPACE, SLOT_FAULTS, SLOT_MEMORY, SLOT_STRIDES,
+-    SLOT_STRIDES_COUNT, SLOT_TABLE_STRIDES, USER_DATA_SPACE, VIEW_INTEGER, VIEW_SIGNED, VIEW_STRIDE_BITS, USER_DISPATCH_THREADS_X, USER_MEMORY_BASE, USER_ROOT_ADDRESS, USER_VIEW_ADDRESS, USER_VIEW_BIAS,
++    SLOT_STRIDES_COUNT, SLOT_TABLE_STRIDES, USER_DATA_SPACE, VIEW_INTEGER, VIEW_SIGNED, VIEW_STRIDE_BITS, USER_DISPATCH_THREADS_X, USER_HEAP_ADDRESS, USER_MEMORY_BASE, USER_ROOT_ADDRESS, USER_VIEW_ADDRESS, USER_VIEW_BIAS,
+     raw_views, set_raw_views, set_view_heap_limit, view_heap_limit,
+ };
+ 
 @@ -436,6 +436,21 @@ pub struct HostShader {
      pub root_uavs: Vec<u8>,
      /// Heap descriptors that can be selected from root state at bind time.
@@ -2648,10 +2919,24 @@ index 9ec80fd8..ba2f4b9a 100644
          (
              host(crate::native::HwStage::Vs, vs),
 diff --git a/crates/victory-shader/src/emit/shader.rs b/crates/victory-shader/src/emit/shader.rs
-index 5ce292d7..45c2299d 100644
+index 5ce292d7..93fd3c02 100644
 --- a/crates/victory-shader/src/emit/shader.rs
 +++ b/crates/victory-shader/src/emit/shader.rs
-@@ -581,6 +581,12 @@ impl Shader {
+@@ -99,6 +99,13 @@ pub const USER_ROOT_ADDRESS: u32 = 0x104;
+ /// the group's width. Asked for by the structure builder's programs
+ /// ([`crate::spill::is_spilled`]).
+ pub const USER_DISPATCH_THREADS_X: u32 = 0x106;
++/// `RootType::Other` code of a user-data dword the host computes: the low
++/// 32 bits of the title address of the first descriptor of the bound view
++/// heap (the bindless `ResourceHeap` parameter's base); [`USER_HEAP_ADDRESS`]
++/// + 1: its bits from 32 up. Programs that read a heap descriptor only for
++/// the buffer address in it read its dwords from title memory
++/// ([`SLOT_MEMORY`]) at this address plus the descriptor's byte (HybridGt).
++pub const USER_HEAP_ADDRESS: u32 = 0x107;
+ 
+ /// `ShaderFlags` bits (metadata) and their `SFI0` feature bits.
+ pub(crate) mod flags {
+@@ -581,6 +588,12 @@ impl Shader {
          if !self.root_uavs.is_empty() && !self.pixel && !compute {
              self.flags |= flags::UAVS_EVERY_STAGE;
          }
@@ -2710,7 +2995,7 @@ index 32171c74..e368a6b2 100644
 +    }
 +}
 diff --git a/crates/victory-shader/src/emit/valu_tests.rs b/crates/victory-shader/src/emit/valu_tests.rs
-index 66224526..3e25c793 100644
+index 66224526..f3ca4a82 100644
 --- a/crates/victory-shader/src/emit/valu_tests.rs
 +++ b/crates/victory-shader/src/emit/valu_tests.rs
 @@ -181,6 +181,7 @@ fn build_cs(body: &[u32], threads: u32, lds_bytes: u32) -> HostShader {
@@ -2737,7 +3022,24 @@ index 66224526..3e25c793 100644
      };
      if let Ok(mut v) = validator::Validator::load(validator::Validator::default_path().as_deref()) {
          let mut copy = shader.dxil.clone();
-@@ -2391,3 +2394,488 @@ fn typed_non_d16_table_load_preserves_integer_bits() {
+@@ -2227,6 +2230,16 @@ fn typed_d16_table_uav_roundtrip_uint_sint_and_float() {
+             .compute_pipeline(&shader)
+             .unwrap_or_else(|e| panic!("{backend}: compute_pipeline failed: {e}"));
+         for &(label, format, stride_word, input, base_slot) in &cases {
++            // Where the shader moves halves (`half_views`) the host shows a
++            // 16-bit float or signed view as its unsigned twin
++            // (`descriptor::host::half_view`), and its word says so: the
++            // bits go through as they are. The test's views do the same
++            // (HybridGt: the title's own format there clamped negatives).
++            let (format, stride_word) = if shader.half_views.is_empty() {
++                (format, stride_word)
++            } else {
++                (DXGI_FORMAT_R16G16B16A16_UINT, 8 | super::VIEW_INTEGER)
++            };
+             let mut views = Vec::new();
+             let mut strides = Vec::new();
+             for _ in 0..base_slot {
+@@ -2391,3 +2404,496 @@ fn typed_non_d16_table_load_preserves_integer_bits() {
          }
      }
  }
@@ -2884,12 +3186,20 @@ index 66224526..3e25c793 100644
 +                other => panic!("unexpected user data {other:?}"),
 +            };
 +        }
++        // The host's word per table slot (`SLOT_TABLE_STRIDES`), bound as the
++        // runtime binds it whenever a shader asks: both views are unsigned
++        // 16-bit integers, 8 bytes an element. (Unbound, the read the store
++        // makes of it to widen by the view's sign faults the device.)
++        let mut roots = vec![(0, Root::Constants(ud))];
++        if shader.root_srvs.contains(&super::SLOT_TABLE_STRIDES) {
++            roots.push((1, Root::View { srv: true, data: vec![8 | super::VIEW_INTEGER; 2] }));
++        }
 +        let out = host
 +            .dispatch(
 +                &root,
 +                &pso,
 +                &Dispatch {
-+                    roots: vec![(0, Root::Constants(ud))],
++                    roots,
 +                    views: &[
 +                        View::Buffer {
 +                            data: &data,

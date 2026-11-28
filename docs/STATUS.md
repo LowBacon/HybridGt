@@ -42,7 +42,15 @@ More: [KNOWN_FAILURES.md](KNOWN_FAILURES.md) · [MASTER_STATUS.md](MASTER_STATUS
 
 ## Microsoft's DXIL validator (2026-11-27)
 
-Of 25,889 programs emitted, **25,616 validate (98.9 %)**, up from 25,479. Every vertex and pixel program the offline check builds validates and gets its pipeline (14,247; the other 195 are geometry stages, built with their vertex stage in game). Fixed: the signature part's rows in the order the validator writes them (78 programs, found by trying variants of one container against `dxil.dll`), and one interpolation mode per signature row (outputs' modes are declarations; unread inputs take their row's mode; `SV_IsFrontFace` gets its own row). Left: **71 mesh programs** over Direct3D's 32 KB of vertex and primitive output, because their 16-bit outputs are declared 32-bit (the card builds and runs them; the fix is 16-bit inputs and outputs in every stage), and **2 compute programs** 132 bytes over the 32 KB of group memory in the group-wide form.
+**Current runtime** (VIctory-NVIDIA `9d6300fa` plus the HybridGt patch, offline, as for a 32-lane GPU):
+25,600 of 25,889 programs validate (98.9 %). That's every vertex and pixel program (14,247), mesh 8,694 of
+8,765 and compute 2,659 of 2,682. Geometry is 0 of 195. Fixed this round: the level-of-detail query
+(3 programs) and heap descriptors read for their address (4 shadow tracers). Details:
+[dev/SHADER_TRANSLATION.md](dev/SHADER_TRANSLATION.md).
+
+**Earlier runtime** (Classic), for reference:
+
+Of 25,889 programs emitted, **25,616 validate (98.9 %)**, up from 25,479. Every vertex and pixel program the offline check builds validates and gets its pipeline (14,247; the other 195 are geometry stages, built with their vertex stage in game). Fixed: the signature part's rows in the order the validator writes them (78 programs, found by trying variants of one container against `dxil.dll`), and one interpolation mode per signature row (outputs' modes are declarations; unread inputs take their row's mode; `SV_IsFrontFace` gets its own row). Left: **71 mesh programs** over Direct3D's 32 KB of vertex and primitive output, (the card builds and runs them). Declaring outputs 16-bit would not help: Microsoft's validator counts a 16-bit output as 4 bytes too (checked with two test mesh shaders through `dxc`, 2026-11-27). Nor would leaving out unread outputs: in all 85 recorded pairs the pixel shader reads every output. What remains is packing two 16-bit values per output (interpolated in the pixel shader) or splitting each group in two, and **2 compute programs** 132 bytes over the 32 KB of group memory in the group-wide form.
 
 ## Tests
 

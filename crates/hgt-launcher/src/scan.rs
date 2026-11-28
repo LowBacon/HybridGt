@@ -20,6 +20,9 @@ pub struct Found {
     pub classic_cache_dir: Option<String>,
     pub classic_data_dir: Option<String>,
     pub ffx_dir: Option<String>,
+    /// NVIDIA Streamline (DLSS, frame generation), where the runtime's own
+    /// `Get-NVIDIA-DLSS.cmd` put it.
+    pub streamline_dir: Option<String>,
     pub folders_seen: usize,
 }
 
@@ -127,8 +130,29 @@ pub fn scan(progress: impl Fn(usize)) -> Found {
         (found.classic_cache_dir, found.classic_data_dir) = (cache, data);
         found.ffx_dir = found.ffx_dir.take().or(ffx);
     }
+    // NVIDIA's and AMD's files, fetched by the runtime's own scripts (`Get-NVIDIA-DLSS.cmd`,
+    // `Get-AMD-FSR.cmd`), lie where the walk does not go (under AppData) or below a checkout:
+    // looked for where those scripts put them. Nothing is fetched here.
+    let mut places: Vec<PathBuf> = std::env::var_os("LOCALAPPDATA").map(|l| PathBuf::from(l).join("victory")).into_iter().collect();
+    places.extend([found.runtime_exe.as_deref(), found.classic_exe.as_deref()].into_iter().flatten().filter_map(checkout));
+    let (streamline, ffx) = vendor_dirs(&places);
+    found.streamline_dir = streamline;
+    found.ffx_dir = found.ffx_dir.take().or(ffx);
     progress(found.folders_seen);
     found
+}
+
+/// The first folder below `places` holding NVIDIA Streamline (`sl.interposer.dll`) and the first
+/// holding AMD's FidelityFX loader (`amd_fidelityfx_loader_dx12.dll`), as the runtime's
+/// download scripts lay them out.
+fn vendor_dirs(places: &[PathBuf]) -> (Option<String>, Option<String>) {
+    let first = |sub: &[&str], file: &str| {
+        places.iter().map(|p| sub.iter().fold(p.clone(), |d, s| d.join(s))).find(|d| d.join(file).is_file()).map(|d| d.display().to_string())
+    };
+    (
+        first(&["nvidia-sdk", "Streamline", "bin", "x64"], "sl.interposer.dll"),
+        first(&["amd-sdk", "FidelityFX", "bin"], "amd_fidelityfx_loader_dx12.dll"),
+    )
 }
 
 /// The folders a HybridGt launcher (`set VICTORY_...=` lines) names, where they exist.
@@ -166,5 +190,20 @@ mod tests {
         assert_eq!(data, None, "a folder that does not exist is not taken");
         assert_eq!(ffx, None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn vendor_files_are_found_where_the_scripts_put_them() {
+        let root = std::env::temp_dir().join(format!("hgt-vendor-{}", std::process::id()));
+        let sl = root.join("b").join("nvidia-sdk").join("Streamline").join("bin").join("x64");
+        let fx = root.join("a").join("amd-sdk").join("FidelityFX").join("bin");
+        std::fs::create_dir_all(&sl).unwrap();
+        std::fs::create_dir_all(&fx).unwrap();
+        std::fs::write(sl.join("sl.interposer.dll"), b"").unwrap();
+        std::fs::write(fx.join("amd_fidelityfx_loader_dx12.dll"), b"").unwrap();
+        let (s, f) = super::vendor_dirs(&[root.join("a"), root.join("b")]);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(s, Some(sl.display().to_string()));
+        assert_eq!(f, Some(fx.display().to_string()));
     }
 }

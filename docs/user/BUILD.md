@@ -2,6 +2,11 @@
 
 [← Back to the README](../../README.md)
 
+> [!NOTE]
+> This page builds the **Classic** runtime (fxceless's victory-gta6 with HybridGt's patch), the
+> launcher's *Classic* preset. The current runtime, VIctory-NVIDIA with `patches/victory-nvidia`, and
+> the launcher are built as described in [DEVELOPMENT.md](../dev/DEVELOPMENT.md).
+
 ## 1. What you need
 
 | | |

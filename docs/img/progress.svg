@@ -4,29 +4,29 @@
 <text x="16" y="28" class="t">HybridGt progress</text>
 <text x="16" y="60">Shader programs translate</text>
 <rect class="bg" x="250" y="48" width="380" height="16" rx="4" fill="#eaeef2"/>
-<rect x="250" y="48" width="380.0" height="16" rx="4" fill="#2e9e4f"/>
-<text x="640" y="61" class="p">100 %</text>
-<text x="686" y="61" class="n">26,084 of 26,084 (with the opt-in switches)</text>
+<rect x="250" y="48" width="377.0" height="16" rx="4" fill="#7cb342"/>
+<text x="640" y="61" class="p">99.2 %</text>
+<text x="686" y="61" class="n">25,671 of 25,889 (current runtime, offline)</text>
 <text x="16" y="90">Pass Microsoft's DXIL validator</text>
 <rect class="bg" x="250" y="78" width="380" height="16" rx="4" fill="#eaeef2"/>
-<rect x="250" y="78" width="373.9" height="16" rx="4" fill="#7cb342"/>
-<text x="640" y="91" class="p">98.4 %</text>
-<text x="686" y="91" class="n">25,479 of 25,889 emitted</text>
+<rect x="250" y="78" width="375.8" height="16" rx="4" fill="#7cb342"/>
+<text x="640" y="91" class="p">98.9 %</text>
+<text x="686" y="91" class="n">25,600 of 25,889 (current runtime, offline)</text>
 <text x="16" y="120">Vertex/pixel pipelines on the card</text>
 <rect class="bg" x="250" y="108" width="380" height="16" rx="4" fill="#eaeef2"/>
 <rect x="250" y="108" width="380.0" height="16" rx="4" fill="#2e9e4f"/>
 <text x="640" y="121" class="p">100 %</text>
-<text x="686" y="121" class="n">14,247 of 14,247 (geometry stages build in game)</text>
+<text x="686" y="121" class="n">14,247 of 14,247 (earlier runtime)</text>
 <text x="16" y="150">Compute pipelines on the card</text>
 <rect class="bg" x="250" y="138" width="380" height="16" rx="4" fill="#eaeef2"/>
 <rect x="250" y="138" width="380.0" height="16" rx="4" fill="#2e9e4f"/>
 <text x="640" y="151" class="p">100 %</text>
-<text x="686" y="151" class="n">2,682 of 2,682</text>
+<text x="686" y="151" class="n">2,682 of 2,682 (earlier runtime)</text>
 <text x="16" y="180">Mesh pipelines on the card</text>
 <rect class="bg" x="250" y="168" width="380" height="16" rx="4" fill="#eaeef2"/>
 <rect x="250" y="168" width="380.0" height="16" rx="4" fill="#2e9e4f"/>
 <text x="640" y="181" class="p">100 %</text>
-<text x="686" y="181" class="n">8,765 of 8,765</text>
+<text x="686" y="181" class="n">8,765 of 8,765 (earlier runtime)</text>
 <text x="16" y="210">Ray-tracing builder translates</text>
 <rect class="bg" x="250" y="198" width="380" height="16" rx="4" fill="#eaeef2"/>
 <rect x="250" y="198" width="380.0" height="16" rx="4" fill="#2e9e4f"/>
@@ -46,7 +46,7 @@
 <rect class="bg" x="250" y="288" width="380" height="16" rx="4" fill="#eaeef2"/>
 <rect x="250" y="288" width="380.0" height="16" rx="4" fill="#2e9e4f"/>
 <text x="640" y="301" class="p">100 %</text>
-<text x="686" y="301" class="n">HybridGt.exe: scans, presets, live fps</text>
+<text x="686" y="301" class="n">0.3.0: five pages, setup, offline; 32 tests</text>
 <text x="16" y="330">Graphics memory</text>
 <rect class="bg" x="250" y="318" width="380" height="16" rx="4" fill="#eaeef2"/>
 <rect x="250" y="318" width="342.0" height="16" rx="4" fill="#7cb342"/>

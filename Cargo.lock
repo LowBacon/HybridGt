@@ -750,11 +750,13 @@ dependencies = [
 
 [[package]]
 name = "hgt-launcher"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "eframe",
+ "image",
  "serde",
  "serde_json",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

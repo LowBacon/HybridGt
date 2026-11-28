@@ -35,7 +35,6 @@ pub fn apply(ctx: &egui::Context) {
     v.window_fill = PANEL;
     v.extreme_bg_color = Color32::from_rgb(10, 8, 17);
     v.faint_bg_color = CARD;
-    v.hyperlink_color = CYAN;
     v.selection.bg_fill = with_alpha(ACCENT, 0.55);
     v.selection.stroke = Stroke::new(1.0_f32, ACCENT);
     v.window_rounding = Rounding::same(ROUND);
@@ -85,53 +84,126 @@ fn gradient(painter: &egui::Painter, rect: Rect, stops: &[Color32]) {
     painter.add(Shape::mesh(mesh));
 }
 
-/// The header: a slowly drifting sunset, the name, and what is running.
-pub fn header(ui: &mut Ui, t: f32, running: Option<&str>, live: Option<super::Live>) {
-    let rect = ui.max_rect();
+/// The brand mark: a sunset disc with dark bands (drawn here; no art of any game).
+pub fn mark(painter: &egui::Painter, center: Pos2, r: f32) {
+    let steps = 24;
+    for i in 0..steps {
+        let t = i as f32 / (steps - 1) as f32;
+        let y0 = center.y - r + 2.0 * r * i as f32 / steps as f32;
+        let y1 = y0 + 2.0 * r / steps as f32 + 0.5;
+        let c = if t < 0.5 { mix(SUN, ACCENT, t * 2.0) } else { mix(ACCENT, VIOLET, (t - 0.5) * 2.0) };
+        // The disc's width at this height.
+        let dy = ((y0 + y1) / 2.0 - center.y).abs().min(r);
+        let half = (r * r - dy * dy).sqrt();
+        let band = i > steps / 2 && (i - steps / 2) % 3 == 0;
+        if !band {
+            painter.rect_filled(Rect::from_min_max(Pos2::new(center.x - half, y0), Pos2::new(center.x + half, y1)), Rounding::ZERO, c);
+        }
+    }
+}
+
+/// The sidebar's top: the mark and the name.
+pub fn brand(ui: &mut Ui) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 64.0), Sense::hover());
+    let painter = ui.painter();
+    mark(painter, Pos2::new(rect.left() + 26.0, rect.center().y), 18.0);
+    painter.text(Pos2::new(rect.left() + 56.0, rect.center().y - 8.0), Align2::LEFT_CENTER, "HYBRIDGT", FontId::proportional(22.0), Color32::WHITE);
+    painter.text(Pos2::new(rect.left() + 57.0, rect.center().y + 14.0), Align2::LEFT_CENTER, "built on VIctory", FontId::proportional(11.5), MUTED);
+}
+
+/// A hero banner: the title's own art if there is one (shown as it is, dimmed on the left
+/// for the text), else a drawn sunset that drifts slowly. Returns the banner's rect.
+pub fn hero(ui: &mut Ui, art: Option<&egui::TextureHandle>, t: f32, animate: bool, height: f32) -> Rect {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
     let painter = ui.painter_at(rect);
-    let drift = (t * 0.25).sin() * 0.5 + 0.5;
-    gradient(&painter, rect, &[
-        mix(VIOLET, Color32::from_rgb(70, 24, 120), drift),
-        mix(ACCENT, Color32::from_rgb(255, 92, 120), 1.0 - drift),
-        SUN,
-        mix(Color32::from_rgb(255, 120, 90), ACCENT, drift),
-        Color32::from_rgb(40, 18, 70),
-    ]);
-    // A dark veil at the bottom, so the panels below meet it softly.
+    let round = Rounding::same(22.0);
+    match art {
+        Some(tex) => {
+            // Cover the banner, keeping the image's shape, centred.
+            let size = tex.size_vec2();
+            let scale = (rect.width() / size.x).max(rect.height() / size.y);
+            let shown = size * scale;
+            let uv_w = rect.width() / shown.x;
+            let uv_h = rect.height() / shown.y;
+            let uv = Rect::from_min_max(Pos2::new((1.0 - uv_w) / 2.0, (1.0 - uv_h) / 2.0), Pos2::new((1.0 + uv_w) / 2.0, (1.0 + uv_h) / 2.0));
+            let mut shape = egui::epaint::RectShape::filled(rect, round, Color32::WHITE);
+            shape.fill_texture_id = tex.id();
+            shape.uv = uv;
+            painter.add(shape);
+        }
+        None => {
+            let drift = if animate { (t * 0.25).sin() * 0.5 + 0.5 } else { 0.5 };
+            let stops = [mix(VIOLET, Color32::from_rgb(70, 24, 120), drift), mix(ACCENT, Color32::from_rgb(255, 92, 120), 1.0 - drift), SUN, Color32::from_rgb(40, 18, 70)];
+            gradient(&painter, rect, &stops);
+            mark(&painter, Pos2::new(rect.right() - 150.0, rect.center().y), 90.0);
+        }
+    }
+    // A veil from the left and the bottom, so the text reads on any art.
     let mut veil = egui::Mesh::default();
-    let (top, bottom) = (rect.center().y, rect.bottom());
-    veil.colored_vertex(Pos2::new(rect.left(), top), Color32::TRANSPARENT);
-    veil.colored_vertex(Pos2::new(rect.right(), top), Color32::TRANSPARENT);
-    veil.colored_vertex(Pos2::new(rect.left(), bottom), with_alpha(BACKGROUND, 0.85));
-    veil.colored_vertex(Pos2::new(rect.right(), bottom), with_alpha(BACKGROUND, 0.85));
+    let mid = rect.left() + rect.width() * 0.62;
+    veil.colored_vertex(rect.left_top(), with_alpha(BACKGROUND, 0.92));
+    veil.colored_vertex(Pos2::new(mid, rect.top()), Color32::TRANSPARENT);
+    veil.colored_vertex(rect.left_bottom(), with_alpha(BACKGROUND, 0.95));
+    veil.colored_vertex(Pos2::new(mid, rect.bottom()), with_alpha(BACKGROUND, 0.25));
     veil.add_triangle(0, 1, 2);
     veil.add_triangle(1, 2, 3);
     painter.add(Shape::mesh(veil));
-    // Palm-like stripes of light on the right, an original touch.
-    for i in 0..5 {
-        let x = rect.right() - 60.0 - i as f32 * 26.0;
-        let h = 18.0 + ((t * 0.8 + i as f32).sin() * 0.5 + 0.5) * 30.0;
-        painter.rect_filled(
-            Rect::from_min_size(Pos2::new(x, rect.bottom() - 26.0 - h), Vec2::new(10.0, h)),
-            Rounding::same(5.0),
-            with_alpha(Color32::WHITE, 0.10 + 0.05 * i as f32),
-        );
-    }
-    painter.text(Pos2::new(rect.left() + 30.0, rect.top() + 40.0), Align2::LEFT_CENTER, "HYBRIDGT", FontId::proportional(40.0), Color32::WHITE);
-    painter.text(
-        Pos2::new(rect.left() + 32.0, rect.top() + 78.0),
-        Align2::LEFT_CENTER,
-        "Xbox Series build runner for Windows PCs",
-        FontId::proportional(15.0),
-        with_alpha(Color32::WHITE, 0.85),
-    );
-    let status = match (running, live) {
-        (Some(what), Some(l)) if what == "game" => format!("● playing   {:.1} fps   {} draws", l.fps, l.draws),
-        (Some(what), _) => format!("● {what} running"),
-        _ => "○ idle".to_string(),
-    };
-    painter.text(Pos2::new(rect.right() - 30.0, rect.top() + 34.0), Align2::RIGHT_CENTER, status, FontId::proportional(15.0), Color32::WHITE);
+    painter.rect_stroke(rect, round, Stroke::new(1.0_f32, EDGE));
+    rect
 }
+
+/// A small rounded label in a colour (a status).
+pub fn chip(ui: &mut Ui, text: &str, color: Color32) {
+    egui::Frame::none()
+        .fill(with_alpha(color, 0.18))
+        .stroke(Stroke::new(1.0_f32, with_alpha(color, 0.55)))
+        .rounding(Rounding::same(10.0))
+        .inner_margin(egui::Margin::symmetric(10.0, 4.0))
+        .show(ui, |ui| {
+            ui.label(RichText::new(text).size(12.5).color(mix(color, Color32::WHITE, 0.45)));
+        });
+}
+
+/// A progress bar of a real fraction, with its text.
+pub fn progress(ui: &mut Ui, fraction: Option<f32>, text: &str, t: f32) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 10.0), Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, Rounding::same(5.0), EDGE);
+    match fraction {
+        Some(f) => {
+            let mut filled = rect;
+            filled.set_width(rect.width() * f.clamp(0.0, 1.0));
+            if filled.width() > 0.5 {
+                painter.rect_filled(filled, Rounding::same(5.0), ACCENT);
+            }
+        }
+        // Unknown total: a moving band says "working" without inventing a number.
+        None => {
+            let w = rect.width() * 0.22;
+            let x = rect.left() + (rect.width() - w) * ((t * 0.8).sin() * 0.5 + 0.5);
+            painter.rect_filled(Rect::from_min_size(Pos2::new(x, rect.top()), Vec2::new(w, rect.height())), Rounding::same(5.0), VIOLET);
+        }
+    }
+    ui.label(RichText::new(text).small().color(SOFT));
+}
+
+/// A row: a label on the left, a coloured status chip on the right.
+pub fn status_row(ui: &mut Ui, label: &str, detail: &str, chip_text: &str, color: Color32) {
+    ui.horizontal(|ui| {
+        ui.vertical(|ui| {
+            ui.set_max_width(ui.available_width() - 170.0);
+            ui.label(RichText::new(label).strong().color(Color32::WHITE));
+            if !detail.is_empty() {
+                ui.label(RichText::new(detail).size(12.5).color(SOFT));
+            }
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| chip(ui, chip_text, color));
+    });
+    ui.add_space(4.0);
+}
+
+pub const GOOD: Color32 = Color32::from_rgb(52, 199, 120);
+pub const WARN: Color32 = Color32::from_rgb(240, 170, 60);
 
 pub fn title(ui: &mut Ui, text: &str) {
     ui.label(RichText::new(text).heading().strong().color(Color32::WHITE));

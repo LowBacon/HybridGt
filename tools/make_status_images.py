@@ -10,25 +10,25 @@ OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'docs', 'im
 
 # (file, label, value, colour)
 BADGES = [
-    ('badge-shaders.svg', 'shaders translated', '26,084 / 26,084', '#2e9e4f'),
+    ('badge-shaders.svg', 'DXIL validator', '25,600 / 25,889 (98.9 %)', '#7cb342'),
     ('badge-fps.svg', 'world fps', '14.2 median, 18 best', '#7cb342'),
-    ('badge-fsr.svg', 'AMD FSR', '3.1.6 on RTX 4070 Ti', '#2e9e4f'),
-    ('badge-raytracing.svg', 'ray tracing', 'builder runs, crashes', '#c0392b'),
+    ('badge-fsr.svg', 'AMD FSR', '3.1.6 (earlier runtime)', '#7cb342'),
+    ('badge-raytracing.svg', 'ray tracing', 'experimental', '#d9822b'),
     ('badge-tested.svg', 'tested on', 'RTX 4070 Ti · 32 GB', '#555'),
 ]
 
 # (area, percent done, note). Percentages are measured ratios where one exists
 # (programs, fps); otherwise the five-step scale of docs/STATUS.md (20 % a step).
 AREAS = [
-    ('Shader programs translate', 100.0, '26,084 of 26,084 (with the opt-in switches)'),
-    ('Pass Microsoft\'s DXIL validator', 98.4, '25,479 of 25,889 emitted'),
-    ('Vertex/pixel pipelines on the card', 100.0, '14,247 of 14,247 (geometry stages build in game)'),
-    ('Compute pipelines on the card', 100.0, '2,682 of 2,682'),
-    ('Mesh pipelines on the card', 100.0, '8,765 of 8,765'),
+    ('Shader programs translate', 99.2, '25,671 of 25,889 (current runtime, offline)'),
+    ('Pass Microsoft\'s DXIL validator', 98.9, '25,600 of 25,889 (current runtime, offline)'),
+    ('Vertex/pixel pipelines on the card', 100.0, '14,247 of 14,247 (earlier runtime)'),
+    ('Compute pipelines on the card', 100.0, '2,682 of 2,682 (earlier runtime)'),
+    ('Mesh pipelines on the card', 100.0, '8,765 of 8,765 (earlier runtime)'),
     ('Ray-tracing builder translates', 100.0, '52 of 52 programs'),
     ('Menus at 30 fps', 100.0, '30 fps'),
     ('World frame rate (goal 30)', 47.0, '14.2 fps median, 18.0 best (new base)'),
-    ('One-file launcher', 100.0, 'HybridGt.exe: scans, presets, live fps'),
+    ('One-file launcher', 100.0, '0.3.0: five pages, setup, offline; 32 tests'),
     ('Graphics memory', 90.0, '5.6 GB in use (was 9.2)'),
     ('AMD FSR 3.1 upscaling', 80.0, 'ported to the new base; not yet run there'),
     ('Characters and bodies', 100.0, 'whole in the prologue'),

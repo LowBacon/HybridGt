@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Preset {
     Fast,
+    Performance,
     AllInOne,
     SeriesSFsr,
     RayTracing,
@@ -104,11 +105,12 @@ const CLASSIC: &[(&str, &str)] = &[
 ];
 
 impl Preset {
-    pub const ALL: [Preset; 5] = [Preset::Fast, Preset::AllInOne, Preset::SeriesSFsr, Preset::RayTracing, Preset::Classic];
+    pub const ALL: [Preset; 6] = [Preset::Fast, Preset::Performance, Preset::AllInOne, Preset::SeriesSFsr, Preset::RayTracing, Preset::Classic];
 
     pub fn label(self) -> &'static str {
         match self {
             Preset::Fast => "Fast",
+            Preset::Performance => "Performance",
             Preset::AllInOne => "All in one",
             Preset::SeriesSFsr => "Series S + FSR 3.1",
             Preset::RayTracing => "Ray tracing",
@@ -119,6 +121,7 @@ impl Preset {
     pub fn blurb(self) -> &'static str {
         match self {
             Preset::Fast => "Series X at 1440p, every\nspeed switch. 14 fps measured.",
+            Preset::Performance => "Fast, plus DLSS and frame\ngeneration, worker pools for\nthis CPU, High priority.",
             Preset::AllInOne => "FSR 3.1 + the game's ray\ntracing + reflections stand-in.\nExperimental, slow with rays.",
             Preset::SeriesSFsr => "720p inside, AMD FSR 3.1 to\n1080p. Any GPU (AMD's DLLs).",
             Preset::RayTracing => "The game's own traced light.\nExperimental: slow, can\nlook broken on this runtime.",
@@ -152,6 +155,11 @@ impl Preset {
         if self.console() == Some("series-x") {
             out.push(("VICTORY_NATIVE_1440P", "1"));
         }
+        if self == Preset::Performance {
+            // VIctory-NVIDIA's play-gta6-framegen.ps1: Vice-Tay's placed order (with its worker
+            // pools, measured there at +22-29 % in heavy scenes on an RTX 4070 SUPER).
+            out.push(("VICTORY_PLACED_ORDER", "1"));
+        }
         if matches!(self, Preset::RayTracing | Preset::AllInOne) {
             out.retain(|(k, _)| !k.starts_with("VICTORY_AMBIENT") || *k == "VICTORY_AMBIENT_SPECULAR");
             out.push(("VICTORY_BVH_BUILDER", "1"));
@@ -164,4 +172,148 @@ impl Preset {
 pub fn lenient<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Preset, D::Error> {
     let name = String::deserialize(d).unwrap_or_default();
     Ok(Preset::ALL.into_iter().find(|p| format!("{p:?}") == name).unwrap_or(Preset::Fast))
+}
+
+/// Every switch a run of `preset` gets: the preset's own, the settings, and the folders.
+pub fn environment(c: &crate::config::Config, preset: Preset) -> Vec<(String, String)> {
+    let mut env: Vec<(String, String)> = preset.switches().iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    let set = |env: &mut Vec<(String, String)>, k: &str, v: String| {
+        env.retain(|(key, _)| key != k);
+        env.push((k.to_string(), v));
+    };
+    let (_, cache, data) = c.folders_for(preset);
+    set(&mut env, "VICTORY_GAME_DIR", c.game_dir.clone());
+    set(&mut env, "VICTORY_CACHE_DIR", cache.to_string());
+    set(&mut env, "VICTORY_DATA_DIR", data.to_string());
+    set(&mut env, "VICTORY_LOG", c.log_level.clone());
+    if preset.classic() {
+        // Device method 0x218's index of the game's own shader heads, made on this PC.
+        let index = std::path::Path::new(cache).join("native-index.txt");
+        if index.is_file() {
+            set(&mut env, "VICTORY_NATIVE_INDEX", index.display().to_string());
+        }
+        if c.inplace {
+            set(&mut env, "VICTORY_INPLACE", "1".into());
+        }
+        if c.hash_wide {
+            set(&mut env, "VICTORY_CARD_HASH_WIDE", "1".into());
+        }
+    } else {
+        // Less memory: textures copied to the card capped (more of them wait), smaller
+        // loading buffers.
+        let caps: &[(&str, &str)] = match c.memory {
+            1 => &[("VICTORY_TEXTURE_BUDGET_MB", "6144"), ("VICTORY_DSTORAGE_STAGING_MB", "128")],
+            2 => &[("VICTORY_TEXTURE_BUDGET_MB", "4096"), ("VICTORY_TEXTURE_ROOM_PERCENT", "70"), ("VICTORY_DSTORAGE_STAGING_MB", "64")],
+            _ => &[],
+        };
+        for (k, v) in caps {
+            set(&mut env, k, v.to_string());
+        }
+        if let Some(us) = 1_000_000u32.checked_div(c.fps_cap) {
+            set(&mut env, "VICTORY_FRAME_INTERVAL_US", us.to_string());
+        }
+        if c.dlss && !preset.fsr() && std::path::Path::new(&c.streamline_dir).join("sl.interposer.dll").is_file() {
+            set(&mut env, "VICTORY_DLSS", "1".into());
+            set(&mut env, "VICTORY_DLSS_MODE", "quality".into());
+            set(&mut env, "VICTORY_STREAMLINE_DIR", c.streamline_dir.clone());
+        }
+    }
+    if preset == Preset::Performance {
+        // Worker pools by logical CPUs, as play-gta6-framegen.ps1 sizes them.
+        let cpus = std::thread::available_parallelism().map_or(8, |n| n.get());
+        let pools: &[(&str, &str)] = if cpus >= 24 {
+            &[("VICTORY_THIN_THREADS", "12"), ("VICTORY_UNDER_THREADS", "8"), ("VICTORY_LAND_THREADS", "8")]
+        } else if cpus >= 16 {
+            &[("VICTORY_THIN_THREADS", "12"), ("VICTORY_UNDER_THREADS", "8"), ("VICTORY_LAND_THREADS", "6")]
+        } else {
+            &[]
+        };
+        for (k, v) in pools {
+            set(&mut env, k, v.to_string());
+        }
+        // DLSS Quality and frame generation 2x (what an RTX 40 card generates; the runtime
+        // gives no more frames than the card and driver report) where NVIDIA's files are.
+        if std::path::Path::new(&c.streamline_dir).join("sl.interposer.dll").is_file() {
+            set(&mut env, "VICTORY_DLSS", "1".into());
+            set(&mut env, "VICTORY_DLSS_MODE", "quality".into());
+            set(&mut env, "VICTORY_STREAMLINE_DIR", c.streamline_dir.clone());
+            set(&mut env, "VICTORY_FRAMEGEN", "1".into());
+            set(&mut env, "VICTORY_FRAMEGEN_X", "2".into());
+        }
+        set(&mut env, crate::jobs::PRIORITY, "high".into());
+    }
+    if !c.ambient {
+        env.retain(|(k, _)| k != "VICTORY_AMBIENT" && k != "VICTORY_AMBIENT_AIR");
+    }
+    if c.audio_delay_ms > 0 {
+        set(&mut env, "VICTORY_AUDIO_DELAY_MS", c.audio_delay_ms.to_string());
+    }
+    if preset.fsr() && !c.ffx_dir.is_empty() {
+        set(&mut env, "VICTORY_FFX_DIR", c.ffx_dir.clone());
+    }
+    env
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+
+    fn get<'a>(env: &'a [(String, String)], k: &str) -> Option<&'a str> {
+        env.iter().find(|(key, _)| key == k).map(|(_, v)| v.as_str())
+    }
+
+    #[test]
+    fn the_performance_preset_is_tuned_and_high_priority() {
+        let env = environment(&Config::default(), Preset::Performance);
+        assert_eq!(get(&env, "VICTORY_PLACED_ORDER"), Some("1"));
+        assert_eq!(get(&env, "VICTORY_NATIVE_1440P"), Some("1"));
+        assert_eq!(get(&env, crate::jobs::PRIORITY), Some("high"));
+        // No NVIDIA files in a default config: no DLSS asked for.
+        assert_eq!(get(&env, "VICTORY_DLSS"), None);
+        assert_eq!(get(&environment(&Config::default(), Preset::Fast), crate::jobs::PRIORITY), None);
+    }
+
+    #[test]
+    fn every_preset_has_switches_and_a_label() {
+        for p in Preset::ALL {
+            assert!(!p.switches().is_empty() && p.label().len() > 2);
+        }
+    }
+
+    #[test]
+    fn the_folders_follow_the_runtime() {
+        let c = Config { cache_dir: "NEW".into(), classic_cache_dir: "OLD".into(), ..Config::default() };
+        assert_eq!(get(&environment(&c, Preset::Fast), "VICTORY_CACHE_DIR"), Some("NEW"));
+        assert_eq!(get(&environment(&c, Preset::Classic), "VICTORY_CACHE_DIR"), Some("OLD"));
+    }
+
+    #[test]
+    fn memory_and_frame_cap_settings_reach_the_runtime() {
+        let c = Config { memory: 2, fps_cap: 30, ..Config::default() };
+        let env = environment(&c, Preset::Fast);
+        assert_eq!(get(&env, "VICTORY_TEXTURE_BUDGET_MB"), Some("4096"));
+        assert_eq!(get(&env, "VICTORY_FRAME_INTERVAL_US"), Some("33333"));
+        assert_eq!(get(&environment(&Config::default(), Preset::Fast), "VICTORY_TEXTURE_BUDGET_MB"), None);
+        // Each switch once.
+        let mut keys: Vec<_> = env.iter().map(|(k, _)| k.clone()).collect();
+        let n = keys.len();
+        keys.sort();
+        keys.dedup();
+        assert_eq!(keys.len(), n);
+    }
+
+    #[test]
+    fn ray_tracing_turns_the_builder_on_and_the_stand_in_off() {
+        let env = environment(&Config::default(), Preset::RayTracing);
+        assert_eq!(get(&env, "VICTORY_BVH_BUILDER"), Some("1"));
+        assert_eq!(get(&env, "VICTORY_AMBIENT"), None);
+        assert_eq!(get(&env, "VICTORY_AMBIENT_SPECULAR"), Some("1"));
+    }
+
+    #[test]
+    fn dlss_needs_its_files() {
+        let c = Config { dlss: true, streamline_dir: std::env::temp_dir().display().to_string(), ..Config::default() };
+        assert_eq!(get(&environment(&c, Preset::Fast), "VICTORY_DLSS"), None, "no sl.interposer.dll there");
+    }
 }
