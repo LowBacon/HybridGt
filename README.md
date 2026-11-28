@@ -3,6 +3,7 @@
 A launcher, a runtime patch set and an open measurement record for running the **Xbox Series X|S
 build of Grand Theft Auto VI on Windows PCs**, natively and offline, from your own copy of the game.
 
+[![Discord](https://img.shields.io/badge/Discord-Join%20the%20Community-5865F2?logo=discord&logoColor=white)](https://discord.gg/g6FZ9XwW8j) .
 [![license](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
 [![platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078d4)](docs/WINDOWS_COMPATIBILITY.md)
 [![rust](https://img.shields.io/badge/Rust-2024%20edition-b7410e)](docs/dev/DEVELOPMENT.md)
@@ -12,7 +13,6 @@ build of Grand Theft Auto VI on Windows PCs**, natively and offline, from your o
 
 [**Download**](https://github.com/LowBacon/HybridGt/releases/latest) ·
 [Getting started](#getting-started) ·
-[![Discord](https://img.shields.io/badge/Discord-Join%20the%20Community-5865F2?logo=discord&logoColor=white)](https://discord.gg/g6FZ9XwW8j) .
 [Architecture](docs/dev/ARCHITECTURE.md) ·
 [Shader translation](docs/dev/SHADER_TRANSLATION.md) ·
 [Performance](docs/PERFORMANCE.md) ·
