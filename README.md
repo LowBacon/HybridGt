@@ -12,6 +12,7 @@ build of Grand Theft Auto VI on Windows PCs**, natively and offline, from your o
 [![tested on](docs/img/badge-tested.svg)](docs/PERFORMANCE.md#test-system)
 
 [**Download**](https://github.com/LowBacon/HybridGt/releases/latest) ·
+[Discord Community](https://discord.gg/g6FZ9XwW8j) .
 [Getting started](#getting-started) ·
 [Architecture](docs/dev/ARCHITECTURE.md) ·
 [Shader translation](docs/dev/SHADER_TRANSLATION.md) ·
